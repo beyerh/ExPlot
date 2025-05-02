@@ -44,7 +44,7 @@ DEFAULT_PALETTES = {
 class ExcelPlotterApp:
     def __init__(self, root):
         self.root = root
-        self.version = "1.0.0"
+        self.version = "0.4.0"
         self.root.title('Excel Plotter')
         self.df = None
         self.excel_file = None
