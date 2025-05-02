@@ -47,7 +47,7 @@ DEFAULT_PALETTES = {
 class ExcelPlotterApp:
     def __init__(self, root):
         self.root = root
-        self.version = "0.4.2"
+        self.version = "0.4.3"
         self.root.title('Excel Plotter')
         self.df = None
         self.excel_file = None
@@ -1292,6 +1292,12 @@ class ExcelPlotterApp:
                         stripplot_args["palette"] = palette
                 # Suppress legend for stripplot
                 stripplot_args["legend"] = False
+
+                if plot_kind == 'bar' and not hue_col:
+                    # Reduce jitter for more precise positioning
+                    stripplot_args['jitter'] = 0.2
+                    stripplot_args['dodge'] = False  # Prevent automatic dodging
+                
                 sns.stripplot(**stripplot_args)
 
             # --- Always rebuild legend after all plotting ---
