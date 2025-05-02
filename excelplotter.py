@@ -47,7 +47,7 @@ DEFAULT_PALETTES = {
 class ExcelPlotterApp:
     def __init__(self, root):
         self.root = root
-        self.version = "0.4.1"
+        self.version = "0.4.2"
         self.root.title('Excel Plotter')
         self.df = None
         self.excel_file = None
@@ -821,6 +821,8 @@ class ExcelPlotterApp:
                             if connect:
                                 ax.plot(x, y, color='black' if line_black else c, linewidth=linewidth, alpha=0.7, linestyle=line_style)
                         if hue_col:
+                            handles, labels = ax.get_legend_handles_labels()
+                        if handles and len(handles) > 0:
                             ax.legend()
                     else:
                         # Plot raw data points (scatter) when show_mean is False
@@ -837,7 +839,10 @@ class ExcelPlotterApp:
                                 if group.empty:
                                     continue
                                 c = color_map[name]
-                                scatter = ax.scatter(group[x_col], group['Value'], marker=marker_symbol, s=marker_size**2, color=c, label=str(name), edgecolors=c if filled else 'none', facecolors=c if filled else 'none', linewidth=linewidth)
+                                # Always show marker edge in group color if not filled
+                                edge = c
+                                face = c if filled else 'none'
+                                scatter = ax.scatter(group[x_col], group['Value'], marker=marker_symbol, s=marker_size**2, color=c, label=str(name), edgecolors=edge, facecolors=face, linewidth=linewidth)
                                 if draw_band:
                                     x_sorted = np.sort(group[x_col].unique())
                                     min_vals = [group[group[x_col] == x]['Value'].min() for x in x_sorted]
@@ -867,10 +872,15 @@ class ExcelPlotterApp:
                                         x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
                                         means_numeric = pd.to_numeric(means, errors='coerce')
                                         ax.plot(x_sorted_numeric, means_numeric, color='black' if line_black else c, linewidth=linewidth, alpha=0.7, linestyle=line_style)
+                            handles, labels = ax.get_legend_handles_labels()
+                        if handles and len(handles) > 0:
                             ax.legend()
                         else:
                             c = palette[0]
-                            ax.scatter(df_plot[x_col], df_plot['Value'], marker=marker_symbol, s=marker_size**2, color=c, edgecolors=c if filled else 'none', facecolors=c if filled else 'none', linewidth=linewidth)
+                            # Always show marker edge in group color if not filled
+                            edge = c
+                            face = c if filled else 'none'
+                            ax.scatter(df_plot[x_col], df_plot['Value'], marker=marker_symbol, s=marker_size**2, color=c, edgecolors=edge, facecolors=face, linewidth=linewidth)
                             if draw_band:
                                 x_sorted = np.sort(df_plot[x_col].unique())
                                 min_vals = [df_plot[df_plot[x_col] == x]['Value'].min() for x in x_sorted]
@@ -901,12 +911,12 @@ class ExcelPlotterApp:
                     if swap_axes:
                         plot_args = dict(
                             data=df_plot, y=x_col, x='Value', hue=hue_col, ax=ax,
-                            ci=ci_val, capsize=0.2, palette=palette, errcolor='black', errwidth=linewidth, estimator=estimator
+                            errorbar='sd', capsize=0.2, palette=palette, err_kws={'color': 'black', 'linewidth': linewidth}, estimator=estimator
                         )
                     else:
                         plot_args = dict(
                             data=df_plot, x=x_col, y='Value', hue=hue_col, ax=ax,
-                            ci=ci_val, capsize=0.2, palette=palette, errcolor='black', errwidth=linewidth, estimator=estimator
+                            errorbar='sd', capsize=0.2, palette=palette, err_kws={'color': 'black', 'linewidth': linewidth}, estimator=estimator
                         )
                 elif plot_kind == "box":
                     plot_args.update(dict(palette=palette, linewidth=linewidth, showcaps=True, boxprops=dict(linewidth=linewidth), medianprops=dict(linewidth=linewidth), dodge=True, width=0.7))
@@ -960,103 +970,117 @@ class ExcelPlotterApp:
                                 mec = c
                                 if show_mean_errorbars:
                                     ax.errorbar(x, y, yerr=yerr, fmt=marker_symbol, color=c, markerfacecolor=mfc, markeredgecolor=mec, markersize=marker_size, linewidth=linewidth, capsize=3, ecolor=ecolor, label=str(name))
-                                # Always plot the mean points
-                                ax.plot(x, y, marker=marker_symbol, color=c, markerfacecolor=mfc, markeredgecolor=mec, markersize=marker_size, linewidth=linewidth, linestyle='None', label=None if show_mean_errorbars else str(name))
-                                # Always draw error bands if requested (independent of errorbars)
                                 if draw_band:
                                     x_numeric = pd.to_numeric(x, errors='coerce')
                                     y_numeric = pd.to_numeric(y, errors='coerce')
                                     yerr_numeric = pd.to_numeric(yerr, errors='coerce')
                                     ax.fill_between(x_numeric, y_numeric - yerr_numeric, y_numeric + yerr_numeric, color=c, alpha=0.18, zorder=1)
-                                if connect:
-                                    ax.plot(x, y, color='black' if line_black else c, linewidth=linewidth, alpha=0.7, linestyle=line_style)
-                        else:
-                            c = palette[0]
-                            x = means[x_col]
-                            y = means['Value']
-                            yerr = means['err']
-                            ecolor = 'black' if errorbar_black else c
-                            mfc = c if filled else 'none'
-                            mec = c
-                            if show_mean_errorbars:
-                                ax.errorbar(x, y, yerr=yerr, fmt=marker_symbol, color=c, markerfacecolor=mfc, markeredgecolor=mec, markersize=marker_size, linewidth=linewidth, capsize=3, ecolor=ecolor, label=str(name))
-                            # Always plot the mean points
-                            ax.plot(x, y, marker=marker_symbol, color=c, markerfacecolor=mfc, markeredgecolor=mec, markersize=marker_size, linewidth=linewidth, linestyle='None', label=None if show_mean_errorbars else str(name))
-                            # Always draw error bands if requested (independent of errorbars)
-                            if draw_band:
-                                x_numeric = pd.to_numeric(x, errors='coerce')
-                                y_numeric = pd.to_numeric(y, errors='coerce')
-                                yerr_numeric = pd.to_numeric(yerr, errors='coerce')
-                                ax.fill_between(x_numeric, y_numeric - yerr_numeric, y_numeric + yerr_numeric, color=c, alpha=0.18, zorder=1)
+                            else:
+                                ax.plot(x, y, marker=marker_symbol, color=c, markerfacecolor=mfc, markeredgecolor=mec, markersize=marker_size, linewidth=linewidth, linestyle='None', label=str(name))
                             if connect:
                                 ax.plot(x, y, color='black' if line_black else c, linewidth=linewidth, alpha=0.7, linestyle=line_style)
-                        if hue_col:
-                            ax.legend()
                     else:
-                        # Plot raw data points (scatter) when show_mean is False
-                        marker_kwargs = dict(marker=marker_symbol, s=marker_size**2)
-                        if hue_col:
-                            group_names = list(df_plot[hue_col].dropna().unique())
-                            palette_name = self.palette_var.get()
-                            palette_full = self.custom_palettes.get(palette_name, ["#333333"])
-                            if len(palette_full) < len(group_names):
-                                palette_full = (palette_full * ((len(group_names) // len(palette_full)) + 1))[:len(group_names)]
-                            color_map = {name: palette_full[i] for i, name in enumerate(group_names)}
-                            for name in group_names:
-                                group = df_plot[df_plot[hue_col] == name]
-                                if group.empty:
-                                    continue
-                                c = color_map[name]
-                                scatter = ax.scatter(group[x_col], group['Value'], marker=marker_symbol, s=marker_size**2, color=c, label=str(name), edgecolors=c if filled else 'none', facecolors=c if filled else 'none', linewidth=linewidth)
-                                if draw_band:
-                                    x_sorted = np.sort(group[x_col].unique())
-                                    min_vals = [group[group[x_col] == x]['Value'].min() for x in x_sorted]
-                                    max_vals = [group[group[x_col] == x]['Value'].max() for x in x_sorted]
-                                    x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
-                                    min_vals_numeric = pd.to_numeric(min_vals, errors='coerce')
-                                    max_vals_numeric = pd.to_numeric(max_vals, errors='coerce')
-                                    ax.fill_between(x_sorted_numeric, min_vals_numeric, max_vals_numeric, color=c, alpha=0.18, zorder=1)
-                                if connect:
-                                    # Connect means of raw data at each x value
-                                    if hue_col:
-                                        for name in group_names:
-                                            group = df_plot[df_plot[hue_col] == name]
-                                            if group.empty:
-                                                continue
-                                            c = color_map[name]
-                                            # Calculate means at each x value
-                                            x_sorted = np.sort(group[x_col].unique())
-                                            means = [group[group[x_col] == x]['Value'].mean() for x in x_sorted]
-                                            x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
-                                            means_numeric = pd.to_numeric(means, errors='coerce')
-                                            ax.plot(x_sorted_numeric, means_numeric, color='black' if line_black else c, linewidth=linewidth, alpha=0.7, linestyle=line_style)
-                                    else:
-                                        c = palette[0]
-                                        x_sorted = np.sort(df_plot[x_col].unique())
-                                        means = [df_plot[df_plot[x_col] == x]['Value'].mean() for x in x_sorted]
-                                        x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
-                                        means_numeric = pd.to_numeric(means, errors='coerce')
-                                        ax.plot(x_sorted_numeric, means_numeric, color='black' if line_black else c, linewidth=linewidth, alpha=0.7, linestyle=line_style)
-                            ax.legend()
-                        else:
+                        # When show_mean is False, plot raw data points
+                        c = palette[0]
+                        # Always show marker edge in group color if not filled
+                        edge = c
+                        face = c if filled else 'none'
+                        ax.scatter(df_plot[x_col], df_plot['Value'], marker=marker_symbol, s=marker_size**2, color=c, edgecolors=edge, facecolors=face, linewidth=linewidth)
+                        if draw_band:
+                            x_sorted = np.sort(df_plot[x_col].unique())
+                            min_vals = [df_plot[df_plot[x_col] == x]['Value'].min() for x in x_sorted]
+                            max_vals = [df_plot[df_plot[x_col] == x]['Value'].max() for x in x_sorted]
+                            x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
+                            min_vals_numeric = pd.to_numeric(min_vals, errors='coerce')
+                            max_vals_numeric = pd.to_numeric(max_vals, errors='coerce')
+                            ax.fill_between(x_sorted_numeric, min_vals_numeric, max_vals_numeric, color=c, alpha=0.18, zorder=1)
+                        if connect:
+                            # Connect means of raw data at each x value
                             c = palette[0]
-                            ax.scatter(df_plot[x_col], df_plot['Value'], marker=marker_symbol, s=marker_size**2, color=c, edgecolors=c if filled else 'none', facecolors=c if filled else 'none', linewidth=linewidth)
+                            x_sorted = np.sort(df_plot[x_col].unique())
+                            y_means = [df_plot[df_plot[x_col] == x]['Value'].mean() for x in x_sorted]
+                            x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
+                            y_means_numeric = pd.to_numeric(y_means, errors='coerce')
+                            ax.plot(x_sorted_numeric, y_means_numeric, color='black' if line_black else c, linewidth=linewidth, alpha=0.7, linestyle=line_style)
+                    if hue_col:
+                        handles, labels = ax.get_legend_handles_labels()
+                        if handles and len(handles) > 0:
+                            handles, labels = ax.get_legend_handles_labels()
+                        if handles and len(handles) > 0:
+                            ax.legend()
+                else:
+                    # Plot raw data points (scatter) when show_mean is False
+                    marker_kwargs = dict(marker=marker_symbol, s=marker_size**2)
+                    if hue_col:
+                        group_names = list(df_plot[hue_col].dropna().unique())
+                        palette_name = self.palette_var.get()
+                        palette_full = self.custom_palettes.get(palette_name, ["#333333"])
+                        if len(palette_full) < len(group_names):
+                            palette_full = (palette_full * ((len(group_names) // len(palette_full)) + 1))[:len(group_names)]
+                        color_map = {name: palette_full[i] for i, name in enumerate(group_names)}
+                        for name in group_names:
+                            group = df_plot[df_plot[hue_col] == name]
+                            if group.empty:
+                                continue
+                            c = color_map[name]
+                            # Always show marker edge in group color if not filled
+                            edge = c
+                            face = c if filled else 'none'
+                            scatter = ax.scatter(group[x_col], group['Value'], marker=marker_symbol, s=marker_size**2, color=c, label=str(name), edgecolors=edge, facecolors=face, linewidth=linewidth)
                             if draw_band:
-                                x_sorted = np.sort(df_plot[x_col].unique())
-                                min_vals = [df_plot[df_plot[x_col] == x]['Value'].min() for x in x_sorted]
-                                max_vals = [df_plot[df_plot[x_col] == x]['Value'].max() for x in x_sorted]
+                                x_sorted = np.sort(group[x_col].unique())
+                                min_vals = [group[group[x_col] == x]['Value'].min() for x in x_sorted]
+                                max_vals = [group[group[x_col] == x]['Value'].max() for x in x_sorted]
                                 x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
                                 min_vals_numeric = pd.to_numeric(min_vals, errors='coerce')
                                 max_vals_numeric = pd.to_numeric(max_vals, errors='coerce')
                                 ax.fill_between(x_sorted_numeric, min_vals_numeric, max_vals_numeric, color=c, alpha=0.18, zorder=1)
                             if connect:
                                 # Connect means of raw data at each x value
-                                c = palette[0]
-                                x_sorted = np.sort(df_plot[x_col].unique())
-                                means = [df_plot[df_plot[x_col] == x]['Value'].mean() for x in x_sorted]
-                                x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
-                                means_numeric = pd.to_numeric(means, errors='coerce')
-                                ax.plot(x_sorted_numeric, means_numeric, color='black' if line_black else c, linewidth=linewidth, alpha=0.7, linestyle=line_style)
+                                if hue_col:
+                                    for name in group_names:
+                                        group = df_plot[df_plot[hue_col] == name]
+                                        if group.empty:
+                                            continue
+                                        c = color_map[name]
+                                        # Calculate means at each x value
+                                        x_sorted = np.sort(group[x_col].unique())
+                                        means = [group[group[x_col] == x]['Value'].mean() for x in x_sorted]
+                                        x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
+                                        means_numeric = pd.to_numeric(means, errors='coerce')
+                                        ax.plot(x_sorted_numeric, means_numeric, color='black' if line_black else c, linewidth=linewidth, alpha=0.7, linestyle=line_style)
+                                else:
+                                    c = palette[0]
+                                    x_sorted = np.sort(df_plot[x_col].unique())
+                                    means = [df_plot[df_plot[x_col] == x]['Value'].mean() for x in x_sorted]
+                                    x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
+                                    means_numeric = pd.to_numeric(means, errors='coerce')
+                                    ax.plot(x_sorted_numeric, means_numeric, color='black' if line_black else c, linewidth=linewidth, alpha=0.7, linestyle=line_style)
+                        handles, labels = ax.get_legend_handles_labels()
+                        if handles and len(handles) > 0:
+                            ax.legend()
+                    else:
+                        c = palette[0]
+                        # Always show marker edge in group color if not filled
+                        edge = c
+                        face = c if filled else 'none'
+                        ax.scatter(df_plot[x_col], df_plot['Value'], marker=marker_symbol, s=marker_size**2, color=c, edgecolors=edge, facecolors=face, linewidth=linewidth)
+                        if draw_band:
+                            x_sorted = np.sort(df_plot[x_col].unique())
+                            min_vals = [df_plot[df_plot[x_col] == x]['Value'].min() for x in x_sorted]
+                            max_vals = [df_plot[df_plot[x_col] == x]['Value'].max() for x in x_sorted]
+                            x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
+                            min_vals_numeric = pd.to_numeric(min_vals, errors='coerce')
+                            max_vals_numeric = pd.to_numeric(max_vals, errors='coerce')
+                            ax.fill_between(x_sorted_numeric, min_vals_numeric, max_vals_numeric, color=c, alpha=0.18, zorder=1)
+                        if connect:
+                            # Connect means of raw data at each x value
+                            c = palette[0]
+                            x_sorted = np.sort(df_plot[x_col].unique())
+                            means = [df_plot[df_plot[x_col] == x]['Value'].mean() for x in x_sorted]
+                            x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
+                            means_numeric = pd.to_numeric(means, errors='coerce')
+                            ax.plot(x_sorted_numeric, means_numeric, color='black' if line_black else c, linewidth=linewidth, alpha=0.7, linestyle=line_style)
                 stripplot_args = dict(
                     data=df_plot, x=x_col, y='Value', hue=hue_col, dodge=True,
                     jitter=True, marker='o', alpha=0.55,
@@ -1153,26 +1177,34 @@ class ExcelPlotterApp:
                             if connect:
                                 ax.plot(x, y, color='black' if line_black else c, linewidth=linewidth, alpha=0.7, linestyle=line_style)
                     else:
+                        # When show_mean is False, plot raw data points
                         c = palette[0]
-                        x = means[x_col]
-                        y = means['Value']
-                        yerr = means['err']
-                        ecolor = 'black' if errorbar_black else c
-                        mfc = c if filled else 'none'
-                        mec = c
-                        if show_mean_errorbars:
-                            ax.errorbar(x, y, yerr=yerr, fmt=marker_symbol, color=c, markerfacecolor=mfc, markeredgecolor=mec, markersize=marker_size, linewidth=linewidth, capsize=3, ecolor=ecolor)
-                            if draw_band:
-                                x_numeric = pd.to_numeric(x, errors='coerce')
-                                y_numeric = pd.to_numeric(y, errors='coerce')
-                                yerr_numeric = pd.to_numeric(yerr, errors='coerce')
-                                ax.fill_between(x_numeric, y_numeric - yerr_numeric, y_numeric + yerr_numeric, color=c, alpha=0.18, zorder=1)
-                        else:
-                            ax.plot(x, y, marker=marker_symbol, color=c, markerfacecolor=mfc, markeredgecolor=mec, markersize=marker_size, linewidth=linewidth, linestyle='None')
+                        # Always show marker edge in group color if not filled
+                        edge = c
+                        face = c if filled else 'none'
+                        ax.scatter(df_plot[x_col], df_plot['Value'], marker=marker_symbol, s=marker_size**2, color=c, edgecolors=edge, facecolors=face, linewidth=linewidth)
+                        if draw_band:
+                            x_sorted = np.sort(df_plot[x_col].unique())
+                            min_vals = [df_plot[df_plot[x_col] == x]['Value'].min() for x in x_sorted]
+                            max_vals = [df_plot[df_plot[x_col] == x]['Value'].max() for x in x_sorted]
+                            x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
+                            min_vals_numeric = pd.to_numeric(min_vals, errors='coerce')
+                            max_vals_numeric = pd.to_numeric(max_vals, errors='coerce')
+                            ax.fill_between(x_sorted_numeric, min_vals_numeric, max_vals_numeric, color=c, alpha=0.18, zorder=1)
                         if connect:
-                            ax.plot(x, y, color='black' if line_black else c, linewidth=linewidth, alpha=0.7, linestyle=line_style)
+                            # Connect means of raw data at each x value
+                            c = palette[0]
+                            x_sorted = np.sort(df_plot[x_col].unique())
+                            y_means = [df_plot[df_plot[x_col] == x]['Value'].mean() for x in x_sorted]
+                            x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
+                            y_means_numeric = pd.to_numeric(y_means, errors='coerce')
+                            ax.plot(x_sorted_numeric, y_means_numeric, color='black' if line_black else c, linewidth=linewidth, alpha=0.7, linestyle=line_style)
                     if hue_col:
-                        ax.legend()
+                        handles, labels = ax.get_legend_handles_labels()
+                        if handles and len(handles) > 0:
+                            handles, labels = ax.get_legend_handles_labels()
+                        if handles and len(handles) > 0:
+                            ax.legend()
                 else:
                     # Plot raw data points (scatter) when show_mean is False
                     marker_kwargs = dict(marker=marker_symbol, s=marker_size**2)
@@ -1188,7 +1220,10 @@ class ExcelPlotterApp:
                             if group.empty:
                                 continue
                             c = color_map[name]
-                            scatter = ax.scatter(group[x_col], group['Value'], marker=marker_symbol, s=marker_size**2, color=c, label=str(name), edgecolors=c if filled else 'none', facecolors=c if filled else 'none', linewidth=linewidth)
+                            # Always show marker edge in group color if not filled
+                            edge = c
+                            face = c if filled else 'none'
+                            scatter = ax.scatter(group[x_col], group['Value'], marker=marker_symbol, s=marker_size**2, color=c, label=str(name), edgecolors=edge, facecolors=face, linewidth=linewidth)
                             if draw_band:
                                 x_sorted = np.sort(group[x_col].unique())
                                 min_vals = [group[group[x_col] == x]['Value'].min() for x in x_sorted]
@@ -1218,10 +1253,15 @@ class ExcelPlotterApp:
                                     x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
                                     means_numeric = pd.to_numeric(means, errors='coerce')
                                     ax.plot(x_sorted_numeric, means_numeric, color='black' if line_black else c, linewidth=linewidth, alpha=0.7, linestyle=line_style)
-                        ax.legend()
+                        handles, labels = ax.get_legend_handles_labels()
+                        if handles and len(handles) > 0:
+                            ax.legend()
                     else:
                         c = palette[0]
-                        ax.scatter(df_plot[x_col], df_plot['Value'], marker=marker_symbol, s=marker_size**2, color=c, edgecolors=c if filled else 'none', facecolors=c if filled else 'none', linewidth=linewidth)
+                        # Always show marker edge in group color if not filled
+                        edge = c
+                        face = c if filled else 'none'
+                        ax.scatter(df_plot[x_col], df_plot['Value'], marker=marker_symbol, s=marker_size**2, color=c, edgecolors=edge, facecolors=face, linewidth=linewidth)
                         if draw_band:
                             x_sorted = np.sort(df_plot[x_col].unique())
                             min_vals = [df_plot[df_plot[x_col] == x]['Value'].min() for x in x_sorted]
