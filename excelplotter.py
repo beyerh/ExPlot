@@ -12,6 +12,9 @@ import os
 import json
 import numpy as np
 from scipy import stats
+import sys
+import tempfile
+from pathlib import Path
 
 try:
     import pingouin as pg
@@ -44,14 +47,16 @@ DEFAULT_PALETTES = {
 class ExcelPlotterApp:
     def __init__(self, root):
         self.root = root
-        self.version = "0.4.0"
+        self.version = "0.4.1"
         self.root.title('Excel Plotter')
         self.df = None
         self.excel_file = None
         self.preview_label = None
-        self.temp_pdf = "temp_plot.pdf"
-        self.custom_colors_file = "custom_colors.json"
-        self.custom_palettes_file = "custom_palettes.json"
+        self.config_dir = self.get_config_dir()
+        self.config_dir.mkdir(parents=True, exist_ok=True)
+        self.custom_colors_file = str(self.config_dir / "custom_colors.json")
+        self.custom_palettes_file = str(self.config_dir / "custom_palettes.json")
+        self.temp_pdf = str(Path(tempfile.gettempdir()) / "excelplotter_temp_plot.pdf")
         self.xaxis_renames = {}
         self.xaxis_order = []
         self.linewidth = tk.DoubleVar(value=1.0)
@@ -73,12 +78,53 @@ class ExcelPlotterApp:
         self.setup_menu()
         self.setup_ui()
 
+    def get_config_dir(self):
+        """Return the user config directory for settings (cross-platform)."""
+        if sys.platform == "darwin":
+            return Path.home() / "Library" / "Application Support" / "ExcelPlotter"
+        elif sys.platform.startswith("win"):
+            return Path(os.environ.get("APPDATA", str(Path.home() / "AppData" / "Roaming"))) / "ExcelPlotter"
+        else:
+            # Linux and other
+            return Path.home() / ".config" / "ExcelPlotter"
+
     def setup_menu(self):
         menubar = tk.Menu(self.root)
         self.root.config(menu=menubar)
+        # --- Settings menu ---
+        settingsmenu = tk.Menu(menubar, tearoff=0)
+        settingsmenu.add_command(label="Settings", command=self.show_settings)
+        menubar.add_cascade(label="Settings", menu=settingsmenu)
+        # --- Help menu ---
         helpmenu = tk.Menu(menubar, tearoff=0)
         helpmenu.add_command(label="About", command=self.show_about)
         menubar.add_cascade(label="Help", menu=helpmenu)
+
+    def show_settings(self):
+        window = tk.Toplevel(self.root)
+        window.title("App Settings")
+        window.geometry("340x180")
+        tk.Label(window, text="Reset color settings to default:", font=(None, 11, 'bold')).pack(pady=(16, 8))
+
+        def reset_colors():
+            if messagebox.askyesno("Reset Colors", "This will delete your custom colors and cannot be undone. Continue?"):
+                if os.path.exists(self.custom_colors_file):
+                    os.remove(self.custom_colors_file)
+                self.load_custom_colors_palettes()
+                self.update_color_palette_dropdowns()
+                messagebox.showinfo("Reset Colors", "Colors have been reset to default.")
+
+        def reset_palettes():
+            if messagebox.askyesno("Reset Palettes", "This will delete your custom palettes and cannot be undone. Continue?"):
+                if os.path.exists(self.custom_palettes_file):
+                    os.remove(self.custom_palettes_file)
+                self.load_custom_colors_palettes()
+                self.update_color_palette_dropdowns()
+                messagebox.showinfo("Reset Palettes", "Color palettes have been reset to default.")
+
+        tk.Button(window, text="Reset Colors", command=reset_colors, width=18).pack(pady=4)
+        tk.Button(window, text="Reset Palettes", command=reset_palettes, width=18).pack(pady=4)
+        tk.Button(window, text="Close", command=window.destroy, width=12).pack(pady=(16, 4))
 
     def show_about(self):
         messagebox.showinfo("About Excel Plotter", f"Excel Plotter\nVersion: {self.version}\n\nA tool for plotting Excel data.")
@@ -238,18 +284,18 @@ class ExcelPlotterApp:
         self.xy_show_mean_errorbars_check = tk.Checkbutton(self.xy_options_frame, text="With errorbars", variable=self.xy_show_mean_errorbars_var)
         self.xy_draw_band_check = tk.Checkbutton(self.xy_options_frame, text="Draw bands (min-max or error)", variable=self.xy_draw_band_var)
         # Pack XY widgets in order
-        self.xy_marker_symbol_label.grid(row=0, column=0, sticky="w", padx=8, pady=1)
-        self.xy_marker_symbol_dropdown.grid(row=0, column=1, sticky="w", padx=2, pady=1)
-        self.xy_marker_size_label.grid(row=1, column=0, sticky="w", padx=8, pady=1)
-        self.xy_marker_size_entry.grid(row=1, column=1, sticky="w", padx=2, pady=1)
-        self.xy_filled_check.grid(row=2, column=0, columnspan=2, sticky="w", padx=8, pady=1)
-        self.xy_line_style_label.grid(row=3, column=0, sticky="w", padx=8, pady=1)
-        self.xy_line_style_dropdown.grid(row=3, column=1, sticky="w", padx=2, pady=1)
-        self.xy_line_black_check.grid(row=4, column=0, columnspan=2, sticky="w", padx=8, pady=1)
-        self.xy_connect_check.grid(row=5, column=0, columnspan=2, sticky="w", padx=8, pady=1)
-        self.xy_show_mean_check.grid(row=6, column=0, columnspan=2, sticky="w", padx=8, pady=1)
-        self.xy_show_mean_errorbars_check.grid(row=7, column=0, columnspan=2, sticky="w", padx=24, pady=1)
-        self.xy_draw_band_check.grid(row=8, column=0, columnspan=2, sticky="w", padx=8, pady=1)
+        self.xy_marker_symbol_label.grid(row=0, column=0, sticky="w", padx=4, pady=2)
+        self.xy_marker_symbol_dropdown.grid(row=0, column=1, sticky="w", padx=2, pady=2)
+        self.xy_marker_size_label.grid(row=1, column=0, sticky="w", padx=4, pady=2)
+        self.xy_marker_size_entry.grid(row=1, column=1, sticky="w", padx=2, pady=2)
+        self.xy_filled_check.grid(row=2, column=0, columnspan=2, sticky="w", padx=4, pady=2)
+        self.xy_line_style_label.grid(row=3, column=0, sticky="w", padx=4, pady=2)
+        self.xy_line_style_dropdown.grid(row=3, column=1, sticky="w", padx=2, pady=2)
+        self.xy_line_black_check.grid(row=4, column=0, columnspan=2, sticky="w", padx=4, pady=2)
+        self.xy_connect_check.grid(row=5, column=0, columnspan=2, sticky="w", padx=4, pady=2)
+        self.xy_show_mean_check.grid(row=6, column=0, columnspan=2, sticky="w", padx=4, pady=2)
+        self.xy_show_mean_errorbars_check.grid(row=7, column=0, columnspan=2, sticky="w", padx=24, pady=2)
+        self.xy_draw_band_check.grid(row=8, column=0, columnspan=2, sticky="w", padx=4, pady=2)
         # Show/hide XY options frame based on plot type
         def update_xy_options(*args):
             if self.plot_kind_var.get() == "xy":
@@ -1609,7 +1655,7 @@ class ExcelPlotterApp:
                 colors = [self._to_hex(c.strip()) for c in colors if c.strip()]
                 self.custom_palettes[name] = colors
                 refresh_palette_list()
-                self.save_custom_palettes_palettes()
+                self.save_custom_colors_palettes()
                 self.update_color_palette_dropdowns()
                 popup.destroy()
             popup = tk.Toplevel(window)
@@ -1630,7 +1676,7 @@ class ExcelPlotterApp:
             if name in self.custom_palettes:
                 del self.custom_palettes[name]
                 refresh_palette_list()
-                self.save_custom_palettes_palettes()
+                self.save_custom_colors_palettes()
                 self.update_color_palette_dropdowns()
         tk.Button(window, text="Remove Selected Palette", command=remove_palette).pack(pady=2)
 
