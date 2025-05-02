@@ -1,0 +1,3 @@
+conda create --name excelplotter python
+conda activate excelplotter
+conda install scipy pandas seaborn pdf2image openpyxl
