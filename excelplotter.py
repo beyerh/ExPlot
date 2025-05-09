@@ -1,3 +1,8 @@
+# Excel Plotter - Data visualization tool for Excel files
+
+VERSION = "0.4.5"
+# =====================================================================
+
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk, colorchooser
 import pandas as pd
@@ -420,8 +425,8 @@ class ExcelPlotterApp:
         self.latest_pvals = {}  # {(group, h1, h2): pval or (h1, h2): pval}
 
         self.root = root
-        self.version = "0.4.4"
-        self.root.title('Excel Plotter')
+        self.version = VERSION  # Use the global VERSION constant
+        self.root.title(f'Excel Plotter v{VERSION}')
         self.df = None
         self.excel_file = None
         self.preview_label = None
@@ -507,8 +512,17 @@ class ExcelPlotterApp:
         return "\n".join([header, sep] + rows)
     def setup_statistics_settings_tab(self):
         frame = self.stats_settings_tab
+        
+        # Add stats info button at the top
+        info_frame = ttk.Frame(frame)
+        info_frame.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(4, 12))
+        
+        ttk.Label(info_frame, text="Statistical Tests", font=(None, 12, 'bold')).pack(side='left', padx=8)
+        info_button = ttk.Button(info_frame, text="ℹ️ Info", command=self.show_stats_info)
+        info_button.pack(side='right', padx=8)
+        
         # t-test type
-        ttk.Label(frame, text="t-test type:").grid(row=0, column=0, sticky="w", padx=8, pady=8)
+        ttk.Label(frame, text="t-test type:").grid(row=1, column=0, sticky="w", padx=8, pady=8)
         self.ttest_type_var = tk.StringVar(value="Welch's t-test (unpaired, unequal variances)")
         ttest_options = [
             "Student's t-test (unpaired)",
@@ -516,9 +530,10 @@ class ExcelPlotterApp:
             "Paired t-test"
         ]
         ttest_dropdown = ttk.Combobox(frame, textvariable=self.ttest_type_var, values=ttest_options, state='readonly')
-        ttest_dropdown.grid(row=0, column=1, sticky="ew", padx=8, pady=8)
+        ttest_dropdown.grid(row=1, column=1, sticky="ew", padx=8, pady=8)
+        
         # T-test alternative hypothesis
-        ttk.Label(frame, text="T-test Alternative:").grid(row=1, column=0, sticky="w", padx=8, pady=8)
+        ttk.Label(frame, text="T-test Alternative:").grid(row=2, column=0, sticky="w", padx=8, pady=8)
         self.ttest_alternative_var = tk.StringVar(value="two-sided")
         ttest_alternative_options = [
             "two-sided",
@@ -526,9 +541,10 @@ class ExcelPlotterApp:
             "greater"
         ]
         ttest_alternative_dropdown = ttk.Combobox(frame, textvariable=self.ttest_alternative_var, values=ttest_alternative_options, state='readonly')
-        ttest_alternative_dropdown.grid(row=1, column=1, sticky="ew", padx=8, pady=8)
+        ttest_alternative_dropdown.grid(row=2, column=1, sticky="ew", padx=8, pady=8)
+        
         # ANOVA type
-        ttk.Label(frame, text="ANOVA type:").grid(row=2, column=0, sticky="w", padx=8, pady=8)
+        ttk.Label(frame, text="ANOVA type:").grid(row=3, column=0, sticky="w", padx=8, pady=8)
         self.anova_type_var = tk.StringVar(value="Welch's ANOVA")
         anova_options = [
             "One-way ANOVA",
@@ -536,9 +552,10 @@ class ExcelPlotterApp:
             "Repeated measures ANOVA"
         ]
         anova_dropdown = ttk.Combobox(frame, textvariable=self.anova_type_var, values=anova_options, state='readonly')
-        anova_dropdown.grid(row=2, column=1, sticky="ew", padx=8, pady=8)
+        anova_dropdown.grid(row=3, column=1, sticky="ew", padx=8, pady=8)
+        
         # Post-hoc test
-        ttk.Label(frame, text="Post-hoc test:").grid(row=3, column=0, sticky="w", padx=8, pady=8)
+        ttk.Label(frame, text="Post-hoc test:").grid(row=4, column=0, sticky="w", padx=8, pady=8)
         self.posthoc_type_var = tk.StringVar(value="Tamhane's T2")
         posthoc_options = [
             "Tukey's HSD",
@@ -547,7 +564,7 @@ class ExcelPlotterApp:
             "Dunn's test"
         ]
         posthoc_dropdown = ttk.Combobox(frame, textvariable=self.posthoc_type_var, values=posthoc_options, state='readonly')
-        posthoc_dropdown.grid(row=3, column=1, sticky="ew", padx=8, pady=8)
+        posthoc_dropdown.grid(row=4, column=1, sticky="ew", padx=8, pady=8)
 
 
     def get_config_dir(self):
@@ -628,6 +645,95 @@ class ExcelPlotterApp:
 
     def show_about(self):
         messagebox.showinfo("About Excel Plotter", f"Excel Plotter\nVersion: {self.version}\n\nA tool for plotting Excel data.")
+        
+    def show_stats_info(self):
+        """Display information about statistical tests and when to use them."""
+        window = tk.Toplevel(self.root)
+        window.title("Statistical Tests Information")
+        window.geometry("800x600")
+        
+        # Create notebook with tabs for different test categories
+        notebook = ttk.Notebook(window)
+        notebook.pack(fill='both', expand=True, padx=10, pady=10)
+        
+        # Create tabs
+        t_test_frame = ttk.Frame(notebook)
+        anova_frame = ttk.Frame(notebook)
+        posthoc_frame = ttk.Frame(notebook)
+        general_frame = ttk.Frame(notebook)
+        
+        notebook.add(general_frame, text='General Guidelines')
+        notebook.add(t_test_frame, text='t-tests')
+        notebook.add(anova_frame, text='ANOVA')
+        notebook.add(posthoc_frame, text='Post-hoc Tests')
+        
+        # Function to create formatted text widgets
+        def create_text_widget(parent):
+            text = tk.Text(parent, wrap='word', padx=10, pady=10)
+            text.pack(fill='both', expand=True)
+            scrollbar = ttk.Scrollbar(text, command=text.yview)
+            text.configure(yscrollcommand=scrollbar.set)
+            scrollbar.pack(side='right', fill='y')
+            text.tag_configure('heading', font=(None, 12, 'bold'))
+            text.tag_configure('subheading', font=(None, 11, 'bold'))
+            text.tag_configure('normal', font=(None, 10))
+            return text
+        
+        # General guidelines
+        general_text = create_text_widget(general_frame)
+        general_text.insert('end', 'When to Use Which Statistical Test\n', 'heading')
+        general_text.insert('end', '\nThis guide will help you choose the appropriate statistical test for your data.\n\n', 'normal')
+        general_text.insert('end', '1. For comparing TWO groups:', 'subheading')
+        general_text.insert('end', '\n   • Use a t-test (Student\'s or Welch\'s for unpaired data, Paired for paired data)\n', 'normal')
+        general_text.insert('end', '2. For comparing THREE OR MORE groups:', 'subheading')
+        general_text.insert('end', '\n   • Use ANOVA followed by a post-hoc test to identify which specific groups differ\n', 'normal')
+        general_text.insert('end', '3. For non-parametric data (data that doesn\'t follow normal distribution):', 'subheading')
+        general_text.insert('end', '\n   • Consider using non-parametric alternatives like Dunn\'s test for post-hoc comparisons\n', 'normal')
+        general_text.insert('end', '\nThe ExcelPlotter automatically selects appropriate tests based on your data structure.\n', 'normal')
+        general_text.configure(state='disabled')  # Make read-only
+        
+        # t-tests information
+        t_test_text = create_text_widget(t_test_frame)
+        t_test_text.insert('end', 't-test Types\n', 'heading')
+        t_test_text.insert('end', '\nStudent\'s t-test (unpaired):', 'subheading')
+        t_test_text.insert('end', '\n• Use when: Comparing two independent groups with equal variances\n• Example: Control group vs. Treatment group with similar spread of data\n• Assumption: Equal variances between groups\n\n', 'normal')
+        t_test_text.insert('end', 'Welch\'s t-test (unpaired, unequal variances):', 'subheading')
+        t_test_text.insert('end', '\n• Use when: Comparing two independent groups with unequal variances\n• Example: Control group vs. Treatment group with different spread of data\n• More robust when variances differ\n• Recommended as default for most unpaired comparisons\n\n', 'normal')
+        t_test_text.insert('end', 'Paired t-test:', 'subheading')
+        t_test_text.insert('end', '\n• Use when: Comparing paired measurements (before/after, matched samples)\n• Example: Before treatment vs. After treatment in the same subjects\n• Requires equal number of data points in both groups\n\n', 'normal')
+        t_test_text.insert('end', 't-test Alternatives:', 'subheading')
+        t_test_text.insert('end', '\n• two-sided: Tests if groups are different (most common)\n• less: Tests if first group mean is less than second group mean\n• greater: Tests if first group mean is greater than second group mean\n', 'normal')
+        t_test_text.configure(state='disabled')  # Make read-only
+        
+        # ANOVA information
+        anova_text = create_text_widget(anova_frame)
+        anova_text.insert('end', 'ANOVA Types\n', 'heading')
+        anova_text.insert('end', '\nOne-way ANOVA:', 'subheading')
+        anova_text.insert('end', '\n• Use when: Comparing three or more independent groups with equal variances\n• Example: Multiple treatment groups vs. control\n• Assumption: Equal variances across all groups\n\n', 'normal')
+        anova_text.insert('end', 'Welch\'s ANOVA:', 'subheading')
+        anova_text.insert('end', '\n• Use when: Comparing three or more independent groups with unequal variances\n• More robust than standard ANOVA when variances differ\n• Recommended as default for most multi-group comparisons\n\n', 'normal')
+        anova_text.insert('end', 'Repeated measures ANOVA:', 'subheading')
+        anova_text.insert('end', '\n• Use when: Comparing multiple measurements of the same subjects\n• Example: Measurements at different time points or conditions on the same samples\n• More powerful than independent ANOVA for paired data\n\n', 'normal')
+        anova_text.insert('end', 'Important Note:', 'subheading')
+        anova_text.insert('end', '\nANOVA only tells you that differences exist among groups, not which specific groups differ. For that, you need post-hoc tests.\n', 'normal')
+        anova_text.configure(state='disabled')  # Make read-only
+        
+        # Post-hoc tests information
+        posthoc_text = create_text_widget(posthoc_frame)
+        posthoc_text.insert('end', 'Post-hoc Tests\n', 'heading')
+        posthoc_text.insert('end', '\nAfter finding significant differences with ANOVA, use post-hoc tests to identify which specific groups differ from each other.\n\n', 'normal')
+        posthoc_text.insert('end', 'Tukey\'s HSD (Honestly Significant Difference):', 'subheading')
+        posthoc_text.insert('end', '\n• Use when: Equal sample sizes and variances across groups\n• Controls family-wise error rate while conducting all pairwise comparisons\n• Balanced between conservative and liberal\n\n', 'normal')
+        posthoc_text.insert('end', 'Tamhane\'s T2:', 'subheading')
+        posthoc_text.insert('end', '\n• Use when: Unequal variances across groups\n• Conservative test that doesn\'t assume equal variances\n• Recommended default after Welch\'s ANOVA\n\n', 'normal')
+        posthoc_text.insert('end', 'Scheffe\'s test:', 'subheading')
+        posthoc_text.insert('end', '\n• Use when: Complex comparisons beyond simple pairwise comparisons\n• Very conservative test with strong control of Type I error\n• Flexible for examining various contrasts and combinations\n\n', 'normal')
+        posthoc_text.insert('end', 'Dunn\'s test:', 'subheading')
+        posthoc_text.insert('end', '\n• Use when: Data doesn\'t follow normal distribution\n• Non-parametric alternative for multiple comparisons\n• Often used after Kruskal-Wallis test (non-parametric equivalent of ANOVA)\n', 'normal')
+        posthoc_text.configure(state='disabled')  # Make read-only
+        
+        # Close button at bottom
+        ttk.Button(window, text="Close", command=window.destroy).pack(pady=10)
 
     def show_statistical_details(self):
         window = tk.Toplevel(self.root)
@@ -740,6 +846,30 @@ class ExcelPlotterApp:
                             posthoc_type = self.latest_stats.get('posthoc_type', "Tukey's HSD")
                             
                             details_text.insert(tk.END, f"Test Used: {anova_type} + {posthoc_type} across {n_x_categories} categories\n\n")
+                            
+                            # Display the main ANOVA result if available
+                            anova_results = self.latest_stats.get('anova_results', None)
+                            if anova_results is not None:
+                                try:
+                                    # ANOVA results format may vary based on the test type
+                                    if 'p-unc' in anova_results.columns:  # pingouin format
+                                        anova_p = anova_results['p-unc'].iloc[0]
+                                    elif 'p' in anova_results.columns:  # alternate format
+                                        anova_p = anova_results['p'].iloc[0]
+                                    else:
+                                        anova_p = None
+                                        
+                                    if anova_p is not None:
+                                        details_text.insert(tk.END, f"Main ANOVA result: p = {anova_p:.4g} {self.pval_to_annotation(anova_p)}\n")
+                                        details_text.insert(tk.END, "")
+                                        
+                                        # Add guidance for non-significant ANOVA results
+                                        if anova_p > 0.05:
+                                            details_text.insert(tk.END, "\n⚠️ WARNING: The overall ANOVA p-value is not significant (p > 0.05).\n")
+                                            details_text.insert(tk.END, "When the main ANOVA is not significant, post-hoc test results should be interpreted with caution\n")
+                                            details_text.insert(tk.END, "as there may not be meaningful differences between any groups.\n\n")
+                                except Exception as e:
+                                    print(f"[DEBUG] Error displaying ANOVA p-value: {e}")
                             
                             # Check if we have p-values from previous calculations
                             print(f"[DEBUG] Statistical Details - latest_pvals keys: {list(self.latest_pvals.keys())}")
@@ -921,14 +1051,27 @@ class ExcelPlotterApp:
                                                 # Fill diagonal with 1.0 (no difference)
                                                 for g in groups:
                                                     posthoc.loc[g, g] = 1.0
-                                                # Ensure p-values are properly stored as floats
-                                                posthoc = posthoc.astype(float)
+                                                print(f"[DEBUG] Tukey's HSD result matrix created")
+                                            
                                             elif posthoc_type == "Scheffe's test":
                                                 posthoc = sp.posthoc_scheffe(df_long, val_col='MeltedValue', group_col=x_col)
+                                            
                                             elif posthoc_type == "Dunn's test":
                                                 posthoc = sp.posthoc_dunn(df_long, val_col='MeltedValue', group_col=x_col)
+                                            
                                             else:  # Default to Tamhane's T2
                                                 posthoc = sp.posthoc_tamhane(df_long, val_col='MeltedValue', group_col=x_col)
+                                                # Ensure p-values are properly stored for access in the statistical details panel
+                                                # Store these values in latest_pvals for display
+                                                groups = df_long[x_col].unique()
+                                                for i, g1 in enumerate(groups):
+                                                    for j, g2 in enumerate(groups):
+                                                        if i != j:  # Skip diagonal
+                                                            # Store p-value for this pair
+                                                            pval = posthoc.loc[g1, g2]
+                                                            key = self.stat_key(g1, g2)
+                                                            self.latest_pvals[key] = pval
+                                                            self.latest_stats['pvals'][key] = pval
                                         
                                         details_text.insert(tk.END, f"Post-hoc {stored_posthoc_type} test:\n")
                                         details_text.insert(tk.END, self.format_pvalue_matrix(posthoc) + '\n')
@@ -1672,13 +1815,21 @@ class ExcelPlotterApp:
 
     def update_columns(self):
         columns = list(self.df.columns)
+        
+        # Update dropdown values
         self.xaxis_dropdown['values'] = columns
         self.group_dropdown['values'] = ['None'] + columns
-
+        
+        # Reset selections when switching sheets
+        self.xaxis_var.set('')  # Clear X-axis selection
+        self.group_var.set('None')  # Reset group selection to None
+        
+        # Clear Y-axis checkboxes
         for cb in self.value_checkbuttons:
             cb.destroy()
         self.value_vars.clear()
-
+        
+        # Recreate value column checkboxes
         for col in columns:
             var = tk.BooleanVar()
             cb = tk.Checkbutton(self.value_vars_inner_frame, text=col, variable=var)
@@ -1790,8 +1941,14 @@ class ExcelPlotterApp:
         self.stats_enabled_for_this_plot = True
         
         value_cols = [col for var, col in self.value_vars if var.get() and col != x_col]
-        if not x_col or not value_cols:
-            messagebox.showerror("Error", "Select X-axis and at least one value column.")
+        
+        # Handle empty selections gracefully
+        if not x_col:
+            messagebox.showinfo("Missing X-axis", "Please select an X-axis column.")
+            return
+        
+        if not value_cols:
+            messagebox.showinfo("Missing Y-axis", "Please select at least one Y-axis column.")
             return
             
         plot_mode = 'single' if len(value_cols) == 1 else 'overlay'
@@ -2728,6 +2885,9 @@ class ExcelPlotterApp:
 
             # --- Statistics/Annotations ---
             if self.use_stats_var.get():
+                base_groups = []
+                hue_groups = []
+                annotation_count = 0
                 try:
                     print(f"[DEBUG] Starting annotations: x_col={x_col}, value_col={value_col}, hue_col={hue_col}")
                     # Calculate p-values for all pairs
