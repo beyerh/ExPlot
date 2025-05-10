@@ -1,6 +1,6 @@
 # Excel Plotter - Data visualization tool for Excel files
 
-VERSION = "0.4.8"
+VERSION = "0.4.9"
 # =====================================================================
 
 import tkinter as tk
@@ -2563,7 +2563,7 @@ class ExcelPlotterApp:
                 if errorbar_type == 'SD':
                     plot_args['errorbar'] = 'sd'  # or ci='sd' for older Seaborn
                 else:
-                    plot_args['errorbar'] = ('ci', 68)  # 68% CI = ±1 SEM
+                    plot_args['errorbar'] = 'se'  # Using native standard error parameter
                 
                 # Set errorbar styling - capsize needs to be passed directly to barplot
                 # and line width needs to be in err_kws
