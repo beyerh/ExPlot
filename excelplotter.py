@@ -1,6 +1,6 @@
 # Excel Plotter - Data visualization tool for Excel files
 
-VERSION = "0.4.9"
+VERSION = "0.5.0"
 # =====================================================================
 
 import tkinter as tk
@@ -434,6 +434,7 @@ class ExcelPlotterApp:
         self.config_dir.mkdir(parents=True, exist_ok=True)
         self.custom_colors_file = str(self.config_dir / "custom_colors.json")
         self.custom_palettes_file = str(self.config_dir / "custom_palettes.json")
+        self.default_settings_file = str(self.config_dir / "default_settings.json")
         self.temp_pdf = str(Path(tempfile.gettempdir()) / "excelplotter_temp_plot.pdf")
         self.xaxis_renames = {}
         self.xaxis_order = []
@@ -443,6 +444,13 @@ class ExcelPlotterApp:
         self.strip_black_var = tk.BooleanVar(value=True)
         self.show_stripplot_var = tk.BooleanVar(value=True)
         self.plot_kind_var = tk.StringVar(value="bar")  # "bar", "box", or "xy"
+        # Error bar settings
+        self.errorbar_type_var = tk.StringVar(value="SD")
+        # Statistics settings
+        self.ttest_type_var = tk.StringVar(value="Welch's t-test (unpaired, unequal variances)")
+        self.ttest_alternative_var = tk.StringVar(value="two-sided")
+        self.anova_type_var = tk.StringVar(value="Welch's ANOVA")
+        self.posthoc_type_var = tk.StringVar(value="Tamhane's T2")
         # Log scale variables
         self.xlogscale_var = tk.BooleanVar(value=False)
         self.xlog_base_var = tk.StringVar(value="10")
@@ -459,6 +467,10 @@ class ExcelPlotterApp:
         self.xy_show_mean_errorbars_var = tk.BooleanVar(value=True)
         self.xy_draw_band_var = tk.BooleanVar(value=False)
         self.load_custom_colors_palettes()
+        # Initialize default plot dimensions for the plot area
+        self.plot_width_var = tk.DoubleVar(value=1.5)
+        self.plot_height_var = tk.DoubleVar(value=1.5)
+        self.load_user_preferences()
         self.setup_menu()
         self.setup_ui()
         self.setup_statistics_settings_tab()
@@ -529,7 +541,7 @@ class ExcelPlotterApp:
         
         # t-test type
         ttk.Label(frame, text="t-test type:").grid(row=1, column=0, sticky="w", padx=8, pady=8)
-        self.ttest_type_var = tk.StringVar(value="Welch's t-test (unpaired, unequal variances)")
+        # Use the existing ttest_type_var variable initialized in __init__
         ttest_options = [
             "Student's t-test (unpaired)",
             "Welch's t-test (unpaired, unequal variances)",
@@ -540,7 +552,7 @@ class ExcelPlotterApp:
         
         # T-test alternative hypothesis
         ttk.Label(frame, text="T-test Alternative:").grid(row=2, column=0, sticky="w", padx=8, pady=8)
-        self.ttest_alternative_var = tk.StringVar(value="two-sided")
+        # Use the existing ttest_alternative_var variable initialized in __init__
         ttest_alternative_options = [
             "two-sided",
             "less",
@@ -551,7 +563,7 @@ class ExcelPlotterApp:
         
         # ANOVA type
         ttk.Label(frame, text="ANOVA type:").grid(row=3, column=0, sticky="w", padx=8, pady=8)
-        self.anova_type_var = tk.StringVar(value="Welch's ANOVA")
+        # Use the existing anova_type_var variable initialized in __init__
         anova_options = [
             "One-way ANOVA",
             "Welch's ANOVA",
@@ -562,7 +574,7 @@ class ExcelPlotterApp:
         
         # Post-hoc test
         ttk.Label(frame, text="Post-hoc test:").grid(row=4, column=0, sticky="w", padx=8, pady=8)
-        self.posthoc_type_var = tk.StringVar(value="Tamhane's T2")
+        # Use the existing posthoc_type_var variable initialized in __init__
         posthoc_options = [
             "Tukey's HSD",
             "Tamhane's T2",
@@ -592,7 +604,7 @@ class ExcelPlotterApp:
         menubar.add_cascade(label="File", menu=filemenu)
         # --- Settings menu ---
         settingsmenu = tk.Menu(menubar, tearoff=0)
-        settingsmenu.add_command(label="Settings", command=self.show_settings)
+        settingsmenu.add_command(label="Default Settings", command=self.show_settings)
         menubar.add_cascade(label="Settings", menu=settingsmenu)
         # --- Help menu ---
         helpmenu = tk.Menu(menubar, tearoff=0)
@@ -625,10 +637,109 @@ class ExcelPlotterApp:
 
     def show_settings(self):
         window = tk.Toplevel(self.root)
-        window.title("App Settings")
-        window.geometry("340x180")
-        tk.Label(window, text="Reset color settings to default:", font=(None, 11, 'bold')).pack(pady=(16, 8))
-
+        window.title("Default Settings")
+        window.geometry("600x550")
+        
+        # Create notebook for tabs
+        notebook = ttk.Notebook(window)
+        notebook.pack(fill='both', expand=True, padx=10, pady=10)
+        
+        # Create tabs
+        general_tab = ttk.Frame(notebook)
+        plot_settings_tab = ttk.Frame(notebook)
+        stats_tab = ttk.Frame(notebook)
+        appearance_tab = ttk.Frame(notebook)
+        xy_plot_tab = ttk.Frame(notebook)
+        
+        notebook.add(general_tab, text='General')
+        notebook.add(plot_settings_tab, text='Plot Settings')
+        notebook.add(stats_tab, text='Statistics')
+        notebook.add(appearance_tab, text='Appearance')
+        notebook.add(xy_plot_tab, text='XY Plot')
+        
+        # Variables to hold settings
+        # General tab
+        self.settings_plot_kind_var = tk.StringVar(value=self.plot_kind_var.get())
+        
+        # Plot Settings tab
+        self.settings_show_stripplot_var = tk.BooleanVar(value=self.show_stripplot_var.get())
+        self.settings_strip_black_var = tk.BooleanVar(value=self.strip_black_var.get())
+        self.settings_errorbar_type_var = tk.StringVar(value=self.errorbar_type_var.get())
+        self.settings_errorbar_black_var = tk.BooleanVar(value=self.errorbar_black_var.get())
+        self.settings_errorbar_capsize_var = tk.StringVar(value=self.errorbar_capsize_var.get())
+        
+        # Statistics tab
+        self.settings_use_stats_var = tk.BooleanVar(value=self.use_stats_var.get())
+        self.settings_ttest_type_var = tk.StringVar(value=self.ttest_type_var.get())
+        self.settings_ttest_alternative_var = tk.StringVar(value=self.ttest_alternative_var.get())
+        self.settings_anova_type_var = tk.StringVar(value=self.anova_type_var.get())
+        self.settings_posthoc_type_var = tk.StringVar(value=self.posthoc_type_var.get())
+        
+        # Appearance tab
+        self.settings_linewidth = tk.DoubleVar(value=self.linewidth.get())
+        self.settings_plot_width_var = tk.DoubleVar(value=self.plot_width_var.get())
+        self.settings_plot_height_var = tk.DoubleVar(value=self.plot_height_var.get())
+        
+        # XY Plot tab
+        self.settings_xy_marker_symbol_var = tk.StringVar(value=self.xy_marker_symbol_var.get())
+        self.settings_xy_marker_size_var = tk.DoubleVar(value=self.xy_marker_size_var.get())
+        self.settings_xy_filled_var = tk.BooleanVar(value=self.xy_filled_var.get())
+        self.settings_xy_line_style_var = tk.StringVar(value=self.xy_line_style_var.get())
+        self.settings_xy_line_black_var = tk.BooleanVar(value=self.xy_line_black_var.get())
+        self.settings_xy_connect_var = tk.BooleanVar(value=self.xy_connect_var.get())
+        self.settings_xy_show_mean_var = tk.BooleanVar(value=self.xy_show_mean_var.get())
+        self.settings_xy_show_mean_errorbars_var = tk.BooleanVar(value=self.xy_show_mean_errorbars_var.get())
+        self.settings_xy_draw_band_var = tk.BooleanVar(value=self.xy_draw_band_var.get())
+        
+        # General Tab Content
+        tk.Label(general_tab, text="Default Plot Type:", anchor="w").grid(row=0, column=0, sticky="w", padx=10, pady=10)
+        ttk.Combobox(general_tab, textvariable=self.settings_plot_kind_var, values=["bar", "box", "xy"], width=15, state="readonly").grid(row=0, column=1, sticky="w", padx=10, pady=10)
+        
+        # Plot Settings Tab Content
+        tk.Checkbutton(plot_settings_tab, text="Show stripplot", variable=self.settings_show_stripplot_var).grid(row=0, column=0, sticky="w", padx=10, pady=5)
+        tk.Checkbutton(plot_settings_tab, text="Use black stripplot", variable=self.settings_strip_black_var).grid(row=1, column=0, sticky="w", padx=10, pady=5)
+        
+        tk.Label(plot_settings_tab, text="Error bar type:", anchor="w").grid(row=2, column=0, sticky="w", padx=10, pady=10)
+        ttk.Combobox(plot_settings_tab, textvariable=self.settings_errorbar_type_var, values=["SD", "SEM"], width=15, state="readonly").grid(row=2, column=1, sticky="w", padx=10, pady=10)
+        
+        tk.Checkbutton(plot_settings_tab, text="Black error bars", variable=self.settings_errorbar_black_var).grid(row=3, column=0, sticky="w", padx=10, pady=5)
+        
+        tk.Label(plot_settings_tab, text="Error bar capsize:", anchor="w").grid(row=4, column=0, sticky="w", padx=10, pady=10)
+        ttk.Combobox(plot_settings_tab, textvariable=self.settings_errorbar_capsize_var, values=["Default", "None", "Small", "Medium", "Large"], width=15, state="readonly").grid(row=4, column=1, sticky="w", padx=10, pady=10)
+        
+        # Statistics Tab Content
+        # Use statistics checkbox at the top
+        tk.Checkbutton(stats_tab, text="Use statistics by default", variable=self.settings_use_stats_var).grid(row=0, column=0, columnspan=2, sticky="w", padx=10, pady=5)
+        
+        tk.Label(stats_tab, text="t-test type:", anchor="w").grid(row=1, column=0, sticky="w", padx=10, pady=10)
+        ttest_options = ["Student's t-test (unpaired)", "Welch's t-test (unpaired, unequal variances)", "Paired t-test"]
+        ttk.Combobox(stats_tab, textvariable=self.settings_ttest_type_var, values=ttest_options, width=35, state="readonly").grid(row=1, column=1, sticky="w", padx=10, pady=10)
+        
+        tk.Label(stats_tab, text="T-test Alternative:", anchor="w").grid(row=2, column=0, sticky="w", padx=10, pady=10)
+        ttest_alternative_options = ["two-sided", "less", "greater"]
+        ttk.Combobox(stats_tab, textvariable=self.settings_ttest_alternative_var, values=ttest_alternative_options, width=35, state="readonly").grid(row=2, column=1, sticky="w", padx=10, pady=10)
+        
+        tk.Label(stats_tab, text="ANOVA type:", anchor="w").grid(row=3, column=0, sticky="w", padx=10, pady=10)
+        anova_options = ["One-way ANOVA", "Welch's ANOVA", "Repeated measures ANOVA"]
+        ttk.Combobox(stats_tab, textvariable=self.settings_anova_type_var, values=anova_options, width=35, state="readonly").grid(row=3, column=1, sticky="w", padx=10, pady=10)
+        
+        tk.Label(stats_tab, text="Post-hoc test:", anchor="w").grid(row=4, column=0, sticky="w", padx=10, pady=10)
+        posthoc_options = ["Tukey's HSD", "Tamhane's T2", "Scheffe's test", "Dunn's test"]
+        ttk.Combobox(stats_tab, textvariable=self.settings_posthoc_type_var, values=posthoc_options, width=35, state="readonly").grid(row=4, column=1, sticky="w", padx=10, pady=10)
+        
+        # Appearance Tab Content
+        tk.Label(appearance_tab, text="Line width:", anchor="w").grid(row=0, column=0, sticky="w", padx=10, pady=10)
+        tk.Spinbox(appearance_tab, from_=0.5, to=5.0, increment=0.5, textvariable=self.settings_linewidth, width=5).grid(row=0, column=1, sticky="w", padx=10, pady=10)
+        
+        tk.Label(appearance_tab, text="Plot width (inches):", anchor="w").grid(row=1, column=0, sticky="w", padx=10, pady=10)
+        tk.Spinbox(appearance_tab, from_=0.5, to=5.0, increment=0.1, textvariable=self.settings_plot_width_var, width=5).grid(row=1, column=1, sticky="w", padx=10, pady=10)
+        
+        tk.Label(appearance_tab, text="Plot height (inches):", anchor="w").grid(row=2, column=0, sticky="w", padx=10, pady=10)
+        tk.Spinbox(appearance_tab, from_=0.5, to=5.0, increment=0.1, textvariable=self.settings_plot_height_var, width=5).grid(row=2, column=1, sticky="w", padx=10, pady=10)
+        
+        # Reset colors/palettes
+        tk.Label(appearance_tab, text="Reset options:", anchor="w", font=(None, 10, 'bold')).grid(row=3, column=0, sticky="w", padx=10, pady=(20, 5))
+        
         def reset_colors():
             if messagebox.askyesno("Reset Colors", "This will delete your custom colors and cannot be undone. Continue?"):
                 if os.path.exists(self.custom_colors_file):
@@ -636,7 +747,7 @@ class ExcelPlotterApp:
                 self.load_custom_colors_palettes()
                 self.update_color_palette_dropdowns()
                 messagebox.showinfo("Reset Colors", "Colors have been reset to default.")
-
+                
         def reset_palettes():
             if messagebox.askyesno("Reset Palettes", "This will delete your custom palettes and cannot be undone. Continue?"):
                 if os.path.exists(self.custom_palettes_file):
@@ -644,10 +755,49 @@ class ExcelPlotterApp:
                 self.load_custom_colors_palettes()
                 self.update_color_palette_dropdowns()
                 messagebox.showinfo("Reset Palettes", "Color palettes have been reset to default.")
-
-        tk.Button(window, text="Reset Colors", command=reset_colors, width=18).pack(pady=4)
-        tk.Button(window, text="Reset Palettes", command=reset_palettes, width=18).pack(pady=4)
-        tk.Button(window, text="Close", command=window.destroy, width=12).pack(pady=(16, 4))
+                
+        reset_frame = tk.Frame(appearance_tab)
+        reset_frame.grid(row=4, column=0, columnspan=2, sticky="w", padx=10, pady=5)
+        tk.Button(reset_frame, text="Reset Colors", command=reset_colors, width=15).grid(row=0, column=0, padx=5)
+        tk.Button(reset_frame, text="Reset Palettes", command=reset_palettes, width=15).grid(row=0, column=1, padx=5)
+        
+        # XY Plot Tab Content
+        tk.Label(xy_plot_tab, text="Marker Symbol:", anchor="w").grid(row=0, column=0, sticky="w", padx=10, pady=10)
+        ttk.Combobox(xy_plot_tab, textvariable=self.settings_xy_marker_symbol_var, values=["o", "s", "^", "D", "v", "P", "X", "+", "x", "*", "."], width=5, state="readonly").grid(row=0, column=1, sticky="w", padx=10, pady=10)
+        
+        tk.Label(xy_plot_tab, text="Marker Size:", anchor="w").grid(row=1, column=0, sticky="w", padx=10, pady=10)
+        tk.Spinbox(xy_plot_tab, from_=1, to=15, increment=0.5, textvariable=self.settings_xy_marker_size_var, width=5).grid(row=1, column=1, sticky="w", padx=10, pady=10)
+        
+        tk.Checkbutton(xy_plot_tab, text="Filled Symbols", variable=self.settings_xy_filled_var).grid(row=2, column=0, sticky="w", padx=10, pady=5, columnspan=2)
+        
+        tk.Label(xy_plot_tab, text="Line Style:", anchor="w").grid(row=3, column=0, sticky="w", padx=10, pady=10)
+        ttk.Combobox(xy_plot_tab, textvariable=self.settings_xy_line_style_var, values=["solid", "dashed", "dotted", "dashdot"], width=10, state="readonly").grid(row=3, column=1, sticky="w", padx=10, pady=10)
+        
+        tk.Checkbutton(xy_plot_tab, text="Lines in Black", variable=self.settings_xy_line_black_var).grid(row=4, column=0, sticky="w", padx=10, pady=5, columnspan=2)
+        tk.Checkbutton(xy_plot_tab, text="Connect Mean with Lines", variable=self.settings_xy_connect_var).grid(row=5, column=0, sticky="w", padx=10, pady=5, columnspan=2)
+        tk.Checkbutton(xy_plot_tab, text="Show Mean Values", variable=self.settings_xy_show_mean_var).grid(row=6, column=0, sticky="w", padx=10, pady=5, columnspan=2)
+        tk.Checkbutton(xy_plot_tab, text="With Error Bars", variable=self.settings_xy_show_mean_errorbars_var).grid(row=7, column=0, sticky="w", padx=30, pady=5, columnspan=2)
+        tk.Checkbutton(xy_plot_tab, text="Draw Bands", variable=self.settings_xy_draw_band_var).grid(row=8, column=0, sticky="w", padx=10, pady=5, columnspan=2)
+        
+        # Buttons at the bottom
+        button_frame = tk.Frame(window)
+        button_frame.pack(pady=10, fill='x')
+        
+        def save_settings():
+            self.save_user_preferences()
+            messagebox.showinfo("Settings Saved", "Your preferences have been saved.")
+            window.destroy()
+            
+        def reset_all_preferences():
+            if messagebox.askyesno("Reset All Preferences", "This will reset all preferences to default values and cannot be undone. Continue?"):
+                if os.path.exists(self.default_settings_file):
+                    os.remove(self.default_settings_file)
+                messagebox.showinfo("Reset Preferences", "All preferences have been reset to default values.")
+                window.destroy()
+        
+        tk.Button(button_frame, text="Save Settings", command=save_settings, width=15).pack(side=tk.LEFT, padx=5)
+        tk.Button(button_frame, text="Reset All Preferences", command=reset_all_preferences, width=20).pack(side=tk.LEFT, padx=5)
+        tk.Button(button_frame, text="Cancel", command=window.destroy, width=10).pack(side=tk.RIGHT, padx=5)
 
     def show_about(self):
         messagebox.showinfo("About Excel Plotter", f"Excel Plotter\nVersion: {self.version}\n\nA tool for plotting Excel data.")
@@ -1455,6 +1605,210 @@ class ExcelPlotterApp:
                 color = tuple(int(x * 255) for x in color)
             return '#{:02x}{:02x}{:02x}'.format(*color)
         return str(color)
+        
+    def load_user_preferences(self):
+        """Load user preferences from a JSON file and apply them to the application."""
+        # Initialize default preferences first
+        default_preferences = {
+            'plot_kind': 'bar',
+            'show_stripplot': True,
+            'strip_black': True,
+            'errorbar_type': 'SD',
+            'errorbar_black': True,
+            'errorbar_capsize': 'Default',
+            'use_stats': False,  # Default 'Use statistics' setting
+            'ttest_type': "Welch's t-test (unpaired, unequal variances)",
+            'ttest_alternative': 'two-sided',
+            'anova_type': "Welch's ANOVA",
+            'posthoc_type': "Tamhane's T2",
+            'linewidth': 1.0,
+            'plot_width': 1.5,
+            'plot_height': 1.5,
+            'xy_marker_symbol': 'o',
+            'xy_marker_size': 5,
+            'xy_filled': True,
+            'xy_line_style': 'solid',
+            'xy_line_black': False,
+            'xy_connect': False,
+            'xy_show_mean': True,
+            'xy_show_mean_errorbars': True,
+            'xy_draw_band': False
+        }
+        
+        # Check if user preferences file exists
+        if os.path.exists(self.default_settings_file):
+            try:
+                with open(self.default_settings_file, 'r') as f:
+                    user_prefs = json.load(f)
+                # Update default_preferences with user's saved preferences
+                default_preferences.update(user_prefs)
+            except Exception as e:
+                messagebox.showwarning("Error Loading Preferences", f"Could not load preferences: {str(e)}")
+        
+        # Apply the preferences to the UI
+        self._apply_user_preferences(default_preferences)
+    
+    def _apply_user_preferences(self, preferences):
+        """Apply the loaded preferences to UI elements."""
+        # General tab settings
+        if hasattr(self, 'plot_kind_var') and 'plot_kind' in preferences:
+            self.plot_kind_var.set(preferences['plot_kind'])
+        
+        # Plot Settings
+        if hasattr(self, 'show_stripplot_var') and 'show_stripplot' in preferences:
+            self.show_stripplot_var.set(preferences['show_stripplot'])
+        if hasattr(self, 'strip_black_var') and 'strip_black' in preferences:
+            self.strip_black_var.set(preferences['strip_black'])
+        if hasattr(self, 'errorbar_type_var') and 'errorbar_type' in preferences:
+            self.errorbar_type_var.set(preferences['errorbar_type'])
+        if hasattr(self, 'errorbar_black_var') and 'errorbar_black' in preferences:
+            self.errorbar_black_var.set(preferences['errorbar_black'])
+        if hasattr(self, 'errorbar_capsize_var') and 'errorbar_capsize' in preferences:
+            self.errorbar_capsize_var.set(preferences['errorbar_capsize'])
+            
+        # Statistics tab
+        if hasattr(self, 'use_stats_var') and 'use_stats' in preferences:
+            self.use_stats_var.set(preferences['use_stats'])
+        if hasattr(self, 'ttest_type_var') and 'ttest_type' in preferences:
+            self.ttest_type_var.set(preferences['ttest_type'])
+        if hasattr(self, 'ttest_alternative_var') and 'ttest_alternative' in preferences:
+            self.ttest_alternative_var.set(preferences['ttest_alternative'])
+        if hasattr(self, 'anova_type_var') and 'anova_type' in preferences:
+            self.anova_type_var.set(preferences['anova_type'])
+        if hasattr(self, 'posthoc_type_var') and 'posthoc_type' in preferences:
+            self.posthoc_type_var.set(preferences['posthoc_type'])
+            
+        # Appearance tab
+        if hasattr(self, 'linewidth') and 'linewidth' in preferences:
+            self.linewidth.set(preferences['linewidth'])
+        if 'plot_width' in preferences and hasattr(self, 'plot_width_var'):
+            self.plot_width_var.set(preferences['plot_width'])
+        if 'plot_height' in preferences and hasattr(self, 'plot_height_var'):
+            self.plot_height_var.set(preferences['plot_height'])
+        
+        # XY Plot tab
+        if hasattr(self, 'xy_marker_symbol_var') and 'xy_marker_symbol' in preferences:
+            self.xy_marker_symbol_var.set(preferences['xy_marker_symbol'])
+        if hasattr(self, 'xy_marker_size_var') and 'xy_marker_size' in preferences:
+            self.xy_marker_size_var.set(preferences['xy_marker_size'])
+        if hasattr(self, 'xy_filled_var') and 'xy_filled' in preferences:
+            self.xy_filled_var.set(preferences['xy_filled'])
+        if hasattr(self, 'xy_line_style_var') and 'xy_line_style' in preferences:
+            self.xy_line_style_var.set(preferences['xy_line_style'])
+        if hasattr(self, 'xy_line_black_var') and 'xy_line_black' in preferences:
+            self.xy_line_black_var.set(preferences['xy_line_black'])
+        if hasattr(self, 'xy_connect_var') and 'xy_connect' in preferences:
+            self.xy_connect_var.set(preferences['xy_connect'])
+        if hasattr(self, 'xy_show_mean_var') and 'xy_show_mean' in preferences:
+            self.xy_show_mean_var.set(preferences['xy_show_mean'])
+        if hasattr(self, 'xy_show_mean_errorbars_var') and 'xy_show_mean_errorbars' in preferences:
+            self.xy_show_mean_errorbars_var.set(preferences['xy_show_mean_errorbars'])
+        if hasattr(self, 'xy_draw_band_var') and 'xy_draw_band' in preferences:
+            self.xy_draw_band_var.set(preferences['xy_draw_band'])
+    
+    def save_user_preferences(self):
+        """Save current UI settings as user preferences to a JSON file."""
+        preferences = {}
+        
+        # General tab settings
+        if hasattr(self, 'settings_plot_kind_var'):
+            preferences['plot_kind'] = self.settings_plot_kind_var.get()
+            
+        # Plot Settings
+        if hasattr(self, 'settings_show_stripplot_var'):
+            preferences['show_stripplot'] = self.settings_show_stripplot_var.get()
+        if hasattr(self, 'settings_strip_black_var'):
+            preferences['strip_black'] = self.settings_strip_black_var.get()
+        if hasattr(self, 'settings_errorbar_type_var'):
+            preferences['errorbar_type'] = self.settings_errorbar_type_var.get()
+        if hasattr(self, 'settings_errorbar_black_var'):
+            preferences['errorbar_black'] = self.settings_errorbar_black_var.get()
+        if hasattr(self, 'settings_errorbar_capsize_var'):
+            preferences['errorbar_capsize'] = self.settings_errorbar_capsize_var.get()
+            
+        # Statistics tab
+        if hasattr(self, 'settings_use_stats_var'):
+            preferences['use_stats'] = self.settings_use_stats_var.get()
+        if hasattr(self, 'settings_ttest_type_var'):
+            preferences['ttest_type'] = self.settings_ttest_type_var.get()
+        if hasattr(self, 'settings_ttest_alternative_var'):
+            preferences['ttest_alternative'] = self.settings_ttest_alternative_var.get()
+        if hasattr(self, 'settings_anova_type_var'):
+            preferences['anova_type'] = self.settings_anova_type_var.get()
+        if hasattr(self, 'settings_posthoc_type_var'):
+            preferences['posthoc_type'] = self.settings_posthoc_type_var.get()
+            
+        # Appearance tab
+        if hasattr(self, 'settings_linewidth'):
+            preferences['linewidth'] = self.settings_linewidth.get()
+        if hasattr(self, 'settings_plot_width_var'):
+            plot_width = self.settings_plot_width_var.get()
+            preferences['plot_width'] = plot_width
+            self.plot_width_var.set(plot_width)  # Apply to main app immediately
+        if hasattr(self, 'settings_plot_height_var'):
+            plot_height = self.settings_plot_height_var.get()
+            preferences['plot_height'] = plot_height
+            self.plot_height_var.set(plot_height)  # Apply to main app immediately
+        
+        # XY Plot tab
+        if hasattr(self, 'settings_xy_marker_symbol_var'):
+            preferences['xy_marker_symbol'] = self.settings_xy_marker_symbol_var.get()
+        if hasattr(self, 'settings_xy_marker_size_var'):
+            preferences['xy_marker_size'] = self.settings_xy_marker_size_var.get()
+        if hasattr(self, 'settings_xy_filled_var'):
+            preferences['xy_filled'] = self.settings_xy_filled_var.get()
+        if hasattr(self, 'settings_xy_line_style_var'):
+            preferences['xy_line_style'] = self.settings_xy_line_style_var.get()
+        if hasattr(self, 'settings_xy_line_black_var'):
+            preferences['xy_line_black'] = self.settings_xy_line_black_var.get()
+        if hasattr(self, 'settings_xy_connect_var'):
+            preferences['xy_connect'] = self.settings_xy_connect_var.get()
+        if hasattr(self, 'settings_xy_show_mean_var'):
+            preferences['xy_show_mean'] = self.settings_xy_show_mean_var.get()
+        if hasattr(self, 'settings_xy_show_mean_errorbars_var'):
+            preferences['xy_show_mean_errorbars'] = self.settings_xy_show_mean_errorbars_var.get()
+        if hasattr(self, 'settings_xy_draw_band_var'):
+            preferences['xy_draw_band'] = self.settings_xy_draw_band_var.get()
+            
+        # Save preferences to file
+        try:
+            # Ensure config directory exists
+            os.makedirs(os.path.dirname(self.default_settings_file), exist_ok=True)
+            
+            # Save preferences
+            with open(self.default_settings_file, 'w') as f:
+                json.dump(preferences, f, indent=2)
+                
+            # Apply preferences to application variables
+            self.plot_kind_var.set(preferences.get('plot_kind', 'bar'))
+            self.show_stripplot_var.set(preferences.get('show_stripplot', True))
+            self.strip_black_var.set(preferences.get('strip_black', True))
+            self.errorbar_type_var.set(preferences.get('errorbar_type', 'SD'))
+            self.errorbar_black_var.set(preferences.get('errorbar_black', True))
+            self.errorbar_capsize_var.set(preferences.get('errorbar_capsize', 'Default'))
+            self.use_stats_var.set(preferences.get('use_stats', False))
+            self.ttest_type_var.set(preferences.get('ttest_type', "Welch's t-test (unpaired, unequal variances)"))
+            self.ttest_alternative_var.set(preferences.get('ttest_alternative', 'two-sided'))
+            self.anova_type_var.set(preferences.get('anova_type', "Welch's ANOVA"))
+            self.posthoc_type_var.set(preferences.get('posthoc_type', "Tamhane's T2"))
+            self.linewidth.set(preferences.get('linewidth', 1.0))
+            self.plot_width_var.set(preferences.get('plot_width', 1.5))
+            self.plot_height_var.set(preferences.get('plot_height', 1.5))
+            self.xy_marker_symbol_var.set(preferences.get('xy_marker_symbol', 'o'))
+            self.xy_marker_size_var.set(preferences.get('xy_marker_size', 5))
+            self.xy_filled_var.set(preferences.get('xy_filled', True))
+            self.xy_line_style_var.set(preferences.get('xy_line_style', 'solid'))
+            self.xy_line_black_var.set(preferences.get('xy_line_black', False))
+            self.xy_connect_var.set(preferences.get('xy_connect', False))
+            self.xy_show_mean_var.set(preferences.get('xy_show_mean', True))
+            self.xy_show_mean_errorbars_var.set(preferences.get('xy_show_mean_errorbars', True))
+            self.xy_draw_band_var.set(preferences.get('xy_draw_band', False))
+            
+            # Confirmation message
+            messagebox.showinfo("Settings Saved", "Your preferences have been saved and applied.")
+        except Exception as e:
+            messagebox.showerror("Error Saving Preferences", f"Could not save preferences: {str(e)}")
+            print(f"Error saving preferences: {str(e)}")
 
     def setup_ui(self):
         main_frame = tk.Frame(self.root)
@@ -1550,12 +1904,15 @@ class ExcelPlotterApp:
         opt_grp.pack(fill='x', padx=6, pady=4)
         self.split_yaxis = tk.BooleanVar(value=False)
         tk.Checkbutton(opt_grp, text="Split Y-axis if multiple", variable=self.split_yaxis).pack(anchor="w", pady=1)
-        self.use_stats_var = tk.BooleanVar(value=False)
+        # We use the use_stats_var that was initialized in __init__
+        # No need to create it again here
         stats_frame = tk.Frame(opt_grp)
         stats_frame.pack(anchor="w", pady=1)
         tk.Checkbutton(stats_frame, text="Use statistics", variable=self.use_stats_var).pack(side="left")
         # --- Error bar type (SD/SEM) ---
-        self.errorbar_type_var = tk.StringVar(value="SD")
+        # We use the errorbar_type_var that was initialized in __init__
+        # No need to create it again here
+            
         errorbar_frame = tk.Frame(opt_grp)
         errorbar_frame.pack(anchor="w", pady=2)
         tk.Label(errorbar_frame, text="Error bars:").pack(side="left")
@@ -1637,12 +1994,10 @@ class ExcelPlotterApp:
         size_grp = tk.LabelFrame(frame, text="Figure Size", padx=6, pady=6)
         size_grp.pack(fill='x', padx=6, pady=(8,4))
         tk.Label(size_grp, text="Plot Width (inches):").grid(row=0, column=0, sticky="w", pady=2)
-        self.width_entry = tk.Entry(size_grp)
-        self.width_entry.insert(0, "1.5")
+        self.width_entry = tk.Entry(size_grp, textvariable=self.plot_width_var)
         self.width_entry.grid(row=0, column=1, sticky="ew", padx=2, pady=2)
         tk.Label(size_grp, text="Plot Height per plot (inches):").grid(row=1, column=0, sticky="w", pady=2)
-        self.height_entry = tk.Entry(size_grp)
-        self.height_entry.insert(0, "1.5")
+        self.height_entry = tk.Entry(size_grp, textvariable=self.plot_height_var)
         self.height_entry.grid(row=1, column=1, sticky="ew", padx=2, pady=2)
         size_grp.columnconfigure(1, weight=1)
         # --- Font/Line group ---
@@ -2032,8 +2387,8 @@ class ExcelPlotterApp:
             return
             
         plot_mode = 'single' if len(value_cols) == 1 else 'overlay'
-        plot_width = float(self.width_entry.get())
-        plot_height = float(self.height_entry.get())
+        plot_width = self.plot_width_var.get()
+        plot_height = self.plot_height_var.get()
         fontsize = int(self.fontsize_entry.get())
         n_rows = len(value_cols) if (self.split_yaxis.get() and plot_mode == 'single') else 1
 
