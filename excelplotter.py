@@ -1,6 +1,6 @@
 # Excel Plotter - Data visualization tool for Excel files
 
-VERSION = "0.5.0"
+VERSION = "0.5.1"
 # =====================================================================
 
 import tkinter as tk
@@ -596,44 +596,528 @@ class ExcelPlotterApp:
             return Path.home() / ".config" / "ExcelPlotter"
 
     def setup_menu(self):
+        """Setup the application menu."""
         menubar = tk.Menu(self.root)
         self.root.config(menu=menubar)
-        # --- File menu ---
-        filemenu = tk.Menu(menubar, tearoff=0)
-        filemenu.add_command(label="Load Example Data", command=self.load_example_data)
-        menubar.add_cascade(label="File", menu=filemenu)
-        # --- Settings menu ---
-        settingsmenu = tk.Menu(menubar, tearoff=0)
-        settingsmenu.add_command(label="Default Settings", command=self.show_settings)
-        menubar.add_cascade(label="Settings", menu=settingsmenu)
-        # --- Help menu ---
-        helpmenu = tk.Menu(menubar, tearoff=0)
-        helpmenu.add_command(label="About", command=self.show_about)
-        menubar.add_cascade(label="Help", menu=helpmenu)
+        
+        # File menu
+        file_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="File", menu=file_menu)
+        file_menu.add_command(label="Open Excel File", command=self.open_file)
+        file_menu.add_command(label="Load Example Data", command=self.load_example_data)
+        file_menu.add_command(label="Save Graph", command=self.save_graph)
+        file_menu.add_separator()
+        file_menu.add_command(label="Save Project", command=self.save_project)
+        file_menu.add_command(label="Load Project", command=self.load_project)
+        file_menu.add_separator()
+        file_menu.add_command(label="Exit", command=self.root.quit)
+        
+        # Options menu
+        option_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Options", menu=option_menu)
+        option_menu.add_command(label="Default Settings", command=self.show_settings)
+        
+        # Help menu
+        help_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Help", menu=help_menu)
+        help_menu.add_command(label="About", command=self.show_about)
 
+    def save_project(self):
+        """Save current plot configuration to a project file."""
+        # Check if we have data to save
+        if self.df is None:
+            messagebox.showwarning("No Data", "Please load data before saving a project.")
+            return
+            
+        # Ask user for save location
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".explt",
+            filetypes=[("ExcelPlotter Projects", "*.explt"), ("All files", "*.*")],
+            title="Save Project"
+        )
+        
+        if not file_path:
+            return  # User cancelled
+            
+        try:
+            # Convert dataframe to JSON-serializable format
+            # We need to convert the DataFrame into a nested dictionary/list structure 
+            # that can be serialized to JSON
+            
+            # First convert to dict with records orientation
+            df_records = self.df.to_dict(orient='records')
+            
+            # Get the columns list
+            df_columns = list(self.df.columns)
+            
+            # Get index if it's not the default RangeIndex
+            df_index = None
+            if not isinstance(self.df.index, pd.RangeIndex):
+                df_index = self.df.index.tolist()
+                    
+            # Create project dictionary with all relevant settings
+            project = {
+                'version': VERSION,
+                'timestamp': pd.Timestamp.now().isoformat(),
+                'excel_file': self.current_excel_file if hasattr(self, 'current_excel_file') else None,
+                'sheet_name': self.selected_sheet.get() if hasattr(self, 'selected_sheet') else None,
+                
+                # Save the data for offline use
+                'data': {
+                    'columns': df_columns,
+                    'records': df_records,
+                    'index': df_index
+                },
+                
+                # Plot configuration
+                'plot_kind': self.plot_kind_var.get(),
+                'x_column': self.xaxis_var.get() if hasattr(self, 'xaxis_var') else None,
+                'y_column': self.selected_y_col.get() if hasattr(self, 'selected_y_col') else None,
+                'hue_column': self.group_var.get() if hasattr(self, 'group_var') and self.group_var.get() != 'None' else None,
+                
+                # Value columns selected in the Basic tab
+                'selected_columns': [col for var, col in self.value_vars if var.get()] if hasattr(self, 'value_vars') else [],
+                
+                # X-axis label renaming and reordering
+                'xaxis_renames': self.xaxis_renames if hasattr(self, 'xaxis_renames') else {},
+                'xaxis_order': self.xaxis_order if hasattr(self, 'xaxis_order') else [],
+                'use_stats': self.use_stats_var.get(),
+                'errorbar_type': self.errorbar_type_var.get(),
+                'errorbar_black': self.errorbar_black_var.get() if hasattr(self, 'errorbar_black_var') else True,
+                'show_stripplot': self.show_stripplot_var.get(),
+                'strip_black': self.strip_black_var.get() if hasattr(self, 'strip_black_var') else True,
+                
+                # Statistics settings
+                'ttest_type': self.ttest_type_var.get(),
+                'ttest_alternative': self.ttest_alternative_var.get(),
+                'anova_type': self.anova_type_var.get(),
+                'posthoc_type': self.posthoc_type_var.get(),
+                
+                # Plot appearance
+                'plot_width': self.plot_width_var.get(),
+                'plot_height': self.plot_height_var.get(),
+                'xlogscale': self.xlogscale_var.get() if hasattr(self, 'xlogscale_var') else False,
+                'xlog_base': self.xlog_base_var.get() if hasattr(self, 'xlog_base_var') else "10",
+                'logscale': self.logscale_var.get() if hasattr(self, 'logscale_var') else False,
+                'ylog_base': self.ylog_base_var.get() if hasattr(self, 'ylog_base_var') else "10",
+                
+                # XY plot settings
+                'xy_marker_symbol': self.xy_marker_symbol_var.get() if hasattr(self, 'xy_marker_symbol_var') else "o",
+                'xy_marker_size': self.xy_marker_size_var.get() if hasattr(self, 'xy_marker_size_var') else 5,
+                'xy_filled': self.xy_filled_var.get() if hasattr(self, 'xy_filled_var') else True,
+                'xy_line_style': self.xy_line_style_var.get() if hasattr(self, 'xy_line_style_var') else "solid",
+                'xy_line_black': self.xy_line_black_var.get() if hasattr(self, 'xy_line_black_var') else False,
+                'xy_connect': self.xy_connect_var.get() if hasattr(self, 'xy_connect_var') else False,
+                'xy_show_mean': self.xy_show_mean_var.get() if hasattr(self, 'xy_show_mean_var') else True,
+                'xy_show_mean_errorbars': self.xy_show_mean_errorbars_var.get() if hasattr(self, 'xy_show_mean_errorbars_var') else True,
+                'xy_draw_band': self.xy_draw_band_var.get() if hasattr(self, 'xy_draw_band_var') else False,
+                
+                # Plot titles/labels
+                'plot_title': self.plot_title_var.get() if hasattr(self, 'plot_title_var') else "",
+                'x_axis_label': self.x_axis_label_var.get() if hasattr(self, 'x_axis_label_var') else "",
+                'y_axis_label': self.y_axis_label_var.get() if hasattr(self, 'y_axis_label_var') else ""
+            }
+            
+            # Save to file
+            with open(file_path, 'w') as f:
+                json.dump(project, f, indent=2)
+                
+            messagebox.showinfo("Success", f"Project saved to {file_path}")
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to save project: {str(e)}")
+            
+    def load_project(self):
+        """Load a saved project file."""
+        file_path = filedialog.askopenfilename(
+            filetypes=[("ExcelPlotter Projects", "*.explt"), ("All files", "*.*")],
+            title="Load Project"
+        )
+        
+        if not file_path:
+            return  # User cancelled
+            
+        try:
+            # Load project file
+            with open(file_path, 'r') as f:
+                project = json.load(f)
+                
+            # Check version compatibility
+            file_version = project.get('version', '0.0.0')
+            if file_version.split('.')[0] != VERSION.split('.')[0]:
+                if not messagebox.askyesno("Version Mismatch", 
+                                      f"Project was created with version {file_version} and may not be compatible with current version {VERSION}. Continue anyway?"):
+                    return
+            
+            # Check if we have embedded data in the project
+            has_embedded_data = 'data' in project and project['data'] is not None
+            
+            # Check if the original Excel file exists
+            excel_file = project.get('excel_file')
+            original_file_exists = excel_file and os.path.exists(excel_file)
+            
+            # Always use embedded data if available
+            use_original_file = False
+            
+            if has_embedded_data:
+                # Proceed with embedded data without asking
+                use_original_file = False
+            elif original_file_exists:
+                # Only use original file if no embedded data is available
+                use_original_file = True
+            else:
+                # No data source available
+                messagebox.showwarning(
+                    "No Data Source", 
+                    "Neither embedded data nor the original Excel file are available. "
+                    "Please select a new data source."
+                )
+                if self.open_file():
+                    # If user successfully selected a new file, continue with that
+                    use_original_file = True
+                else:
+                    # User cancelled file selection
+                    return
+                
+            # Load data from appropriate source
+            if use_original_file:
+                # Use original Excel file
+                self.process_excel_file(excel_file)
+                
+                # Select the right sheet
+                sheet_name = project.get('sheet_name')
+                if sheet_name and hasattr(self, 'selected_sheet') and sheet_name in self.sheet_options:
+                    self.selected_sheet.set(sheet_name)
+                    self.on_sheet_selected()
+            elif has_embedded_data:
+                # Use embedded data
+                try:
+                    # Reconstruct DataFrame from embedded data
+                    data_info = project['data']
+                    columns = data_info.get('columns', [])
+                    
+                    # Get data records - these could be stored in different formats depending on version
+                    records = data_info.get('records')
+                    if records is None:
+                        # Try legacy format
+                        legacy_data = data_info.get('data', {})
+                        if isinstance(legacy_data, dict):
+                            # Handle column-oriented dict format
+                            df_data = {}
+                            for col in columns:
+                                if col in legacy_data:
+                                    df_data[col] = legacy_data[col]
+                                else:
+                                    # Handle missing columns
+                                    df_data[col] = [None] * (len(list(legacy_data.values())[0]) if legacy_data else 0)
+                            self.df = pd.DataFrame(df_data)
+                        elif isinstance(legacy_data, list):
+                            # Handle list format
+                            self.df = pd.DataFrame(legacy_data, columns=columns)
+                        else:
+                            # Cannot process this format
+                            raise ValueError(f"Unrecognized data format in project file")
+                    else:
+                        # Handle standard records format
+                        self.df = pd.DataFrame.from_records(records)
+                    
+                    # Restore index if available
+                    index = data_info.get('index')
+                    if index is not None:
+                        self.df.index = index
+                        
+                    # Set up UI for embedded data
+                    self.current_excel_file = "[Embedded Data]"  # Mark as embedded data
+                    self.excel_file = "[Embedded Data]"
+                    
+                    # Create mock sheet selection for embedded data
+                    self.sheet_options = ['EmbeddedData']
+                    if hasattr(self, 'sheet_dropdown'):
+                        self.sheet_dropdown['values'] = self.sheet_options
+                    
+                    if hasattr(self, 'selected_sheet'):
+                        self.selected_sheet.set('EmbeddedData')
+                    elif hasattr(self, 'sheet_var'):
+                        self.sheet_var.set('EmbeddedData')
+                    
+                    # Update columns in UI
+                    self.update_columns()
+                    
+                except Exception as e:
+                    messagebox.showerror("Error", f"Failed to load embedded data: {str(e)}")
+                    return
+            
+            # Set column selections
+            x_column = project.get('x_column')
+            y_column = project.get('y_column')
+            hue_column = project.get('hue_column')
+            selected_columns = project.get('selected_columns', [])
+            
+            # Set X-axis column
+            if x_column and hasattr(self, 'xaxis_var') and x_column in self.df.columns:
+                self.xaxis_var.set(x_column)
+                
+            # Set Y-axis column (if applicable)
+            if y_column and hasattr(self, 'selected_y_col') and y_column in self.df.columns:
+                self.selected_y_col.set(y_column)
+                
+            # Set group/hue column
+            if hasattr(self, 'group_var'):
+                if hue_column and hue_column in self.df.columns:
+                    self.group_var.set(hue_column)
+                else:
+                    self.group_var.set('None')
+                
+            # Restore the selected value columns in the Basic tab
+            if hasattr(self, 'value_vars') and selected_columns:
+                # Set checkboxes for the selected columns that exist in the current dataframe
+                existing_columns = set(self.df.columns)
+                for var, col in self.value_vars:
+                    if col in selected_columns and col in existing_columns:
+                        var.set(True)
+                    else:
+                        var.set(False)
+                        
+            # Restore X-axis label renaming and reordering
+            if hasattr(self, 'xaxis_renames') and 'xaxis_renames' in project:
+                # Load the saved renames dictionary
+                saved_renames = project.get('xaxis_renames', {})
+                if saved_renames:
+                    # Convert keys to appropriate types if needed (JSON serialization may have converted numeric keys to strings)
+                    self.xaxis_renames = {}
+                    for k, v in saved_renames.items():
+                        # Try to convert numeric strings back to numbers if they were originally numbers
+                        try:
+                            if '.' in k:
+                                # Try as float
+                                num_key = float(k)
+                                self.xaxis_renames[num_key] = v
+                            else:
+                                # Try as integer
+                                num_key = int(k)
+                                self.xaxis_renames[num_key] = v
+                        except ValueError:
+                            # Not a number, use as is
+                            self.xaxis_renames[k] = v
+            
+            if hasattr(self, 'xaxis_order') and 'xaxis_order' in project:
+                # Load the saved order list
+                self.xaxis_order = project.get('xaxis_order', [])
+                
+            # Apply plot settings
+            if 'plot_kind' in project and hasattr(self, 'plot_kind_var'):
+                self.plot_kind_var.set(project['plot_kind'])
+                
+            if 'use_stats' in project and hasattr(self, 'use_stats_var'):
+                self.use_stats_var.set(project['use_stats'])
+                
+            if 'errorbar_type' in project and hasattr(self, 'errorbar_type_var'):
+                self.errorbar_type_var.set(project['errorbar_type'])
+                
+            if 'errorbar_black' in project and hasattr(self, 'errorbar_black_var'):
+                self.errorbar_black_var.set(project['errorbar_black'])
+                
+            if 'show_stripplot' in project and hasattr(self, 'show_stripplot_var'):
+                self.show_stripplot_var.set(project['show_stripplot'])
+                
+            if 'strip_black' in project and hasattr(self, 'strip_black_var'):
+                self.strip_black_var.set(project['strip_black'])
+                
+            # Statistics settings
+            if 'ttest_type' in project and hasattr(self, 'ttest_type_var'):
+                self.ttest_type_var.set(project['ttest_type'])
+                
+            if 'ttest_alternative' in project and hasattr(self, 'ttest_alternative_var'):
+                self.ttest_alternative_var.set(project['ttest_alternative'])
+                
+            if 'anova_type' in project and hasattr(self, 'anova_type_var'):
+                self.anova_type_var.set(project['anova_type'])
+                
+            if 'posthoc_type' in project and hasattr(self, 'posthoc_type_var'):
+                self.posthoc_type_var.set(project['posthoc_type'])
+                
+            # Plot appearance
+            if 'plot_width' in project and hasattr(self, 'plot_width_var'):
+                self.plot_width_var.set(project['plot_width'])
+                
+            if 'plot_height' in project and hasattr(self, 'plot_height_var'):
+                self.plot_height_var.set(project['plot_height'])
+                
+            if 'xlogscale' in project and hasattr(self, 'xlogscale_var'):
+                self.xlogscale_var.set(project['xlogscale'])
+                
+            if 'xlog_base' in project and hasattr(self, 'xlog_base_var'):
+                self.xlog_base_var.set(project['xlog_base'])
+                
+            if 'logscale' in project and hasattr(self, 'logscale_var'):
+                self.logscale_var.set(project['logscale'])
+                
+            if 'ylog_base' in project and hasattr(self, 'ylog_base_var'):
+                self.ylog_base_var.set(project['ylog_base'])
+            
+            # XY plot settings
+            if 'xy_marker_symbol' in project and hasattr(self, 'xy_marker_symbol_var'):
+                self.xy_marker_symbol_var.set(project['xy_marker_symbol'])
+                
+            if 'xy_marker_size' in project and hasattr(self, 'xy_marker_size_var'):
+                self.xy_marker_size_var.set(project['xy_marker_size'])
+                
+            if 'xy_filled' in project and hasattr(self, 'xy_filled_var'):
+                self.xy_filled_var.set(project['xy_filled'])
+                
+            if 'xy_line_style' in project and hasattr(self, 'xy_line_style_var'):
+                self.xy_line_style_var.set(project['xy_line_style'])
+                
+            if 'xy_line_black' in project and hasattr(self, 'xy_line_black_var'):
+                self.xy_line_black_var.set(project['xy_line_black'])
+                
+            if 'xy_connect' in project and hasattr(self, 'xy_connect_var'):
+                self.xy_connect_var.set(project['xy_connect'])
+                
+            if 'xy_show_mean' in project and hasattr(self, 'xy_show_mean_var'):
+                self.xy_show_mean_var.set(project['xy_show_mean'])
+                
+            if 'xy_show_mean_errorbars' in project and hasattr(self, 'xy_show_mean_errorbars_var'):
+                self.xy_show_mean_errorbars_var.set(project['xy_show_mean_errorbars'])
+                
+            if 'xy_draw_band' in project and hasattr(self, 'xy_draw_band_var'):
+                self.xy_draw_band_var.set(project['xy_draw_band'])
+                
+            # Plot titles/labels
+            if 'plot_title' in project and hasattr(self, 'plot_title_var'):
+                self.plot_title_var.set(project['plot_title'])
+                
+            if 'x_axis_label' in project and hasattr(self, 'x_axis_label_var'):
+                self.x_axis_label_var.set(project['x_axis_label'])
+                
+            if 'y_axis_label' in project and hasattr(self, 'y_axis_label_var'):
+                self.y_axis_label_var.set(project['y_axis_label'])
+                
+            # Generate the plot
+            if hasattr(self, 'plot_button'):
+                self.plot_button.invoke()
+                
+            messagebox.showinfo("Success", "Project loaded successfully!")
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to load project: {str(e)}")
+            
+    def process_excel_file(self, file_path):
+        """Process an Excel file by loading it and setting up UI elements."""
+        try:
+            self.excel_file = file_path
+            self.current_excel_file = file_path  # Store path for project saving/loading
+            
+            if file_path.lower().endswith('.csv'):
+                # Handle CSV files
+                self.df = pd.read_csv(file_path, dtype=object)
+                # Create a single sheet for CSV
+                self.sheet_options = ['Sheet1']
+                if hasattr(self, 'selected_sheet'):
+                    self.selected_sheet.set('Sheet1')
+                elif hasattr(self, 'sheet_var'):
+                    self.sheet_var.set('Sheet1')
+                
+                # Update column selection dropdowns
+                self.update_columns()
+            else:
+                # Handle Excel files
+                xls = pd.ExcelFile(self.excel_file)
+                self.sheet_options = xls.sheet_names
+                
+                # Update the sheet dropdown
+                if hasattr(self, 'sheet_dropdown'):
+                    self.sheet_dropdown['values'] = self.sheet_options
+                
+                # Set the sheet (prefer 'export' if it exists)
+                if "export" in self.sheet_options:
+                    sheet_name = "export"
+                else:
+                    sheet_name = self.sheet_options[0]
+                
+                # Handle the different sheet variable names used in the code
+                if hasattr(self, 'selected_sheet'):
+                    self.selected_sheet.set(sheet_name)
+                if hasattr(self, 'sheet_var'):
+                    self.sheet_var.set(sheet_name)
+                
+                # Load the selected sheet
+                self.load_sheet()
+                
+        except Exception as e:
+            raise Exception(f"Error processing file: {str(e)}")
+    
+    def open_file(self):
+        """Open an Excel file through a file dialog.
+        
+        Returns:
+            bool: True if a file was successfully loaded, False otherwise.
+        """
+        file_path = filedialog.askopenfilename(
+            filetypes=[("Excel files", "*.xlsx *.xls"), ("CSV files", "*.csv"), ("All files", "*.*")],
+            title="Open Data File"
+        )
+        
+        if file_path:
+            try:
+                self.process_excel_file(file_path)
+                return True
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to open file: {str(e)}")
+                return False
+        return False
+                
     def load_example_data(self):
+        """Load the example data file included with the application."""
         # Construct the path to the example_data.xlsx file
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        example_data_path = os.path.join(script_dir, 'example_data.xlsx')
-
-        # Check if the file exists
-        if not os.path.exists(example_data_path):
-            messagebox.showerror('Error', 'Example data file not found!')
+        example_data_path = os.path.join(script_dir, "example_data.xlsx")
+        
+        try:
+            if os.path.exists(example_data_path):
+                self.process_excel_file(example_data_path)
+            else:
+                messagebox.showerror("Error", f"Example data file not found at {example_data_path}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to load example data: {str(e)}")
+            
+    def save_graph(self):
+        """Save the current plot to an image file."""
+        if not hasattr(self, 'fig') or self.fig is None:
+            messagebox.showwarning("No Plot", "Please create a plot before saving.")
             return
-
-        # Directly set the excel_file attribute and load the file
-        self.excel_file = example_data_path
-        xls = pd.ExcelFile(self.excel_file)
-        self.sheet_dropdown['values'] = xls.sheet_names
-
-        # Set the sheet (prefer 'export' if it exists)
-        if "export" in xls.sheet_names:
-            self.sheet_var.set("export")
-        else:
-            self.sheet_var.set(xls.sheet_names[0])
-
-        # Load the selected sheet
-        self.load_sheet()
+            
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".png",
+            filetypes=[
+                ("PNG files", "*.png"),
+                ("PDF files", "*.pdf"),
+                ("SVG files", "*.svg"),
+                ("JPEG files", "*.jpg"),
+                ("All files", "*.*")
+            ],
+            title="Save Graph"
+        )
+        
+        if not file_path:
+            return  # User cancelled
+            
+        try:
+            # Get the file extension
+            extension = os.path.splitext(file_path)[1].lower()
+            
+            # Save with appropriate DPI based on format
+            if extension == '.pdf' or extension == '.svg':
+                # Vector formats - save at high quality
+                self.fig.savefig(file_path, bbox_inches='tight')
+            else:
+                # Raster formats - use appropriate DPI
+                self.fig.savefig(file_path, dpi=300, bbox_inches='tight')
+                
+            messagebox.showinfo("Success", f"Graph saved to {file_path}")
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to save graph: {str(e)}")
 
     def show_settings(self):
         window = tk.Toplevel(self.root)
@@ -2414,7 +2898,8 @@ class ExcelPlotterApp:
         })
 
         sns.set_theme(style='white', rc={"axes.grid": False})
-        fig, axes = plt.subplots(n_rows, 1, figsize=(fig_width, fig_height), squeeze=False)
+        # Create the figure and store it as a class attribute for later use in save_graph
+        self.fig, axes = plt.subplots(n_rows, 1, figsize=(fig_width, fig_height), squeeze=False)
         axes = axes.flatten()
 
         show_frame = self.show_frame_var.get()
@@ -2935,7 +3420,24 @@ class ExcelPlotterApp:
                 sns.barplot(**plot_args)
                 # (All manual ax.errorbar code for bars removed)
             elif plot_kind == "box":
-                sns.boxplot(**plot_args)
+                # For ungrouped data, we need to adjust the boxplot parameters
+                # to ensure proper centering over X-values
+                if 'hue' in plot_args and plot_args['hue'] is None:
+                    # Make a copy of plot_args to avoid modifying the original
+                    box_args = plot_args.copy()
+                    
+                    # Remove dodge parameter for ungrouped data
+                    if 'dodge' in box_args:
+                        box_args.pop('dodge')
+                    
+                    # Adjust width to ensure proper centering
+                    box_args['width'] = 0.5
+                    
+                    sns.boxplot(**box_args)
+                else:
+                    # Use original parameters for grouped data
+                    sns.boxplot(**plot_args)
+                    
                 ax.tick_params(axis='x', which='both', direction='in', length=4, width=linewidth, top=False, bottom=True, labeltop=False, labelbottom=True)
             elif plot_kind == "xy":
                 marker_size = self.xy_marker_size_var.get()
