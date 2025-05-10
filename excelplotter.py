@@ -1,6 +1,6 @@
 # Excel Plotter - Data visualization tool for Excel files
 
-VERSION = "0.4.7"
+VERSION = "0.4.8"
 # =====================================================================
 
 import tkinter as tk
@@ -1711,6 +1711,8 @@ class ExcelPlotterApp:
                       value="vertical").pack(side="left", padx=5)
         tk.Radiobutton(orient_frame, text="Horizontal", variable=self.label_orientation, 
                       value="horizontal").pack(side="left", padx=5)
+        tk.Radiobutton(orient_frame, text="Angled", variable=self.label_orientation, 
+                      value="angled").pack(side="left", padx=5)
         
         # --- X-Axis settings (more compact with grid layout) ---
         xaxis_grp = tk.LabelFrame(frame, text="X-Axis Settings", padx=4, pady=2)
@@ -3122,6 +3124,35 @@ class ExcelPlotterApp:
             # Ensure minor ticks never have labels
             ax.tick_params(axis='both', which='minor', labelsize=0, labelbottom=False, labeltop=False, 
                            labelleft=False, labelright=False)
+            
+            # Apply tick label orientation based on user selection
+            orientation = self.label_orientation.get()
+            if not swap_axes:
+                # X-axis orientation when axes are not swapped
+                if orientation == "horizontal":
+                    ax.tick_params(axis='x', which='major', labelrotation=0)
+                elif orientation == "vertical":
+                    ax.tick_params(axis='x', which='major', labelrotation=90)
+                elif orientation == "angled":
+                    # For angled labels, we need to set both rotation and alignment to center properly
+                    ax.tick_params(axis='x', which='major', labelrotation=45)
+                    # Set proper alignment for angled labels to center under their ticks
+                    for label in ax.get_xticklabels():
+                        label.set_horizontalalignment('right')
+                        label.set_rotation_mode('anchor')
+            else:
+                # Y-axis orientation when axes are swapped (becomes the category axis)
+                if orientation == "horizontal":
+                    ax.tick_params(axis='y', which='major', labelrotation=0)
+                elif orientation == "vertical":
+                    ax.tick_params(axis='y', which='major', labelrotation=90)
+                elif orientation == "angled":
+                    # For angled labels, we need to set both rotation and alignment to center properly
+                    ax.tick_params(axis='y', which='major', labelrotation=45)
+                    # Set proper alignment for angled labels to center under their ticks
+                    for label in ax.get_yticklabels():
+                        label.set_verticalalignment('top')
+                        label.set_rotation_mode('anchor')
 
             ax_position = [left_margin / fig_width,
                            bottom_margin / fig_height,
