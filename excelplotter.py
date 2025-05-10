@@ -439,9 +439,15 @@ class ExcelPlotterApp:
         self.xaxis_order = []
         self.use_stats_var = tk.BooleanVar(value=False)
         self.linewidth = tk.DoubleVar(value=1.0)
+        self.errorbar_capsize_var = tk.StringVar(value="Default")  # Capsize style for error bars
         self.strip_black_var = tk.BooleanVar(value=True)
         self.show_stripplot_var = tk.BooleanVar(value=True)
         self.plot_kind_var = tk.StringVar(value="bar")  # "bar", "box", or "xy"
+        # Log scale variables
+        self.xlogscale_var = tk.BooleanVar(value=False)
+        self.xlog_base_var = tk.StringVar(value="10")
+        self.logscale_var = tk.BooleanVar(value=False)
+        self.ylog_base_var = tk.StringVar(value="10")
         # --- XY plot option variables (ensure these are initialized before setup_ui) ---
         self.xy_marker_symbol_var = tk.StringVar(value="o")
         self.xy_marker_size_var = tk.DoubleVar(value=5)
@@ -1649,6 +1655,10 @@ class ExcelPlotterApp:
         tk.Label(font_grp, text="Line Width:").grid(row=1, column=0, sticky="w", pady=2)
         self.linewidth_entry = tk.Entry(font_grp, textvariable=self.linewidth)
         self.linewidth_entry.grid(row=1, column=1, sticky="ew", padx=2, pady=2)
+        tk.Label(font_grp, text="Error Bar Capsize:").grid(row=2, column=0, sticky="w", pady=2)
+        self.capsize_dropdown = ttk.Combobox(font_grp, textvariable=self.errorbar_capsize_var, 
+                                        values=["Default", "Narrow", "Wide", "Wider", "None"], width=10)
+        self.capsize_dropdown.grid(row=2, column=1, sticky="ew", padx=2, pady=2)
         font_grp.columnconfigure(1, weight=1)
         # --- Stripplot group ---
         strip_grp = tk.LabelFrame(frame, text="Stripplot", padx=6, pady=6)
@@ -1671,59 +1681,127 @@ class ExcelPlotterApp:
 
     def setup_axis_tab(self):
         frame = self.axis_tab
-        # --- X Label group ---
-        xlabel_grp = tk.LabelFrame(frame, text="X-axis Label", padx=6, pady=6)
-        xlabel_grp.pack(fill='x', padx=6, pady=(8,4))
-        tk.Label(xlabel_grp, text="X-axis Label:").pack(anchor="w")
-        self.xlabel_entry = tk.Entry(xlabel_grp)
-        self.xlabel_entry.pack(fill='x', pady=2)
-        # --- Y Label group ---
-        ylabel_grp = tk.LabelFrame(frame, text="Y-axis Label", padx=6, pady=6)
-        ylabel_grp.pack(fill='x', padx=6, pady=4)
-        tk.Label(ylabel_grp, text="Y-axis Label:").pack(anchor="w")
-        self.ylabel_entry = tk.Entry(ylabel_grp)
-        self.ylabel_entry.pack(fill='x', pady=2)
-        # --- Label orientation group ---
-        orient_grp = tk.LabelFrame(frame, text="X-axis Label Orientation", padx=6, pady=6)
-        orient_grp.pack(fill='x', padx=6, pady=4)
+        
+        # --- Combined X/Y Labels frame ---
+        labels_frame = tk.Frame(frame)
+        labels_frame.pack(fill='x', padx=4, pady=1)
+        
+        # X-axis label row with grid layout for alignment
+        xlabel_frame = tk.Frame(labels_frame)
+        xlabel_frame.pack(fill='x', padx=0, pady=1)
+        xlabel_frame.columnconfigure(1, weight=1)
+        tk.Label(xlabel_frame, text="X-axis Label:", width=14, anchor="w").grid(row=0, column=0, padx=2)
+        self.xlabel_entry = tk.Entry(xlabel_frame)
+        self.xlabel_entry.grid(row=0, column=1, sticky="ew", padx=2)
+        
+        # Y-axis label row (just below X)
+        ylabel_frame = tk.Frame(labels_frame)
+        ylabel_frame.pack(fill='x', padx=0, pady=1)
+        ylabel_frame.columnconfigure(1, weight=1)
+        tk.Label(ylabel_frame, text="Y-axis Label:", width=14, anchor="w").grid(row=0, column=0, padx=2)
+        self.ylabel_entry = tk.Entry(ylabel_frame)
+        self.ylabel_entry.grid(row=0, column=1, sticky="ew", padx=2)
+        
+        # --- Label orientation (horizontal layout) ---
+        orient_frame = tk.Frame(frame)
+        orient_frame.pack(fill='x', padx=4, pady=1)
+        tk.Label(orient_frame, text="X-axis Label Orientation:").pack(side="left")
         self.label_orientation = tk.StringVar(value="vertical")
-        tk.Radiobutton(orient_grp, text="Vertical", variable=self.label_orientation, value="vertical").pack(anchor="w")
-        tk.Radiobutton(orient_grp, text="Horizontal", variable=self.label_orientation, value="horizontal").pack(anchor="w")
-        # --- X Axis settings group ---
-        xaxis_grp = tk.LabelFrame(frame, text="X-Axis Settings", padx=6, pady=6)
-        xaxis_grp.pack(fill='x', padx=6, pady=4)
-        tk.Label(xaxis_grp, text="Minimum:").grid(row=0, column=0, sticky="w", pady=2)
-        self.xmin_entry = tk.Entry(xaxis_grp)
-        self.xmin_entry.grid(row=0, column=1, sticky="ew", padx=2, pady=2)
-        tk.Label(xaxis_grp, text="Maximum:").grid(row=1, column=0, sticky="w", pady=2)
-        self.xmax_entry = tk.Entry(xaxis_grp)
-        self.xmax_entry.grid(row=1, column=1, sticky="ew", padx=2, pady=2)
-        tk.Label(xaxis_grp, text="Major Tick Interval:").grid(row=2, column=0, sticky="w", pady=2)
-        self.xinterval_entry = tk.Entry(xaxis_grp)
-        self.xinterval_entry.grid(row=2, column=1, sticky="ew", padx=2, pady=2)
-        tk.Label(xaxis_grp, text="Minor ticks per major:").grid(row=3, column=0, sticky="w", pady=2)
-        self.xminor_ticks_entry = tk.Entry(xaxis_grp)
-        self.xminor_ticks_entry.grid(row=3, column=1, sticky="ew", padx=2, pady=2)
-        xaxis_grp.columnconfigure(1, weight=1)
-        # --- Y Axis settings group ---
-        yaxis_grp = tk.LabelFrame(frame, text="Y-Axis Settings", padx=6, pady=6)
-        yaxis_grp.pack(fill='x', padx=6, pady=4)
-        tk.Label(yaxis_grp, text="Minimum:").grid(row=0, column=0, sticky="w", pady=2)
-        self.ymin_entry = tk.Entry(yaxis_grp)
-        self.ymin_entry.grid(row=0, column=1, sticky="ew", padx=2, pady=2)
-        tk.Label(yaxis_grp, text="Maximum:").grid(row=1, column=0, sticky="w", pady=2)
-        self.ymax_entry = tk.Entry(yaxis_grp)
-        self.ymax_entry.grid(row=1, column=1, sticky="ew", padx=2, pady=2)
-        tk.Label(yaxis_grp, text="Major Tick Interval:").grid(row=2, column=0, sticky="w", pady=2)
-        self.yinterval_entry = tk.Entry(yaxis_grp)
-        self.yinterval_entry.grid(row=2, column=1, sticky="ew", padx=2, pady=2)
-        tk.Label(yaxis_grp, text="Minor ticks per major:").grid(row=3, column=0, sticky="w", pady=2)
-        self.minor_ticks_entry = tk.Entry(yaxis_grp)
-        self.minor_ticks_entry.grid(row=3, column=1, sticky="ew", padx=2, pady=2)
-        self.logscale_var = tk.BooleanVar()
-        tk.Checkbutton(yaxis_grp, text="Logarithmic Y-axis", variable=self.logscale_var).grid(row=4, column=0, columnspan=2, sticky="w", pady=(4,1))
-        yaxis_grp.columnconfigure(1, weight=1)
+        tk.Radiobutton(orient_frame, text="Vertical", variable=self.label_orientation, 
+                      value="vertical").pack(side="left", padx=5)
+        tk.Radiobutton(orient_frame, text="Horizontal", variable=self.label_orientation, 
+                      value="horizontal").pack(side="left", padx=5)
+        
+        # --- X-Axis settings (more compact with grid layout) ---
+        xaxis_grp = tk.LabelFrame(frame, text="X-Axis Settings", padx=4, pady=2)
+        xaxis_grp.pack(fill='x', padx=4, pady=1)
+        
+        # Use grid layout for better alignment
+        xaxis_grid = tk.Frame(xaxis_grp)
+        xaxis_grid.pack(fill='x', padx=2, pady=1)
+        
+        # Configure columns for alignment - fixed label widths
+        xaxis_grid.columnconfigure(1, weight=0) # Min Entry
+        xaxis_grid.columnconfigure(3, weight=0) # Max Entry
+        
+        # Row 1: Min/Max values
+        tk.Label(xaxis_grid, text="Minimum:", width=12, anchor="w").grid(row=0, column=0, sticky="w", pady=2)
+        self.xmin_entry = tk.Entry(xaxis_grid, width=10)
+        self.xmin_entry.grid(row=0, column=1, sticky="w", pady=2)
+        tk.Label(xaxis_grid, text="Maximum:", width=12, anchor="w").grid(row=0, column=2, sticky="w", padx=(10,0), pady=2)
+        self.xmax_entry = tk.Entry(xaxis_grid, width=10)
+        self.xmax_entry.grid(row=0, column=3, sticky="w", pady=2)
+        
+        # Row 2: Tick settings
+        tk.Label(xaxis_grid, text="Major Tick:", width=12, anchor="w").grid(row=1, column=0, sticky="w", pady=2)
+        self.xinterval_entry = tk.Entry(xaxis_grid, width=10)
+        self.xinterval_entry.grid(row=1, column=1, sticky="w", pady=2)
+        tk.Label(xaxis_grid, text="Minor/Major:", width=12, anchor="w").grid(row=1, column=2, sticky="w", padx=(10,0), pady=2)
+        self.xminor_ticks_entry = tk.Entry(xaxis_grid, width=10)
+        self.xminor_ticks_entry.grid(row=1, column=3, sticky="w", pady=2)
+        
+        # Row 3: Log options
+        self.xlogscale_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(xaxis_grid, text="Logarithmic X-axis", variable=self.xlogscale_var, 
+                      command=self.update_xlog_options).grid(row=2, column=0, columnspan=2, sticky="w", pady=2)
+        tk.Label(xaxis_grid, text="Base:", width=6, anchor="e").grid(row=2, column=2, sticky="e", pady=2)
+        self.xlog_base_var = tk.StringVar(value="10")
+        self.xlog_base_dropdown = ttk.Combobox(xaxis_grid, textvariable=self.xlog_base_var, 
+                                          values=["10", "2"], state="disabled", width=5)
+        self.xlog_base_dropdown.grid(row=2, column=3, sticky="w", pady=2)
+        
+        # --- Y-Axis settings with grid layout ---
+        yaxis_grp = tk.LabelFrame(frame, text="Y-Axis Settings", padx=4, pady=2)
+        yaxis_grp.pack(fill='x', padx=4, pady=1)
+        
+        # Use grid layout for better alignment
+        yaxis_grid = tk.Frame(yaxis_grp)
+        yaxis_grid.pack(fill='x', padx=2, pady=1)
+        
+        # Configure columns for alignment - fixed label widths
+        yaxis_grid.columnconfigure(1, weight=0) # Min Entry
+        yaxis_grid.columnconfigure(3, weight=0) # Max Entry
+        
+        # Row 1: Min/Max values
+        tk.Label(yaxis_grid, text="Minimum:", width=12, anchor="w").grid(row=0, column=0, sticky="w", pady=2)
+        self.ymin_entry = tk.Entry(yaxis_grid, width=10)
+        self.ymin_entry.grid(row=0, column=1, sticky="w", pady=2)
+        tk.Label(yaxis_grid, text="Maximum:", width=12, anchor="w").grid(row=0, column=2, sticky="w", padx=(10,0), pady=2)
+        self.ymax_entry = tk.Entry(yaxis_grid, width=10)
+        self.ymax_entry.grid(row=0, column=3, sticky="w", pady=2)
+        
+        # Row 2: Tick settings
+        tk.Label(yaxis_grid, text="Major Tick:", width=12, anchor="w").grid(row=1, column=0, sticky="w", pady=2)
+        self.yinterval_entry = tk.Entry(yaxis_grid, width=10)
+        self.yinterval_entry.grid(row=1, column=1, sticky="w", pady=2)
+        tk.Label(yaxis_grid, text="Minor/Major:", width=12, anchor="w").grid(row=1, column=2, sticky="w", padx=(10,0), pady=2)
+        self.minor_ticks_entry = tk.Entry(yaxis_grid, width=10)
+        self.minor_ticks_entry.grid(row=1, column=3, sticky="w", pady=2)
+        
+        # Row 3: Log options
+        self.logscale_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(yaxis_grid, text="Logarithmic Y-axis", variable=self.logscale_var, 
+                      command=self.update_ylog_options).grid(row=2, column=0, columnspan=2, sticky="w", pady=2)
+        tk.Label(yaxis_grid, text="Base:", width=6, anchor="e").grid(row=2, column=2, sticky="e", pady=2)
+        self.ylog_base_var = tk.StringVar(value="10")
+        self.ylog_base_dropdown = ttk.Combobox(yaxis_grid, textvariable=self.ylog_base_var, 
+                                          values=["10", "2"], state="disabled", width=5)
+        self.ylog_base_dropdown.grid(row=2, column=3, sticky="w", pady=2)
 
+    def update_xlog_options(self):
+        """Enable or disable X-axis log options based on checkbox state"""
+        if self.xlogscale_var.get():
+            self.xlog_base_dropdown.config(state="readonly")
+        else:
+            self.xlog_base_dropdown.config(state="disabled")
+    
+    def update_ylog_options(self):
+        """Enable or disable Y-axis log options based on checkbox state"""
+        if self.logscale_var.get():
+            self.ylog_base_dropdown.config(state="readonly")
+        else:
+            self.ylog_base_dropdown.config(state="disabled")
+    
     def setup_colors_tab(self):
         frame = self.colors_tab
         # --- Color management group ---
@@ -2464,31 +2542,41 @@ class ExcelPlotterApp:
                         palette_full = (palette_full * ((len(hue_groups) // len(palette_full)) + 1))
                     plot_args["palette"] = palette_full[:len(hue_groups)]
                 
+                # Use only Seaborn's built-in error bars for bar plots
+                errorbar_type = self.errorbar_type_var.get()
+                capsize_option = self.errorbar_capsize_var.get()
+                
+                # Map text options to numeric capsize values (proportional to typical bar width)
+                capsize_values = {
+                    "Default": 0.4,  # Approximately half of typical bar width
+                    "Narrow": 0.2,  # Narrower than default
+                    "Wide": 0.8,    # Wider than default
+                    "Wider": 1.2,   # Much wider
+                    "None": 0.0     # No capsize
+                }
+                
+                # Get numeric capsize value from the selected option
+                capsize = capsize_values.get(capsize_option, 0.4)  # Default to 0.4 if option not found
+                
+                if errorbar_type == 'SD':
+                    plot_args['errorbar'] = 'sd'  # or ci='sd' for older Seaborn
+                else:
+                    plot_args['errorbar'] = ('ci', 68)  # 68% CI = ±1 SEM
+                
+                # Set errorbar styling - capsize needs to be passed directly to barplot
+                # and line width needs to be in err_kws
+                linewidth = self.linewidth.get()
+                
+                # Modern way to handle errorbar styling in Seaborn
+                plot_args['err_kws'] = {'linewidth': linewidth}
+                plot_args['capsize'] = capsize  # This goes directly to barplot, not in err_kws
+                
+                # Remove deprecated parameter if it exists
+                if 'errwidth' in plot_args:
+                    plot_args.pop('errwidth')
+                
                 sns.barplot(**plot_args)
-                # --- Add SEM error bars manually if needed ---
-                if sem_mode:
-                    # Determine grouping columns
-                    groupers = [x_col]
-                    if hue_col:
-                        groupers.append(hue_col)
-                    grouped = df_plot.groupby(groupers)[value_col]
-                    means = grouped.mean()
-                    sems = grouped.apply(lambda x: np.std(x.dropna().astype(float), ddof=1) / np.sqrt(len(x.dropna())) if len(x.dropna()) > 1 else 0)
-                    # Get bar positions
-                    if swap_axes:
-                        # y is category, x is value
-                        for i, (bar, mean) in enumerate(zip(ax.patches, means)):
-                            # bar: Rectangle
-                            y = bar.get_y() + bar.get_height() / 2
-                            x = bar.get_x() + bar.get_width() / 2
-                            sem = sems.iloc[i]
-                            ax.errorbar(x, y, xerr=sem, fmt='none', ecolor='black', elinewidth=linewidth, capsize=3, zorder=10)
-                    else:
-                        for i, (bar, mean) in enumerate(zip(ax.patches, means)):
-                            x = bar.get_x() + bar.get_width() / 2
-                            y = bar.get_height() + bar.get_y()
-                            sem = sems.iloc[i]
-                            ax.errorbar(x, y, yerr=sem, fmt='none', ecolor='black', elinewidth=linewidth, capsize=3, zorder=10)
+                # (All manual ax.errorbar code for bars removed)
             elif plot_kind == "box":
                 sns.boxplot(**plot_args)
                 ax.tick_params(axis='x', which='both', direction='in', length=4, width=linewidth, top=False, bottom=True, labeltop=False, labelbottom=True)
@@ -2841,41 +2929,191 @@ class ExcelPlotterApp:
             except Exception as e:
                 print(f"Axis setting error: {e}")
 
-            use_log = self.logscale_var.get()
-            if use_log:
+            # Apply logarithmic scales first
+            # Y-axis logarithmic scale
+            use_log_y = self.logscale_var.get()
+            if use_log_y:
+                # Get Y-axis log base
+                y_log_base = int(self.ylog_base_var.get())
                 if not swap_axes:
-                    ax.set_yscale('log')
+                    ax.set_yscale('log', base=y_log_base)
                 else:
-                    ax.set_xscale('log')
+                    ax.set_xscale('log', base=y_log_base)
+            
+            # X-axis logarithmic scale
+            use_log_x = self.xlogscale_var.get()
+            if use_log_x:
+                # Get X-axis log base
+                x_log_base = int(self.xlog_base_var.get())
+                if not swap_axes:
+                    ax.set_xscale('log', base=x_log_base)
+                else:
+                    ax.set_yscale('log', base=x_log_base)
 
+            # Apply appropriate tickers/locators for Y-axis
             minor_ticks_str = self.minor_ticks_entry.get()
             if minor_ticks_str:
                 try:
                     minor_ticks = int(minor_ticks_str)
-                    if use_log:
-                        subs = np.logspace(0, 1, minor_ticks + 2)[1:-1]
+                    if use_log_y:
+                        # Get Y-axis log base for ticks
+                        y_log_base = int(self.ylog_base_var.get())
+                        
+                        # Set up minor ticks appropriate for the log base
+                        if y_log_base == 10:
+                            # For log10, use standard logarithmic ticks (1-9)
+                            if minor_ticks >= 9:
+                                # Use all digits as ticks if user wants many ticks
+                                subs = np.arange(2, 10)
+                            else:
+                                # Distribute the ticks evenly across the decade
+                                step = max(1, int(8 / minor_ticks))
+                                subs = np.arange(2, 10, step)[:minor_ticks]
+                        else:  # log2
+                            # For log2, create appropriate subdivisions between each power of 2
+                            if minor_ticks == 1:
+                                subs = [1.5]  # Just one division at 1.5
+                            elif minor_ticks == 2:
+                                subs = [1.33, 1.66]  # Two evenly spaced points
+                            elif minor_ticks == 3:
+                                subs = [1.25, 1.5, 1.75]  # Three evenly spaced points
+                            else:
+                                # Multiple minor ticks between powers of 2
+                                # Create evenly distributed points between 1 and 2 on a linear scale
+                                # We don't include 1 or 2 as those are the major ticks
+                                subs = np.linspace(1, 2, minor_ticks+2)[1:-1]
+                                
                         if not swap_axes:
-                            ax.yaxis.set_minor_locator(LogLocator(base=10.0, subs=subs, numticks=100))
+                            # Apply locators to the appropriate axis
+                            ax.yaxis.set_major_locator(LogLocator(base=y_log_base, numticks=10))
+                            # Fix minor ticks placement with appropriate number of ticks
+                            if y_log_base == 2:
+                                ax.yaxis.set_minor_locator(LogLocator(base=y_log_base, subs=subs, numticks=20))
+                            else:
+                                ax.yaxis.set_minor_locator(LogLocator(base=y_log_base, subs=subs, numticks=10))
+                            # Make sure minor ticks are properly sized and colored
+                            ax.tick_params(axis='y', which='minor', direction='in', length=2, width=linewidth/2, color='black')
                         else:
-                            ax.xaxis.set_minor_locator(LogLocator(base=10.0, subs=subs, numticks=100))
+                            ax.xaxis.set_major_locator(LogLocator(base=y_log_base, numticks=10))
+                            # Fix minor ticks placement with appropriate number of ticks
+                            if y_log_base == 2:
+                                ax.xaxis.set_minor_locator(LogLocator(base=y_log_base, subs=subs, numticks=20))
+                            else:
+                                ax.xaxis.set_minor_locator(LogLocator(base=y_log_base, subs=subs, numticks=10))
+                            # Make sure minor ticks are properly sized and colored and don't show labels
+                            ax.tick_params(axis='x', which='minor', direction='in', length=2, width=linewidth/2, 
+                                          color='black', labelsize=0, labelbottom=False, labeltop=False, 
+                                          labelleft=False, labelright=False)
                     else:
+                        # Linear scale - use regular tick spacing
                         if not swap_axes:
                             ax.yaxis.set_minor_locator(AutoMinorLocator(minor_ticks + 1))
                         else:
                             ax.xaxis.set_minor_locator(AutoMinorLocator(minor_ticks + 1))
-                    ax.tick_params(
-                        axis='y' if not swap_axes else 'x', which='minor', direction='in',
-                        length=2, width=linewidth, color='black', left=True
-                    )
+                            
+                    # Style the minor ticks
+                    if not swap_axes:
+                        ax.tick_params(axis='y', which='minor', direction='in', 
+                                      length=2, width=linewidth, color='black', left=True)
+                    else:
+                        ax.tick_params(axis='x', which='minor', direction='in',
+                                      length=2, width=linewidth, color='black', bottom=True)
                 except Exception as e:
-                    print(f"Minor ticks setting error: {e}")
+                    print(f"Y-axis minor ticks setting error: {e}")
             else:
+                # No minor ticks requested
                 if not swap_axes:
                     ax.yaxis.set_minor_locator(NullLocator())
                     ax.tick_params(axis='y', which='minor', length=0)
                 else:
                     ax.xaxis.set_minor_locator(NullLocator())
                     ax.tick_params(axis='x', which='minor', length=0)
+                    
+            # Apply appropriate tickers/locators for X-axis
+            xminor_ticks_str = self.xminor_ticks_entry.get()
+            if xminor_ticks_str:
+                try:
+                    xminor_ticks = int(xminor_ticks_str)
+                    if use_log_x:
+                        # Get X-axis log base for ticks
+                        x_log_base = int(self.xlog_base_var.get())
+                        
+                        # Set up minor ticks appropriate for the log base
+                        if x_log_base == 10:
+                            # For log10, use standard logarithmic ticks (1-9)
+                            if xminor_ticks >= 9:
+                                # Use all digits as ticks if user wants many ticks
+                                subs = np.arange(2, 10)
+                            else:
+                                # Distribute the ticks evenly across the decade
+                                step = max(1, int(8 / xminor_ticks))
+                                subs = np.arange(2, 10, step)[:xminor_ticks]
+                        else:  # log2
+                            # For log2, create appropriate subdivisions between each power of 2
+                            if xminor_ticks == 1:
+                                subs = [1.5]  # Just one division at 1.5
+                            elif xminor_ticks == 2:
+                                subs = [1.33, 1.66]  # Two evenly spaced points
+                            elif xminor_ticks == 3:
+                                subs = [1.25, 1.5, 1.75]  # Three evenly spaced points
+                            else:
+                                # Multiple minor ticks between powers of 2
+                                # Create evenly distributed points between 1 and 2 on a linear scale
+                                # We don't include 1 or 2 as those are the major ticks
+                                subs = np.linspace(1, 2, xminor_ticks+2)[1:-1]
+                                
+                        if not swap_axes:
+                            # Apply locators to the appropriate axis
+                            ax.xaxis.set_major_locator(LogLocator(base=x_log_base, numticks=10))
+                            # Fix minor ticks placement with appropriate number of ticks
+                            if x_log_base == 2:
+                                ax.xaxis.set_minor_locator(LogLocator(base=x_log_base, subs=subs, numticks=20))
+                            else:
+                                ax.xaxis.set_minor_locator(LogLocator(base=x_log_base, subs=subs, numticks=10))
+                            # Make sure minor ticks are properly sized and colored and don't show labels
+                            ax.tick_params(axis='x', which='minor', direction='in', length=2, width=linewidth/2, 
+                                          color='black', labelsize=0, labelbottom=False, labeltop=False, 
+                                          labelleft=False, labelright=False)
+                        else:
+                            ax.yaxis.set_major_locator(LogLocator(base=x_log_base, numticks=10))
+                            # Fix minor ticks placement with appropriate number of ticks
+                            if x_log_base == 2:
+                                ax.yaxis.set_minor_locator(LogLocator(base=x_log_base, subs=subs, numticks=20))
+                            else:
+                                ax.yaxis.set_minor_locator(LogLocator(base=x_log_base, subs=subs, numticks=10))
+                            # Make sure minor ticks are properly sized and colored
+                            ax.tick_params(axis='y', which='minor', direction='in', length=2, width=linewidth/2, color='black')
+                    else:
+                        # Linear scale - use regular tick spacing
+                        if not swap_axes:
+                            ax.xaxis.set_minor_locator(AutoMinorLocator(xminor_ticks + 1))
+                        else:
+                            ax.yaxis.set_minor_locator(AutoMinorLocator(xminor_ticks + 1))
+                            
+                    # Style the minor ticks
+                    if not swap_axes:
+                        ax.tick_params(axis='x', which='minor', direction='in', 
+                                      length=2, width=linewidth, color='black', bottom=True)
+                    else:
+                        ax.tick_params(axis='y', which='minor', direction='in',
+                                      length=2, width=linewidth, color='black', left=True)
+                except Exception as e:
+                    print(f"X-axis minor ticks setting error: {e}")
+            else:
+                # No minor ticks requested
+                if not swap_axes:
+                    ax.xaxis.set_minor_locator(NullLocator())
+                    ax.tick_params(axis='x', which='minor', length=0)
+                else:
+                    ax.yaxis.set_minor_locator(NullLocator())
+                    ax.tick_params(axis='y', which='minor', length=0)
+                    
+            # Set general tick parameters
+            ax.tick_params(axis='both', which='both', direction='in', width=linewidth)
+            ax.tick_params(axis='both', which='major', length=4)
+            # Ensure minor ticks never have labels
+            ax.tick_params(axis='both', which='minor', labelsize=0, labelbottom=False, labeltop=False, 
+                           labelleft=False, labelright=False)
 
             ax_position = [left_margin / fig_width,
                            bottom_margin / fig_height,
