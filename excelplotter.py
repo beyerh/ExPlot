@@ -1,6 +1,6 @@
 # Excel Plotter - Data visualization tool for Excel files
 
-VERSION = "0.5.1"
+VERSION = "0.5.2"
 # =====================================================================
 
 import tkinter as tk
@@ -72,11 +72,17 @@ class ExcelPlotterApp:
         import numpy as np
         
         # Initialize statistics storage
+        try:
+            alpha = float(self.alpha_level_var.get())
+        except (ValueError, AttributeError):
+            alpha = 0.05  # Default if not set or invalid
+            
         self.latest_stats = {
             'pvals': {},                # P-values for annotations
             'test_results': {},         # Complete test result objects
             'test_type': self.ttest_type_var.get(),
             'alternative': self.ttest_alternative_var.get(),
+            'alpha_level': alpha,        # Alpha level for significance
             'raw_data': {},             # Raw data used for calculations
             'x_col': x_col,
             'value_col': value_col,
@@ -451,6 +457,7 @@ class ExcelPlotterApp:
         self.ttest_alternative_var = tk.StringVar(value="two-sided")
         self.anova_type_var = tk.StringVar(value="Welch's ANOVA")
         self.posthoc_type_var = tk.StringVar(value="Tamhane's T2")
+        self.alpha_level_var = tk.StringVar(value="0.05")
         # Log scale variables
         self.xlogscale_var = tk.BooleanVar(value=False)
         self.xlog_base_var = tk.StringVar(value="10")
@@ -475,20 +482,27 @@ class ExcelPlotterApp:
         self.setup_ui()
         self.setup_statistics_settings_tab()
 
-    @staticmethod
-    def pval_to_annotation(pval):
-        """Return annotation string for a given p-value. Returns '?' if pval is None or NaN."""
+    def pval_to_annotation(self, pval):
+        """Return annotation string for a given p-value based on the selected alpha level.
+        Returns '?' if pval is None or NaN."""
         if pval is None or (isinstance(pval, float) and math.isnan(pval)):
             return "?"
-        if pval > 0.05:
+            
+        # Get the current alpha level
+        try:
+            alpha = float(self.alpha_level_var.get())
+        except (ValueError, AttributeError):
+            alpha = 0.05  # Default if not set or invalid
+            
+        if pval > alpha:
             return "ns"
-        elif pval <= 0.0001:
+        elif pval <= alpha/5000:  # 4 stars threshold
             return "****"
-        elif pval <= 0.001:
+        elif pval <= alpha/50:    # 3 stars threshold
             return "***"
-        elif pval <= 0.01:
+        elif pval <= alpha/5:     # 2 stars threshold
             return "**"
-        elif pval <= 0.05:
+        elif pval <= alpha:       # 1 star threshold
             return "*"
 
     def format_pvalue_matrix(self, matrix):
@@ -572,8 +586,14 @@ class ExcelPlotterApp:
         anova_dropdown = ttk.Combobox(frame, textvariable=self.anova_type_var, values=anova_options, state='readonly')
         anova_dropdown.grid(row=3, column=1, sticky="ew", padx=8, pady=8)
         
+        # Alpha level
+        ttk.Label(frame, text="Alpha level:").grid(row=4, column=0, sticky="w", padx=8, pady=8)
+        alpha_options = ["0.05", "0.01", "0.001", "0.0001"]
+        alpha_dropdown = ttk.Combobox(frame, textvariable=self.alpha_level_var, values=alpha_options, state='readonly')
+        alpha_dropdown.grid(row=4, column=1, sticky="ew", padx=8, pady=8)
+        
         # Post-hoc test
-        ttk.Label(frame, text="Post-hoc test:").grid(row=4, column=0, sticky="w", padx=8, pady=8)
+        ttk.Label(frame, text="Post-hoc test:").grid(row=5, column=0, sticky="w", padx=8, pady=8)
         # Use the existing posthoc_type_var variable initialized in __init__
         posthoc_options = [
             "Tukey's HSD",
@@ -582,7 +602,7 @@ class ExcelPlotterApp:
             "Dunn's test"
         ]
         posthoc_dropdown = ttk.Combobox(frame, textvariable=self.posthoc_type_var, values=posthoc_options, state='readonly')
-        posthoc_dropdown.grid(row=4, column=1, sticky="ew", padx=8, pady=8)
+        posthoc_dropdown.grid(row=5, column=1, sticky="ew", padx=8, pady=8)
 
 
     def get_config_dir(self):
@@ -692,6 +712,7 @@ class ExcelPlotterApp:
                 'ttest_alternative': self.ttest_alternative_var.get(),
                 'anova_type': self.anova_type_var.get(),
                 'posthoc_type': self.posthoc_type_var.get(),
+                'alpha_level': self.alpha_level_var.get(),
                 
                 # Plot appearance
                 'plot_width': self.plot_width_var.get(),
@@ -936,6 +957,9 @@ class ExcelPlotterApp:
             if 'posthoc_type' in project and hasattr(self, 'posthoc_type_var'):
                 self.posthoc_type_var.set(project['posthoc_type'])
                 
+            if 'alpha_level' in project and hasattr(self, 'alpha_level_var'):
+                self.alpha_level_var.set(project['alpha_level'])
+                
             # Plot appearance
             if 'plot_width' in project and hasattr(self, 'plot_width_var'):
                 self.plot_width_var.set(project['plot_width'])
@@ -1157,6 +1181,7 @@ class ExcelPlotterApp:
         self.settings_ttest_type_var = tk.StringVar(value=self.ttest_type_var.get())
         self.settings_ttest_alternative_var = tk.StringVar(value=self.ttest_alternative_var.get())
         self.settings_anova_type_var = tk.StringVar(value=self.anova_type_var.get())
+        self.settings_alpha_level_var = tk.StringVar(value=self.alpha_level_var.get())
         self.settings_posthoc_type_var = tk.StringVar(value=self.posthoc_type_var.get())
         
         # Appearance tab
@@ -1207,9 +1232,13 @@ class ExcelPlotterApp:
         anova_options = ["One-way ANOVA", "Welch's ANOVA", "Repeated measures ANOVA"]
         ttk.Combobox(stats_tab, textvariable=self.settings_anova_type_var, values=anova_options, width=35, state="readonly").grid(row=3, column=1, sticky="w", padx=10, pady=10)
         
-        tk.Label(stats_tab, text="Post-hoc test:", anchor="w").grid(row=4, column=0, sticky="w", padx=10, pady=10)
+        tk.Label(stats_tab, text="Alpha level:", anchor="w").grid(row=4, column=0, sticky="w", padx=10, pady=10)
+        alpha_options = ["0.05", "0.01", "0.001", "0.0001"]
+        ttk.Combobox(stats_tab, textvariable=self.settings_alpha_level_var, values=alpha_options, width=35, state="readonly").grid(row=4, column=1, sticky="w", padx=10, pady=10)
+        
+        tk.Label(stats_tab, text="Post-hoc test:", anchor="w").grid(row=5, column=0, sticky="w", padx=10, pady=10)
         posthoc_options = ["Tukey's HSD", "Tamhane's T2", "Scheffe's test", "Dunn's test"]
-        ttk.Combobox(stats_tab, textvariable=self.settings_posthoc_type_var, values=posthoc_options, width=35, state="readonly").grid(row=4, column=1, sticky="w", padx=10, pady=10)
+        ttk.Combobox(stats_tab, textvariable=self.settings_posthoc_type_var, values=posthoc_options, width=35, state="readonly").grid(row=5, column=1, sticky="w", padx=10, pady=10)
         
         # Appearance Tab Content
         tk.Label(appearance_tab, text="Line width:", anchor="w").grid(row=0, column=0, sticky="w", padx=10, pady=10)
@@ -2104,6 +2133,7 @@ class ExcelPlotterApp:
             'ttest_type': "Welch's t-test (unpaired, unequal variances)",
             'ttest_alternative': 'two-sided',
             'anova_type': "Welch's ANOVA",
+            'alpha_level': "0.05",
             'posthoc_type': "Tamhane's T2",
             'linewidth': 1.0,
             'plot_width': 1.5,
@@ -2159,6 +2189,8 @@ class ExcelPlotterApp:
             self.ttest_alternative_var.set(preferences['ttest_alternative'])
         if hasattr(self, 'anova_type_var') and 'anova_type' in preferences:
             self.anova_type_var.set(preferences['anova_type'])
+        if hasattr(self, 'alpha_level_var') and 'alpha_level' in preferences:
+            self.alpha_level_var.set(preferences['alpha_level'])
         if hasattr(self, 'posthoc_type_var') and 'posthoc_type' in preferences:
             self.posthoc_type_var.set(preferences['posthoc_type'])
             
@@ -2219,6 +2251,8 @@ class ExcelPlotterApp:
             preferences['ttest_alternative'] = self.settings_ttest_alternative_var.get()
         if hasattr(self, 'settings_anova_type_var'):
             preferences['anova_type'] = self.settings_anova_type_var.get()
+        if hasattr(self, 'settings_alpha_level_var'):
+            preferences['alpha_level'] = self.settings_alpha_level_var.get()
         if hasattr(self, 'settings_posthoc_type_var'):
             preferences['posthoc_type'] = self.settings_posthoc_type_var.get()
             
@@ -2274,6 +2308,7 @@ class ExcelPlotterApp:
             self.ttest_type_var.set(preferences.get('ttest_type', "Welch's t-test (unpaired, unequal variances)"))
             self.ttest_alternative_var.set(preferences.get('ttest_alternative', 'two-sided'))
             self.anova_type_var.set(preferences.get('anova_type', "Welch's ANOVA"))
+            self.alpha_level_var.set(preferences.get('alpha_level', "0.05"))
             self.posthoc_type_var.set(preferences.get('posthoc_type', "Tamhane's T2"))
             self.linewidth.set(preferences.get('linewidth', 1.0))
             self.plot_width_var.set(preferences.get('plot_width', 1.5))
