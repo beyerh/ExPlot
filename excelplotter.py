@@ -1,6 +1,6 @@
 # Excel Plotter - Data visualization tool for Excel files
 
-VERSION = "0.5.2"
+VERSION = "0.5.3"
 # =====================================================================
 
 import tkinter as tk
@@ -449,6 +449,7 @@ class ExcelPlotterApp:
         self.errorbar_capsize_var = tk.StringVar(value="Default")  # Capsize style for error bars
         self.strip_black_var = tk.BooleanVar(value=True)
         self.show_stripplot_var = tk.BooleanVar(value=True)
+        self.bar_outline_var = tk.BooleanVar(value=False)
         self.plot_kind_var = tk.StringVar(value="bar")  # "bar", "box", or "xy"
         # Error bar settings
         self.errorbar_type_var = tk.StringVar(value="SD")
@@ -561,7 +562,7 @@ class ExcelPlotterApp:
             "Welch's t-test (unpaired, unequal variances)",
             "Paired t-test"
         ]
-        ttest_dropdown = ttk.Combobox(frame, textvariable=self.ttest_type_var, values=ttest_options, state='readonly')
+        ttest_dropdown = ttk.Combobox(frame, textvariable=self.ttest_type_var, values=ttest_options, state='readonly', width=30)
         ttest_dropdown.grid(row=1, column=1, sticky="ew", padx=8, pady=8)
         
         # T-test alternative hypothesis
@@ -572,7 +573,7 @@ class ExcelPlotterApp:
             "less",
             "greater"
         ]
-        ttest_alternative_dropdown = ttk.Combobox(frame, textvariable=self.ttest_alternative_var, values=ttest_alternative_options, state='readonly')
+        ttest_alternative_dropdown = ttk.Combobox(frame, textvariable=self.ttest_alternative_var, values=ttest_alternative_options, state='readonly', width=30)
         ttest_alternative_dropdown.grid(row=2, column=1, sticky="ew", padx=8, pady=8)
         
         # ANOVA type
@@ -583,13 +584,13 @@ class ExcelPlotterApp:
             "Welch's ANOVA",
             "Repeated measures ANOVA"
         ]
-        anova_dropdown = ttk.Combobox(frame, textvariable=self.anova_type_var, values=anova_options, state='readonly')
+        anova_dropdown = ttk.Combobox(frame, textvariable=self.anova_type_var, values=anova_options, state='readonly', width=30)
         anova_dropdown.grid(row=3, column=1, sticky="ew", padx=8, pady=8)
         
         # Alpha level
         ttk.Label(frame, text="Alpha level:").grid(row=4, column=0, sticky="w", padx=8, pady=8)
         alpha_options = ["0.05", "0.01", "0.001", "0.0001"]
-        alpha_dropdown = ttk.Combobox(frame, textvariable=self.alpha_level_var, values=alpha_options, state='readonly')
+        alpha_dropdown = ttk.Combobox(frame, textvariable=self.alpha_level_var, values=alpha_options, state='readonly', width=30)
         alpha_dropdown.grid(row=4, column=1, sticky="ew", padx=8, pady=8)
         
         # Post-hoc test
@@ -601,7 +602,7 @@ class ExcelPlotterApp:
             "Scheffe's test",
             "Dunn's test"
         ]
-        posthoc_dropdown = ttk.Combobox(frame, textvariable=self.posthoc_type_var, values=posthoc_options, state='readonly')
+        posthoc_dropdown = ttk.Combobox(frame, textvariable=self.posthoc_type_var, values=posthoc_options, state='readonly', width=30)
         posthoc_dropdown.grid(row=5, column=1, sticky="ew", padx=8, pady=8)
 
 
@@ -1157,12 +1158,14 @@ class ExcelPlotterApp:
         plot_settings_tab = ttk.Frame(notebook)
         stats_tab = ttk.Frame(notebook)
         appearance_tab = ttk.Frame(notebook)
+        bar_graph_tab = ttk.Frame(notebook)
         xy_plot_tab = ttk.Frame(notebook)
         
         notebook.add(general_tab, text='General')
         notebook.add(plot_settings_tab, text='Plot Settings')
         notebook.add(stats_tab, text='Statistics')
         notebook.add(appearance_tab, text='Appearance')
+        notebook.add(bar_graph_tab, text='Bar Graph')
         notebook.add(xy_plot_tab, text='XY Plot')
         
         # Variables to hold settings
@@ -1175,6 +1178,9 @@ class ExcelPlotterApp:
         self.settings_errorbar_type_var = tk.StringVar(value=self.errorbar_type_var.get())
         self.settings_errorbar_black_var = tk.BooleanVar(value=self.errorbar_black_var.get())
         self.settings_errorbar_capsize_var = tk.StringVar(value=self.errorbar_capsize_var.get())
+        
+        # Bar Graph tab
+        self.settings_bar_outline_var = tk.BooleanVar(value=self.bar_outline_var.get())
         
         # Statistics tab
         self.settings_use_stats_var = tk.BooleanVar(value=self.use_stats_var.get())
@@ -1274,6 +1280,9 @@ class ExcelPlotterApp:
         tk.Button(reset_frame, text="Reset Colors", command=reset_colors, width=15).grid(row=0, column=0, padx=5)
         tk.Button(reset_frame, text="Reset Palettes", command=reset_palettes, width=15).grid(row=0, column=1, padx=5)
         
+        # Bar Graph Tab Content
+        tk.Checkbutton(bar_graph_tab, text="Draw bar outlines", variable=self.settings_bar_outline_var).grid(row=0, column=0, sticky="w", padx=10, pady=10)
+        
         # XY Plot Tab Content
         tk.Label(xy_plot_tab, text="Marker Symbol:", anchor="w").grid(row=0, column=0, sticky="w", padx=10, pady=10)
         ttk.Combobox(xy_plot_tab, textvariable=self.settings_xy_marker_symbol_var, values=["o", "s", "^", "D", "v", "P", "X", "+", "x", "*", "."], width=5, state="readonly").grid(row=0, column=1, sticky="w", padx=10, pady=10)
@@ -1297,6 +1306,9 @@ class ExcelPlotterApp:
         button_frame.pack(pady=10, fill='x')
         
         def save_settings():
+            # Update main variables from settings first
+            self.bar_outline_var.set(self.settings_bar_outline_var.get())
+            # Then save preferences
             self.save_user_preferences()
             messagebox.showinfo("Settings Saved", "Your preferences have been saved.")
             window.destroy()
@@ -2129,6 +2141,7 @@ class ExcelPlotterApp:
             'errorbar_type': 'SD',
             'errorbar_black': True,
             'errorbar_capsize': 'Default',
+            'bar_outline': False,
             'use_stats': False,  # Default 'Use statistics' setting
             'ttest_type': "Welch's t-test (unpaired, unequal variances)",
             'ttest_alternative': 'two-sided',
@@ -2179,6 +2192,8 @@ class ExcelPlotterApp:
             self.errorbar_black_var.set(preferences['errorbar_black'])
         if hasattr(self, 'errorbar_capsize_var') and 'errorbar_capsize' in preferences:
             self.errorbar_capsize_var.set(preferences['errorbar_capsize'])
+        if hasattr(self, 'bar_outline_var') and 'bar_outline' in preferences:
+            self.bar_outline_var.set(preferences['bar_outline'])
             
         # Statistics tab
         if hasattr(self, 'use_stats_var') and 'use_stats' in preferences:
@@ -2241,6 +2256,10 @@ class ExcelPlotterApp:
             preferences['errorbar_black'] = self.settings_errorbar_black_var.get()
         if hasattr(self, 'settings_errorbar_capsize_var'):
             preferences['errorbar_capsize'] = self.settings_errorbar_capsize_var.get()
+            
+        # Bar Graph tab
+        if hasattr(self, 'settings_bar_outline_var'):
+            preferences['bar_outline'] = self.settings_bar_outline_var.get()
             
         # Statistics tab
         if hasattr(self, 'settings_use_stats_var'):
@@ -2322,6 +2341,7 @@ class ExcelPlotterApp:
             self.xy_show_mean_var.set(preferences.get('xy_show_mean', True))
             self.xy_show_mean_errorbars_var.set(preferences.get('xy_show_mean_errorbars', True))
             self.xy_draw_band_var.set(preferences.get('xy_draw_band', False))
+            self.bar_outline_var.set(preferences.get('bar_outline', False))
             
             # Confirmation message
             messagebox.showinfo("Settings Saved", "Your preferences have been saved and applied.")
@@ -2477,14 +2497,10 @@ class ExcelPlotterApp:
         self.xy_marker_symbol_dropdown.grid(row=0, column=1, sticky="w", padx=2, pady=2)
         self.xy_marker_size_label.grid(row=1, column=0, sticky="w", padx=4, pady=2)
         self.xy_marker_size_entry.grid(row=1, column=1, sticky="w", padx=2, pady=2)
-        self.xy_filled_check.grid(row=2, column=0, columnspan=2, sticky="w", padx=4, pady=2)
-        self.xy_line_style_label.grid(row=3, column=0, sticky="w", padx=4, pady=2)
-        self.xy_line_style_dropdown.grid(row=3, column=1, sticky="w", padx=2, pady=2)
-        self.xy_line_black_check.grid(row=4, column=0, columnspan=2, sticky="w", padx=4, pady=2)
-        self.xy_connect_check.grid(row=5, column=0, columnspan=2, sticky="w", padx=4, pady=2)
-        self.xy_show_mean_check.grid(row=6, column=0, columnspan=2, sticky="w", padx=4, pady=2)
-        self.xy_show_mean_errorbars_check.grid(row=7, column=0, columnspan=2, sticky="w", padx=24, pady=2)
-        self.xy_draw_band_check.grid(row=8, column=0, columnspan=2, sticky="w", padx=4, pady=2)
+        self.xy_connect_check.grid(row=2, column=0, columnspan=2, sticky="w", padx=4, pady=2)
+        self.xy_show_mean_check.grid(row=3, column=0, columnspan=2, sticky="w", padx=4, pady=2)
+        self.xy_show_mean_errorbars_check.grid(row=4, column=0, columnspan=2, sticky="w", padx=24, pady=2)
+        self.xy_draw_band_check.grid(row=5, column=0, columnspan=2, sticky="w", padx=4, pady=2)
         # Show/hide XY options frame based on plot type
         def update_xy_options(*args):
             if self.plot_kind_var.get() == "xy":
@@ -2534,6 +2550,25 @@ class ExcelPlotterApp:
                                         values=["Default", "Narrow", "Wide", "Wider", "None"], width=10)
         self.capsize_dropdown.grid(row=2, column=1, sticky="ew", padx=2, pady=2)
         font_grp.columnconfigure(1, weight=1)
+        # --- Bar Graph group ---
+        bar_grp = tk.LabelFrame(frame, text="Bar Graph", padx=6, pady=6)
+        bar_grp.pack(fill='x', padx=6, pady=4)
+        tk.Checkbutton(bar_grp, text="Draw bar outlines", variable=self.bar_outline_var).pack(anchor="w", pady=1)
+        
+        # --- XY Plot group ---
+        xy_grp = tk.LabelFrame(frame, text="XY Plot", padx=6, pady=6)
+        xy_grp.pack(fill='x', padx=6, pady=4)
+        tk.Checkbutton(xy_grp, text="Filled symbols", variable=self.xy_filled_var).pack(anchor="w", pady=1)
+        
+        # Line style
+        line_style_frame = tk.Frame(xy_grp)
+        line_style_frame.pack(anchor="w", pady=1, fill='x')
+        tk.Label(line_style_frame, text="Line style:").pack(side="left")
+        ttk.Combobox(line_style_frame, textvariable=self.xy_line_style_var, 
+                    values=["solid", "dashed", "dotted", "dashdot"], width=10).pack(side="left", padx=4)
+        
+        tk.Checkbutton(xy_grp, text="Lines in black", variable=self.xy_line_black_var).pack(anchor="w", pady=1)
+        
         # --- Stripplot group ---
         strip_grp = tk.LabelFrame(frame, text="Stripplot", padx=6, pady=6)
         strip_grp.pack(fill='x', padx=6, pady=4)
@@ -2999,24 +3034,30 @@ class ExcelPlotterApp:
             errorbar_type = self.errorbar_type_var.get()
             sem_mode = False
             if plot_kind == "bar":
+                # Always set the appropriate CI value based on error bar type
                 if errorbar_type == "SD":
                     ci_val = 'sd'
                     estimator = np.mean
-                else:
-                    # Set up palette based on hue groups
+                else: # SEM
+                    ci_val = 'sd'  # Will handle SEM manually
+                    estimator = np.mean
+                    sem_mode = True
+                
+                # Handle palette consistently regardless of error bar type
+                if hue_col and hue_col in df_plot.columns:
+                    # For grouped data, use the palette
                     palette_name = self.palette_var.get()
                     palette_full = self.custom_palettes.get(palette_name, ["#333333"])
-                    
-                    # If we have a hue column, size palette to match number of hue groups
-                    if hue_col and hue_col in df_plot.columns:
-                        hue_groups = df_plot[hue_col].dropna().unique()
-                        if len(palette_full) < len(hue_groups):
-                            # Repeat the palette to ensure we have enough colors
-                            palette_full = (palette_full * ((len(hue_groups) // len(palette_full)) + 1))
-                        palette = palette_full[:len(hue_groups)]
-                    else:
-                        # Otherwise use value columns for palette
-                        palette = palette_full[:len(value_cols)]
+                    hue_groups = df_plot[hue_col].dropna().unique()
+                    if len(palette_full) < len(hue_groups):
+                        # Repeat the palette to ensure we have enough colors
+                        palette_full = (palette_full * ((len(hue_groups) // len(palette_full)) + 1))
+                    palette = palette_full[:len(hue_groups)]
+                else:
+                    # For ungrouped data, use the single color
+                    single_color_name = self.single_color_var.get()
+                    single_color = self.custom_colors.get(single_color_name, 'black')
+                    palette = [single_color]
                 # --- Always use full palette for grouped XY means ---
                 if show_mean:
                     groupers = [x_col]
@@ -3037,7 +3078,11 @@ class ExcelPlotterApp:
                     data=df_plot, y=x_col, x=value_col, hue=hue_col, ax=ax,
                 )
                 if plot_kind == "bar":
-                    plot_args.update(dict(ci=ci_val, capsize=0.2, palette=palette, errcolor='black', errwidth=linewidth, estimator=estimator))
+                    plot_dict = dict(ci=ci_val, capsize=0.2, palette=palette, errcolor='black', errwidth=linewidth, estimator=estimator)
+                    # Add edge color if bar outline is enabled
+                    if self.bar_outline_var.get():
+                        plot_dict.update(dict(edgecolor='black', linewidth=linewidth))
+                    plot_args.update(plot_dict)
                 elif plot_kind == "box":
                     plot_args.update(dict(palette=palette, linewidth=linewidth, showcaps=True, boxprops=dict(linewidth=linewidth), medianprops=dict(linewidth=linewidth), dodge=True, width=0.7))
                 elif plot_kind == "xy":
@@ -3229,15 +3274,28 @@ class ExcelPlotterApp:
                 
                 # --- Bar plot: always horizontal bars if swap_axes, for both categorical and numerical x ---
                 if plot_kind == "bar":
+                    # Build base arguments common to both orientations
+                    base_args = {
+                        'errorbar': 'sd', 
+                        'capsize': 0.2, 
+                        'palette': palette, 
+                        'err_kws': {'color': 'black', 'linewidth': linewidth}, 
+                        'estimator': estimator
+                    }
+                    
+                    # Add edge color if bar outline is enabled
+                    if self.bar_outline_var.get():
+                        base_args.update({'edgecolor': 'black', 'linewidth': linewidth})
+                    
                     if swap_axes:
                         plot_args = dict(
                             data=df_plot, y=x_col, x=value_col, hue=hue_col, ax=ax,
-                            errorbar='sd', capsize=0.2, palette=palette, err_kws={'color': 'black', 'linewidth': linewidth}, estimator=estimator
+                            **base_args
                         )
                     else:
                         plot_args = dict(
                             data=df_plot, x=x_col, y=value_col, hue=hue_col, ax=ax,
-                            errorbar='sd', capsize=0.2, palette=palette, err_kws={'color': 'black', 'linewidth': linewidth}, estimator=estimator
+                            **base_args
                         )
                 elif plot_kind == "box":
                     plot_args.update(dict(palette=palette, linewidth=linewidth, showcaps=True, boxprops=dict(linewidth=linewidth), medianprops=dict(linewidth=linewidth), dodge=True, width=0.7))
@@ -4391,7 +4449,7 @@ class ExcelPlotterApp:
             ax.tick_params(axis='both', which='both', width=linewidth)
             # (grid lines already set above)
 
-        fig.savefig(self.temp_pdf, format='pdf', bbox_inches='tight')
+        self.fig.savefig(self.temp_pdf, format='pdf', bbox_inches='tight')
         self.display_preview()
 
     def display_preview(self):
