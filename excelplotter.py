@@ -1,6 +1,6 @@
 # Excel Plotter - Data visualization tool for Excel files
 
-VERSION = "0.5.5"
+VERSION = "0.5.6"
 # =====================================================================
 
 import tkinter as tk
@@ -915,6 +915,7 @@ class ExcelPlotterApp:
         help_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Help", menu=help_menu)
         help_menu.add_command(label="About", command=self.show_about)
+        help_menu.add_command(label="Package Information", command=self.show_package_info)
 
     def save_project(self):
         """Save current plot configuration to a project file."""
@@ -1624,6 +1625,150 @@ class ExcelPlotterApp:
 
     def show_about(self):
         messagebox.showinfo("About Excel Plotter", f"Excel Plotter\nVersion: {self.version}\n\nA tool for plotting Excel data.")
+        
+    def show_package_info(self):
+        """Display information about packages used in the application for scientific publications."""
+        window = tk.Toplevel(self.root)
+        window.title("Package Information for Publications")
+        window.geometry("800x600")
+        
+        # Create notebook with tabs for different package categories
+        notebook = ttk.Notebook(window)
+        notebook.pack(fill='both', expand=True, padx=10, pady=10)
+        
+        # Create frames for each category
+        plotting_frame = ttk.Frame(notebook)
+        stats_frame = ttk.Frame(notebook)
+        fitting_frame = ttk.Frame(notebook)
+        
+        notebook.add(plotting_frame, text="Plotting")
+        notebook.add(stats_frame, text="Statistics")
+        notebook.add(fitting_frame, text="Fitting")
+        
+        # Get package versions
+        try:
+            import pandas as pd
+            pandas_version = pd.__version__
+        except:
+            pandas_version = "Not available"
+            
+        try:
+            import matplotlib
+            matplotlib_version = matplotlib.__version__
+        except:
+            matplotlib_version = "Not available"
+            
+        try:
+            import seaborn as sns
+            seaborn_version = sns.__version__
+        except:
+            seaborn_version = "Not available"
+            
+        try:
+            import numpy as np
+            numpy_version = np.__version__
+        except:
+            numpy_version = "Not available"
+            
+        try:
+            import scipy
+            scipy_version = scipy.__version__
+        except:
+            scipy_version = "Not available"
+            
+        try:
+            import pingouin as pg
+            pingouin_version = pg.__version__
+        except:
+            pingouin_version = "Not available"
+            
+        try:
+            import scikit_posthocs as sp
+            scikit_posthocs_version = sp.__version__
+        except:
+            scikit_posthocs_version = "Not available"
+        
+        # Plotting packages information
+        plotting_text = tk.Text(plotting_frame, wrap=tk.WORD, padx=10, pady=10)
+        plotting_text.pack(fill='both', expand=True)
+        plotting_text.insert(tk.END, "Packages for Data Visualization and Plotting:\n\n")
+        plotting_text.insert(tk.END, f"1. Matplotlib (version {matplotlib_version})\n")
+        plotting_text.insert(tk.END, "   Essential functions: pyplot, Figure, Axes, FigureCanvasTkAgg\n")
+        plotting_text.insert(tk.END, "   Purpose: Core plotting library providing comprehensive visualization capabilities\n\n")
+        
+        plotting_text.insert(tk.END, f"2. Seaborn (version {seaborn_version})\n")
+        plotting_text.insert(tk.END, "   Essential functions: color_palette\n")
+        plotting_text.insert(tk.END, "   Purpose: High-level interface for creating statistical graphics with enhanced aesthetics\n\n")
+        
+        plotting_text.insert(tk.END, f"3. Pandas (version {pandas_version})\n")
+        plotting_text.insert(tk.END, "   Essential functions: DataFrame, read_excel\n")
+        plotting_text.insert(tk.END, "   Purpose: Data manipulation and analysis, loading Excel data\n\n")
+        
+        plotting_text.configure(state='disabled')  # Make read-only
+        
+        # Statistics packages information
+        stats_text = tk.Text(stats_frame, wrap=tk.WORD, padx=10, pady=10)
+        stats_text.pack(fill='both', expand=True)
+        stats_text.insert(tk.END, "Packages for Statistical Analysis:\n\n")
+        
+        stats_text.insert(tk.END, f"1. SciPy (version {scipy_version})\n")
+        stats_text.insert(tk.END, "   Essential functions: stats.ttest_ind, stats.ttest_rel, stats.f_oneway\n")
+        stats_text.insert(tk.END, "   Purpose: Provides statistical functions for t-tests, ANOVA, and other statistical tests\n\n")
+        
+        stats_text.insert(tk.END, f"2. Pingouin (version {pingouin_version})\n")
+        stats_text.insert(tk.END, "   Essential functions: welch_anova, pairwise_tests, rm_anova\n")
+        stats_text.insert(tk.END, "   Purpose: Advanced statistical analyses including Welch's ANOVA and repeated measures ANOVA\n\n")
+        
+        stats_text.insert(tk.END, f"3. Scikit-posthocs (version {scikit_posthocs_version})\n")
+        stats_text.insert(tk.END, "   Essential functions: posthoc_tukey, posthoc_tamhane, posthoc_games_howell, posthoc_dunn\n")
+        stats_text.insert(tk.END, "   Purpose: Post-hoc tests following ANOVA (Tukey's HSD, Tamhane's T2, Games-Howell, Dunn's test)\n\n")
+        
+        stats_text.insert(tk.END, f"4. NumPy (version {numpy_version})\n")
+        stats_text.insert(tk.END, "   Essential functions: array, mean, std, nan_to_num\n")
+        stats_text.insert(tk.END, "   Purpose: Numerical operations and array handling for statistical computations\n\n")
+        
+        stats_text.configure(state='disabled')  # Make read-only
+        
+        # Fitting packages information
+        fitting_text = tk.Text(fitting_frame, wrap=tk.WORD, padx=10, pady=10)
+        fitting_text.pack(fill='both', expand=True)
+        fitting_text.insert(tk.END, "Packages for Curve Fitting and Modeling:\n\n")
+        
+        fitting_text.insert(tk.END, f"1. SciPy (version {scipy_version})\n")
+        fitting_text.insert(tk.END, "   Essential functions: optimize.curve_fit\n")
+        fitting_text.insert(tk.END, "   Purpose: Non-linear least squares fitting for custom model functions\n\n")
+        
+        fitting_text.insert(tk.END, f"2. NumPy (version {numpy_version})\n")
+        fitting_text.insert(tk.END, "   Essential functions: polyfit, poly1d\n")
+        fitting_text.insert(tk.END, "   Purpose: Polynomial fitting and evaluation\n\n")
+        
+        fitting_text.configure(state='disabled')  # Make read-only
+        
+        # Add note about scientific publications in the fitting frame
+        fitting_text.configure(state='normal')  # Temporarily enable for adding more text
+        fitting_text.insert(tk.END, "\n\nNote for Scientific Publications:\n")
+        fitting_text.insert(tk.END, "When citing this software in scientific publications, please include the essential packages ")
+        fitting_text.insert(tk.END, "listed above with their version numbers and mention any specific statistical tests used ")
+        fitting_text.insert(tk.END, "(e.g., Welch's ANOVA with Games-Howell post-hoc tests).")
+        fitting_text.configure(state='disabled')  # Make read-only again
+        
+        # Add a button to copy information to clipboard
+        def copy_to_clipboard():
+            package_info = f"\"ExcelPlotter\" (version {self.version}) was used for data visualization and statistical analysis. "
+            package_info += f"It utilizes the following Python packages: matplotlib {matplotlib_version}, seaborn {seaborn_version}, "
+            package_info += f"pandas {pandas_version}, numpy {numpy_version}, scipy {scipy_version}, pingouin {pingouin_version}, "
+            package_info += f"and scikit-posthocs {scikit_posthocs_version}.\n"
+            
+            # Copy to clipboard
+            window.clipboard_clear()
+            window.clipboard_append(package_info)
+            messagebox.showinfo("Copied", "Package information copied to clipboard!")
+            
+        button_frame = ttk.Frame(window)
+        button_frame.pack(fill='x', padx=10, pady=10)
+        
+        copy_button = ttk.Button(button_frame, text="Copy Citation Text", command=copy_to_clipboard)
+        copy_button.pack(side='right')
         
     def show_stats_info(self):
         """Display information about statistical tests and when to use them."""
