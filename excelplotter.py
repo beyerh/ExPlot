@@ -1,6 +1,6 @@
 # Excel Plotter - Data visualization tool for Excel files
 
-VERSION = "0.5.3"
+VERSION = "0.5.4"
 # =====================================================================
 
 import tkinter as tk
@@ -626,6 +626,7 @@ class ExcelPlotterApp:
         menubar.add_cascade(label="File", menu=file_menu)
         file_menu.add_command(label="Open Excel File", command=self.open_file)
         file_menu.add_command(label="Load Example Data", command=self.load_example_data)
+        file_menu.add_command(label="Export to Excel", command=self.export_to_excel)
         file_menu.add_command(label="Save Graph", command=self.save_graph)
         file_menu.add_separator()
         file_menu.add_command(label="Save Project", command=self.save_project)
@@ -1106,10 +1107,35 @@ class ExcelPlotterApp:
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load example data: {str(e)}")
             
+    def export_to_excel(self):
+        """Export the current data to an Excel file, preserving any modifications.
+        This includes reordering or renaming of x values.
+        """
+        if not hasattr(self, 'df') or self.df is None or self.df.empty:
+            messagebox.showerror("Error", "No data to export. Please load data first.")
+            return
+            
+        # Ask the user for a file to save to
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".xlsx",
+            filetypes=[("Excel files", "*.xlsx")],
+            title="Export Data to Excel"
+        )
+        
+        if not file_path:
+            return  # User cancelled
+            
+        try:
+            # Export the DataFrame to Excel
+            self.df.to_excel(file_path, index=False)
+            messagebox.showinfo("Success", f"Data successfully exported to {file_path}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to export data: {str(e)}")
+    
     def save_graph(self):
-        """Save the current plot to an image file."""
+        """Save the current graph as an image file."""
         if not hasattr(self, 'fig') or self.fig is None:
-            messagebox.showwarning("No Plot", "Please create a plot before saving.")
+            messagebox.showerror("Error", "No graph to save. Please generate a graph first.")
             return
             
         file_path = filedialog.asksaveasfilename(
