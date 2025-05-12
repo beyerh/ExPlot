@@ -1,6 +1,6 @@
 # Excel Plotter - Data visualization tool for Excel files
 
-VERSION = "0.5.4"
+VERSION = "0.5.5"
 # =====================================================================
 
 import tkinter as tk
@@ -23,6 +23,11 @@ from pathlib import Path
 import pingouin as pg
 import scikit_posthocs as sp
 import math
+from scipy.optimize import curve_fit
+import warnings
+import traceback  # For better error reporting
+from matplotlib.patches import Polygon
+from matplotlib.collections import PatchCollection
 
 DEFAULT_COLORS = {
     "Black": "#000000",
@@ -35,12 +40,12 @@ DEFAULT_COLORS = {
     "Gray": "#7F8C8D"
 }
 DEFAULT_PALETTES = {
-    "Viridis": sns.color_palette("viridis", as_cmap=False),
-    "Grayscale": sns.color_palette("gray", as_cmap=False),
+    "Viridis": sns.color_palette("viridis", as_cmap=False).as_hex(),
+    "Grayscale": sns.color_palette("gray", as_cmap=False).as_hex(),
     "Set2": sns.color_palette("Set2").as_hex(),
-    "Spring Pastels": sns.color_palette("pastel", as_cmap=False),
-    "Blue-Black": sns.color_palette(["#2b2fff","#000000"], as_cmap=False),
-    "Black-Blue": sns.color_palette(["#000000","#2b2fff"], as_cmap=False)
+    "Spring Pastels": sns.color_palette("pastel", as_cmap=False).as_hex(),
+    "Blue-Black": sns.color_palette(["#2b2fff","#000000"], as_cmap=False).as_hex(),
+    "Black-Blue": sns.color_palette(["#000000","#2b2fff"], as_cmap=False).as_hex()
 }
 
 # --- in show_statistical_details, replace all key = ... assignments for latest_pvals with stat_key
@@ -48,6 +53,43 @@ DEFAULT_PALETTES = {
 # --- add debug print if a key is missing in plot_graph when drawing annotation
 
 class ExcelPlotterApp:
+    def optimize_legend_layout(self, ax, handles, labels, fontsize=10, max_fraction=0.8, min_ncol=1, max_ncol=None):
+        """
+        Determine the optimal number of legend columns so the legend doesn't exceed max_fraction of figure width.
+        Returns the best ncol value.
+        """
+        import matplotlib.pyplot as plt
+        import numpy as np
+        from matplotlib.text import Text
+
+        fig = ax.figure
+        fig_width = fig.get_figwidth() * fig.dpi  # in pixels
+        if max_ncol is None:
+            max_ncol = len(labels)
+        if len(labels) == 0:
+            return 1
+        # Estimate width of each label (roughly; matplotlib doesn't provide exact width until drawn)
+        label_widths = []
+        for label in labels:
+            # Use a simple estimate: number of characters * fontsize * 0.6
+            width = len(str(label)) * fontsize * 0.6
+            label_widths.append(width)
+        # Try different ncol values
+        best_ncol = 1
+        for ncol in range(1, max_ncol + 1):
+            rows = int(np.ceil(len(labels) / ncol))
+            # Estimate row width as sum of the widest label in each col
+            col_widths = [0] * ncol
+            for idx, width in enumerate(label_widths):
+                col = idx % ncol
+                col_widths[col] = max(col_widths[col], width)
+            total_width = sum(col_widths) + 40  # Padding
+            if total_width < fig_width * max_fraction:
+                best_ncol = ncol
+            else:
+                break
+        return best_ncol
+
     def stat_key(self, *args):
         # For group comparisons, always sort the pair for unpaired, or keep order for paired if needed
         # If first arg is a group (x axis), keep as is, but sort the next two
@@ -441,6 +483,7 @@ class ExcelPlotterApp:
         self.custom_colors_file = str(self.config_dir / "custom_colors.json")
         self.custom_palettes_file = str(self.config_dir / "custom_palettes.json")
         self.default_settings_file = str(self.config_dir / "default_settings.json")
+        self.models_file = str(self.config_dir / "fitting_models.json")
         self.temp_pdf = str(Path(tempfile.gettempdir()) / "excelplotter_temp_plot.pdf")
         self.xaxis_renames = {}
         self.xaxis_order = []
@@ -474,6 +517,235 @@ class ExcelPlotterApp:
         self.xy_show_mean_var = tk.BooleanVar(value=True)
         self.xy_show_mean_errorbars_var = tk.BooleanVar(value=True)
         self.xy_draw_band_var = tk.BooleanVar(value=False)
+        
+        # --- XY Fitting variables ---
+        self.use_fitting_var = tk.BooleanVar(value=False)
+        self.fitting_model_var = tk.StringVar(value="Linear Regression")
+        self.fitting_ci_var = tk.StringVar(value="None")
+        self.fitting_use_black_lines_var = tk.BooleanVar(value=False)
+        self.fitting_use_black_bands_var = tk.BooleanVar(value=False)
+        self.fitting_use_group_colors_var = tk.BooleanVar(value=True)
+        # Store the default models
+        self.default_fitting_models = {
+            # Basic models
+            "Linear Regression": {
+                "parameters": [("A0", 1.0), ("A1", 1.0)],
+                "formula": "# a simple linear model\ny = A0 + A1 * x",
+                "description": "A basic linear relationship between variables. Use for data showing a constant rate of change or a straight-line trend. Common in many fields when two variables have a simple proportional relationship."
+            },
+            "Quadratic": {
+                "parameters": [("A0", 1.0), ("A1", 1.0), ("A2", 0.1)],
+                "formula": "# quadratic polynomial model\ny = A0 + A1 * x + A2 * x**2",
+                "description": "Models data with one curve or inflection point. Useful for processes with acceleration/deceleration or parabolic relationships. Applications include projectile motion, cost functions, and simple optimization problems."
+            },
+            "Cubic": {
+                "parameters": [("A0", 1.0), ("A1", 1.0), ("A2", 0.1), ("A3", 0.01)],
+                "formula": "# cubic polynomial model\ny = A0 + A1 * x + A2 * x**2 + A3 * x**3",
+                "description": "Models data with two possible inflection points. Useful for more complex curved relationships that change direction multiple times. Common in economics, physics, and engineering when modeling complex systems."
+            },
+            "Power Law": {
+                "parameters": [("A", 1.0), ("b", 1.0)],
+                "formula": "# power law relationship (allometric)\ny = A * x**b",
+                "description": "Models scaling relationships where one variable changes as a power of another. Essential for allometric scaling in biology (e.g., body mass vs. metabolic rate). Also used in physics, economics, and network science."
+            },
+            "Exponential": {
+                "parameters": [("A", 1.0), ("k", 0.1)],
+                "formula": "# simple exponential growth/decay\ny = A * exp(k * x)",
+                "description": "Models exponential growth (k > 0) or decay (k < 0) processes. Used for population growth, radioactive decay, compound interest, and many biological processes with constant growth/decay rates."
+            },
+            "Michaelis-Menten": {
+                "parameters": [("Vmax", 100.0), ("Km", 10.0)],
+                "formula": "# enzyme kinetics model\ny = Vmax * x / (Km + x)",
+                "description": "The standard model for enzyme kinetics where reaction velocity approaches a maximum (Vmax) as substrate concentration increases. Km is the substrate concentration at half-maximum velocity. Fundamental in biochemistry and pharmaceutical research."
+            }
+        }
+        
+        # Load saved models or initialize with defaults
+        self.fitting_models = self.load_fitting_models()
+        
+        # If no saved models exist, initialize with defaults
+        if not self.fitting_models:
+            self.fitting_models = self.default_fitting_models.copy()
+            self.save_fitting_models()
+        
+        # Initialize default models dictionary for reference
+        self.default_fitting_models = {
+            # Basic models
+            "Linear Regression": {
+                "parameters": [("A0", 1.0), ("A1", 1.0)],
+                "formula": "# a simple linear model\ny = A0 + A1 * x",
+                "description": "A basic linear relationship between variables. Use for data showing a constant rate of change or a straight-line trend. Common in many fields when two variables have a simple proportional relationship."
+            },
+            "Quadratic": {
+                "parameters": [("A0", 1.0), ("A1", 1.0), ("A2", 0.1)],
+                "formula": "# quadratic polynomial model\ny = A0 + A1 * x + A2 * x**2",
+                "description": "Models data with one curve or inflection point. Useful for processes with acceleration/deceleration or parabolic relationships. Applications include projectile motion, cost functions, and simple optimization problems."
+            },
+            "Cubic": {
+                "parameters": [("A0", 1.0), ("A1", 1.0), ("A2", 0.1), ("A3", 0.01)],
+                "formula": "# cubic polynomial model\ny = A0 + A1 * x + A2 * x**2 + A3 * x**3",
+                "description": "Models data with two possible inflection points. Useful for more complex curved relationships that change direction multiple times. Common in economics, physics, and engineering when modeling complex systems."
+            },
+            "Power Law": {
+                "parameters": [("A", 1.0), ("b", 1.0)],
+                "formula": "# power law relationship (allometric)\ny = A * x**b",
+                "description": "Models scaling relationships where one variable changes as a power of another. Essential for allometric scaling in biology (e.g., body mass vs. metabolic rate). Also used in physics, economics, and network science."
+            },
+            "Exponential": {
+                "parameters": [("A", 1.0), ("k", 0.1)],
+                "formula": "# simple exponential growth/decay\ny = A * exp(k * x)",
+                "description": "Models exponential growth (k > 0) or decay (k < 0) processes. Used for population growth, radioactive decay, compound interest, and many biological processes with constant growth/decay rates."
+            },
+            
+            # Biological/biochemical models
+            "Michaelis-Menten": {
+                "parameters": [("Vmax", 100.0), ("Km", 10.0)],
+                "formula": "# enzyme kinetics model\ny = Vmax * x / (Km + x)",
+                "description": "The standard model for enzyme kinetics where reaction velocity approaches a maximum (Vmax) as substrate concentration increases. Km is the substrate concentration at half-maximum velocity. Fundamental in biochemistry and pharmaceutical research."
+            },
+            "Substrate Inhibition": {
+                "parameters": [("Vmax", 100.0), ("Km", 10.0), ("Ki", 200.0)],
+                "formula": "# enzyme kinetics with substrate inhibition\ny = Vmax * x / (Km + x + (x**2/Ki))",
+                "description": "Extension of Michaelis-Menten that accounts for substrate inhibition at high concentrations. The reaction rate decreases after reaching a peak. Common in various enzyme systems where high substrate concentrations inhibit enzyme activity."
+            },
+            "Sigmoidal Growth": {
+                "parameters": [("A", 1.0), ("k", 0.1), ("x0", 5.0)],
+                "formula": "# logistic/sigmoidal growth curve\ny = A / (1 + exp(-k * (x - x0)))",
+                "description": "S-shaped curve for processes with initial slow growth, rapid middle phase, and plateau. Models population growth with carrying capacity, cell growth, disease spread, and learning curves. x0 is the inflection point."
+            },
+            "Gompertz Growth": {
+                "parameters": [("A", 1.0), ("b", 1.0), ("k", 0.1)],
+                "formula": "# Gompertz growth model (tumor growth)\ny = A * exp(-b * exp(-k * x))",
+                "description": "Modified growth model with asymmetric S-shape (steeper initial phase). Standard model for tumor growth dynamics. Also used for cell population growth, mortality modeling, and market penetration of technologies."
+            },
+            "Four-Parameter Logistic": {
+                "parameters": [("A", 0.0), ("B", 1.0), ("C", 0.5), ("D", 1.0)],
+                "formula": "# 4PL model for dose-response, ELISA\ny = D + (A - D) / (1 + (x / C)**B)",
+                "description": "Standard model for symmetric sigmoidal dose-response curves. A is the minimum asymptote, D is the maximum, C is the inflection point (EC50/IC50), and B is the slope. Widely used in ELISA assays, pharmacology, and immunology."
+            },
+            "Five-Parameter Logistic": {
+                "parameters": [("A", 0.0), ("B", 1.0), ("C", 0.5), ("D", 1.0), ("E", 1.0)],
+                "formula": "# 5PL model for asymmetric dose-response curves\ny = D + (A - D) / (1 + (x / C)**B)**E",
+                "description": "Extension of 4PL allowing for asymmetric sigmoidal curves. The additional parameter E controls asymmetry. More accurate for many biological responses where the lower and upper plateaus are approached at different rates."
+            },
+            "Biphasic Dose Response": {
+                "parameters": [("ymin", 0.0), ("ymax1", 0.5), ("ymax2", 1.0), ("logEC50_1", 0.5), ("logEC50_2", 2.0), ("nH1", 1.0), ("nH2", 1.0)],
+                "formula": "# biphasic dose response model\ny = ymin + (ymax1 - ymin) / (1 + 10**((logEC50_1 - log10(x)) * nH1)) + (ymax2 - ymin) / (1 + 10**((logEC50_2 - log10(x)) * nH2))",
+                "description": "Models complex dose-response relationships with two distinct phases or peaks. Used for receptor systems with multiple binding sites or when a compound has dual effects. Common in pharmacology when drugs affect multiple receptor populations."
+            },
+            
+            # Binding/kinetics models
+            "Binding Isotherm": {
+                "parameters": [("A0", 1.0), ("A1", 1.0), ("KD", 1.0)],
+                "formula": "# a binding isotherm\ny = A0 + A1 * x / (x + KD)",
+                "description": "Models single-site binding between a ligand and receptor. A0 is baseline, A1 is maximum binding, and KD is the dissociation constant (concentration at half-maximum binding). Fundamental in pharmacology and biochemistry."
+            },
+            "Hill Binding": {
+                "parameters": [("A0", 1.0), ("A1", 1.0), ("KD", 1.0), ("n", 1.0)],
+                "formula": "# a binding isotherm with Hill-type cooperativity\ny = A0 + A1 * x ** n / (x ** n + KD ** n)",
+                "description": "Extension of binding isotherm that accounts for cooperative binding. The Hill coefficient (n) represents cooperativity: n > 1 indicates positive cooperativity, n < 1 negative cooperativity. Essential for modeling hemoglobin-oxygen binding and other cooperative systems."
+            },
+            "Competitive Inhibition": {
+                "parameters": [("Vmax", 100.0), ("Km", 10.0), ("Ki", 50.0), ("I", 1.0)],
+                "formula": "# competitive enzyme inhibition model\ny = Vmax * x / (Km * (1 + I/Ki) + x)",
+                "description": "Models enzyme inhibition where inhibitor (I) competes with substrate for the active site. Ki is the inhibition constant. The apparent Km increases with inhibitor concentration while Vmax remains unchanged. Common in drug development and biochemistry."
+            },
+            "Non-competitive Inhibition": {
+                "parameters": [("Vmax", 100.0), ("Km", 10.0), ("Ki", 50.0), ("I", 1.0)],
+                "formula": "# non-competitive enzyme inhibition model\ny = Vmax * x / ((Km + x) * (1 + I/Ki))",
+                "description": "Models enzyme inhibition where inhibitor binds to enzyme at a site distinct from substrate. Decreases apparent Vmax while Km remains constant. Used in enzyme studies where inhibitors alter enzyme activity without affecting substrate binding."
+            },
+            
+            # Specialized dose-response models
+            "Hormesis (U-shaped)": {
+                "parameters": [("ymin", 1.0), ("ymax", 0.2), ("EC50", 100.0), ("slope", 2.0), ("stim", 0.3), ("stimEC50", 1.0)],
+                "formula": "# Hormesis model for U-shaped dose-response curve\ny = ymin + (ymax - ymin) / (1 + (x/EC50)**slope) + stim / (1 + (stimEC50/x)**slope)",
+                "description": "Models U-shaped or J-shaped dose-response relationships where low doses cause stimulation (hormesis) before inhibition at higher doses. Common in toxicology and environmental science where compounds can have opposite effects at different concentrations."
+            },
+            "EC50 with Variable Slope": {
+                "parameters": [("bottom", 0.0), ("top", 1.0), ("EC50", 10.0), ("hillSlope", 1.0)],
+                "formula": "# Variable slope EC50 model\ny = bottom + (top - bottom) / (1 + 10**((log10(EC50) - log10(x)) * hillSlope))",
+                "description": "Standard dose-response model used to determine EC50/IC50 with variable slope. HillSlope controls steepness (efficacy) while EC50 represents potency. Preferred model for receptor-ligand interactions in pharmacology and drug discovery where slope is not assumed to be 1."
+            },
+            "Combination Index": {
+                "parameters": [("EC50_A", 10.0), ("EC50_B", 20.0), ("h_A", 1.0), ("h_B", 1.0), ("alpha", 1.0), ("A_conc", 5.0), ("max_effect", 100.0)],
+                "formula": "# Combination index model for drug interactions\ny = max_effect * (A_conc / EC50_A)**h_A / (1 + (A_conc / EC50_A)**h_A + (x / EC50_B)**h_B + alpha * (A_conc / EC50_A)**h_A * (x / EC50_B)**h_B)",
+                "description": "Models interactions between two drugs, where one drug is at fixed concentration (A_conc) and the other varies (x). The alpha parameter indicates synergy (α<1), additivity (α=1), or antagonism (α>1). Essential for combination therapy design in oncology and infectious disease treatment."
+            },
+            "Isobologram": {
+                "parameters": [("EC50_A", 10.0), ("EC50_B", 20.0), ("alpha", 1.0), ("effect_level", 0.5)],
+                "formula": "# Isobologram equation for drug combinations\ny = EC50_B * (1 - x/EC50_A) / (1 - alpha * x/EC50_A)",
+                "description": "Represents the concentrations of two drugs needed to achieve a specific effect level (e.g., 50% inhibition). The curve shape indicates synergy (concave), additivity (linear), or antagonism (convex). Used to design optimal drug combination strategies in pharmacology."
+            },
+            
+            # Survival/time-to-event models
+            "Weibull Survival": {
+                "parameters": [("scale", 10.0), ("shape", 2.0)],
+                "formula": "# Weibull survival function\ny = exp(-(x/scale)**shape)",
+                "description": "Models survival probability as a function of time. The shape parameter determines whether hazard increases (>1), decreases (<1), or remains constant (=1) over time. Widely used in reliability engineering, medical survival analysis, and lifetime testing due to its flexibility."
+            },
+            "Exponential Survival": {
+                "parameters": [("lambda", 0.05)],
+                "formula": "# Exponential survival function\ny = exp(-lambda * x)",
+                "description": "Models survival with constant hazard rate (lambda) over time. Simplest survival model, assuming risk of failure/death doesn't change with time. Used as a baseline in clinical trials and for modeling events that occur randomly without aging/wear effects."
+            },
+            "Log-logistic Survival": {
+                "parameters": [("alpha", 10.0), ("beta", 2.0)],
+                "formula": "# Log-logistic survival function\ny = 1 / (1 + (x/alpha)**beta)",
+                "description": "Models survival with non-monotonic hazard rates (initially increasing, then decreasing). Used for event times that first become more likely then less likely over time. Common in pharmacokinetics and for modeling time-to-progression in diseases with initial crisis followed by stabilization."
+            },
+            "Gompertz-Makeham": {
+                "parameters": [("a", 0.01), ("b", 0.1), ("c", 0.001)],
+                "formula": "# Gompertz-Makeham survival model\ny = exp(-(c*x + a/b * (exp(b*x) - 1)))",
+                "description": "Extends Gompertz model by adding age-independent mortality component (c). Models human mortality combining background risk (c) with age-dependent risk (a,b). Standard in actuarial science, demography, and gerontology for human lifespan modeling."
+            },
+            
+            # Signal/peak models
+            "Gaussian": {
+                "parameters": [("A", 1.0), ("mu", 5.0), ("sigma", 1.0), ("y0", 0.0)],
+                "formula": "# Gaussian/normal distribution peak\ny = y0 + A * exp(-(x - mu)**2 / (2 * sigma**2))",
+                "description": "Bell-shaped curve for modeling normally distributed data or peaks. mu is the center, sigma is the width, A is amplitude, and y0 is baseline. Used for chromatography peaks, spectral lines, and many natural distributions in biology and chemistry."
+            },
+            "Lorentzian": {
+                "parameters": [("A", 1.0), ("x0", 5.0), ("gamma", 1.0), ("y0", 0.0)],
+                "formula": "# Lorentzian peak (spectroscopy)\ny = y0 + A * gamma**2 / ((x - x0)**2 + gamma**2)",
+                "description": "Models peaks with wider 'tails' than Gaussian. Common in spectroscopy, particularly for modeling spectral line shapes in NMR, IR, and other resonance phenomena. x0 is center, gamma controls width, and A is amplitude."
+            },
+            "Boltzmann Sigmoid": {
+                "parameters": [("A1", 0.0), ("A2", 1.0), ("x0", 5.0), ("dx", 1.0)],
+                "formula": "# Boltzmann sigmoid for transitions\ny = A2 + (A1 - A2) / (1 + exp((x - x0) / dx))",
+                "description": "Models sharp transitions between two states. Used for voltage-dependent channel activation in electrophysiology, phase transitions, and other threshold phenomena. A1 and A2 are the asymptotes, x0 is the midpoint, and dx controls steepness."
+            },
+            
+            # Periodic/oscillation models
+            "Sine Wave": {
+                "parameters": [("A", 1.0), ("f", 0.1), ("phi", 0.0), ("y0", 0.0)],
+                "formula": "# Sine wave oscillation\ny = y0 + A * sin(2 * pi * f * x + phi)",
+                "description": "Basic model for oscillatory processes. A is amplitude, f is frequency, phi is phase shift, and y0 is vertical offset. Used for modeling circadian rhythms, seasonal cycles, sound waves, electrical oscillations, and other periodic phenomena."
+            },
+            "Damped Oscillation": {
+                "parameters": [("A", 1.0), ("f", 0.1), ("phi", 0.0), ("lambda", 0.05), ("y0", 0.0)],
+                "formula": "# Damped oscillation\ny = y0 + A * exp(-lambda * x) * sin(2 * pi * f * x + phi)",
+                "description": "Models oscillations that decay over time. Lambda controls damping rate. Used for systems returning to equilibrium like pendulums with friction, RLC circuits, population oscillations, and mechanical resonance with damping."
+            },
+            
+            # Exponential models
+            "Single Exponential": {
+                "parameters": [("A0", 1.0), ("A1", 1.0), ("k1", 1.0)],
+                "formula": "# a single exponential function\ny = A0 + A1 * exp(-k1 * x)",
+                "description": "Models processes with one characteristic decay/growth rate. A0 is baseline, A1 is amplitude, and k1 is rate constant. Used for simple radioactive decay, material cooling, drug clearance, and first-order chemical reactions."
+            },
+            "Double Exponential": {
+                "parameters": [("A0", 1.0), ("A1", -1.0), ("k1", 1.0), ("A2", 1.0), ("k2", 5.0)],
+                "formula": "# a double exponential function\ny = A0 + A1 * exp(-k1 * x) + A2 * exp(-k2 * x)",
+                "description": "Models processes with two different decay/growth rates. Used for biexponential drug clearance, complex fluorescence decay, hormone release, and systems with two distinct compartments or kinetic processes."
+            },
+            "Triple Exponential": {
+                "parameters": [("A0", 1.0), ("A1", -1.0), ("k1", 1.0), ("A2", 1.0), ("k2", 5.0), ("A3", -2.0), ("k3", 1.2)],
+                "formula": "# a triple exponential function\ny = A0 + A1 * exp(-k1 * x) + A2 * exp(-k2 * x) + A3 * exp(-k3 * x)",
+                "description": "Models complex systems with three different time scales or compartments. Used for multicompartment pharmacokinetic models, complex decay processes in physics, and systems with multiple parallel or sequential processes with different rates."
+            }
+        }
         self.load_custom_colors_palettes()
         # Initialize default plot dimensions for the plot area
         self.plot_width_var = tk.DoubleVar(value=1.5)
@@ -2390,12 +2662,14 @@ class ExcelPlotterApp:
         self.axis_tab = tk.Frame(self.tab_control)
         self.colors_tab = tk.Frame(self.tab_control)
         self.stats_settings_tab = tk.Frame(self.tab_control)
+        self.xy_fitting_tab = tk.Frame(self.tab_control)
 
         self.tab_control.add(self.basic_tab, text="Basic")
         self.tab_control.add(self.appearance_tab, text="Appearance")
         self.tab_control.add(self.axis_tab, text="Axis")
-        self.tab_control.add(self.colors_tab, text="Colors")
         self.tab_control.add(self.stats_settings_tab, text="Statistics")
+        self.tab_control.add(self.xy_fitting_tab, text="XY Fitting")
+        self.tab_control.add(self.colors_tab, text="Colors")
 
         right_frame = tk.Frame(main_frame)
         right_frame.pack(side='right', fill='both', expand=True)
@@ -2425,6 +2699,7 @@ class ExcelPlotterApp:
         self.setup_appearance_tab()
         self.setup_axis_tab()
         self.setup_colors_tab()
+        self.setup_xy_fitting_tab()
 
     def setup_basic_tab(self):
         frame = self.basic_tab
@@ -2739,6 +3014,853 @@ class ExcelPlotterApp:
         else:
             self.ylog_base_dropdown.config(state="disabled")
     
+    def setup_xy_fitting_tab(self):
+        frame = self.xy_fitting_tab
+        
+        # Enable fitting checkbox
+        fit_enable_frame = tk.Frame(frame)
+        fit_enable_frame.pack(fill='x', padx=6, pady=(8,4))
+        
+        # Set up a function to handle enabling/disabling fitting
+        def toggle_fitting():
+            if self.use_fitting_var.get():
+                print("[DEBUG] Fitting enabled, setting plot type to XY")
+                self.plot_kind_var.set("xy")
+            else:
+                print("[DEBUG] Fitting disabled")
+
+        self.use_fitting_cb = tk.Checkbutton(fit_enable_frame, text="Enable Model Fitting", 
+                                             variable=self.use_fitting_var, 
+                                             command=toggle_fitting)
+        self.use_fitting_cb.pack(anchor="w", pady=2)
+        
+        # Model selection group
+        model_grp = tk.LabelFrame(frame, text="Model Selection", padx=6, pady=6)
+        model_grp.pack(fill='x', padx=6, pady=4)
+        
+        # Model dropdown
+        tk.Label(model_grp, text="Fitting Model:").grid(row=0, column=0, sticky="w", pady=2)
+        self.model_dropdown = ttk.Combobox(model_grp, textvariable=self.fitting_model_var, 
+                                           values=list(self.fitting_models.keys()), width=25, state="readonly")
+        self.model_dropdown.grid(row=0, column=1, sticky="ew", padx=2, pady=2)
+        self.model_dropdown.bind('<<ComboboxSelected>>', self.update_model_parameters)
+        
+        # Confidence interval options
+        tk.Label(model_grp, text="Confidence Interval:").grid(row=1, column=0, sticky="w", pady=2)
+        self.ci_dropdown = ttk.Combobox(model_grp, textvariable=self.fitting_ci_var, 
+                                        values=["None", "68% (1σ)", "95% (2σ)"], width=25, state="readonly")
+        self.ci_dropdown.grid(row=1, column=1, sticky="ew", padx=2, pady=2)
+        
+        # Color options for fit lines and bands
+        tk.Label(model_grp, text="Appearance:").grid(row=2, column=0, sticky="w", pady=2)
+        fit_color_frame = tk.Frame(model_grp)
+        fit_color_frame.grid(row=2, column=1, sticky="ew", padx=2, pady=2)
+        
+        # Option to use black lines
+        self.fit_black_lines_cb = tk.Checkbutton(fit_color_frame, text="Black Lines", 
+                                               variable=self.fitting_use_black_lines_var)
+        self.fit_black_lines_cb.pack(side=tk.LEFT, padx=2)
+        
+        # Option to use black bands for confidence intervals
+        self.fit_black_bands_cb = tk.Checkbutton(fit_color_frame, text="Black Bands", 
+                                               variable=self.fitting_use_black_bands_var)
+        self.fit_black_bands_cb.pack(side=tk.LEFT, padx=2)
+        
+        # Option to match group colors
+        self.fit_group_cb = tk.Checkbutton(fit_color_frame, text="Match Groups", 
+                                          variable=self.fitting_use_group_colors_var)
+        self.fit_group_cb.pack(side=tk.LEFT, padx=2)
+        
+        # Button to manage models
+        manage_models_btn = tk.Button(model_grp, text="Manage Models", command=self.manage_fitting_models)
+        manage_models_btn.grid(row=3, column=0, columnspan=2, sticky="ew", padx=2, pady=6)
+        
+        # Parameters group
+        self.params_grp = tk.LabelFrame(frame, text="Model Parameters", padx=6, pady=6)
+        self.params_grp.pack(fill='x', padx=6, pady=4)
+        
+        # Description display group
+        description_grp = tk.LabelFrame(frame, text="Model Description", padx=6, pady=6)
+        description_grp.pack(fill='x', padx=6, pady=4)
+        
+        description_frame = tk.Frame(description_grp)
+        description_frame.pack(fill='both', expand=True, padx=2, pady=2)
+        
+        self.description_text = tk.Text(description_frame, height=4, width=40, wrap=tk.WORD)
+        description_scrollbar = tk.Scrollbar(description_frame, command=self.description_text.yview)
+        self.description_text.config(yscrollcommand=description_scrollbar.set)
+        
+        self.description_text.pack(side=tk.LEFT, fill='both', expand=True)
+        description_scrollbar.pack(side=tk.RIGHT, fill='y')
+        
+        # Formula display group
+        formula_grp = tk.LabelFrame(frame, text="Model Formula", padx=6, pady=6)
+        formula_grp.pack(fill='x', padx=6, pady=4, expand=True)
+        
+        # Formula display with scrollbar
+        formula_frame = tk.Frame(formula_grp)
+        formula_frame.pack(fill='both', expand=True, padx=2, pady=2)
+        
+        self.formula_text = tk.Text(formula_frame, height=5, width=40, wrap=tk.WORD)
+        formula_scrollbar = tk.Scrollbar(formula_frame, command=self.formula_text.yview)
+        self.formula_text.config(yscrollcommand=formula_scrollbar.set)
+        
+        self.formula_text.pack(side=tk.LEFT, fill='both', expand=True)
+        formula_scrollbar.pack(side=tk.RIGHT, fill='y')
+        
+        # Result display group
+        result_grp = tk.LabelFrame(frame, text="Fitting Results", padx=6, pady=6)
+        result_grp.pack(fill='x', padx=6, pady=4)
+        
+        # Results text with scrollbar
+        result_frame = tk.Frame(result_grp)
+        result_frame.pack(fill='both', expand=True, padx=2, pady=2)
+        
+        self.result_text = tk.Text(result_frame, height=8, width=40, wrap=tk.WORD)
+        result_scrollbar = tk.Scrollbar(result_frame, command=self.result_text.yview)
+        self.result_text.config(yscrollcommand=result_scrollbar.set)
+        
+        self.result_text.pack(side=tk.LEFT, fill='both', expand=True)
+        result_scrollbar.pack(side=tk.RIGHT, fill='y')
+        
+        # Initialize parameter fields
+        self.param_entries = []
+        self.update_model_parameters()
+        
+    def update_model_parameters(self, event=None):
+        """Update parameter entry fields based on selected model"""
+        # Clear existing parameter entries
+        for widget in self.params_grp.winfo_children():
+            widget.destroy()
+        self.param_entries = []
+        
+        # Get selected model parameters
+        model_name = self.fitting_model_var.get()
+        model_info = self.fitting_models.get(model_name, {})
+        parameters = model_info.get("parameters", [])
+        formula = model_info.get("formula", "")
+        
+        # Update formula display
+        self.formula_text.delete(1.0, tk.END)
+        self.formula_text.insert(tk.END, formula)
+        
+        # Update description display
+        description = model_info.get("description", "No description available.")
+        self.description_text.delete(1.0, tk.END)
+        self.description_text.insert(tk.END, description)
+        
+        # Create parameter entry fields
+        for i, (param_name, default_value) in enumerate(parameters):
+            frame = tk.Frame(self.params_grp)
+            frame.pack(fill='x', pady=2)
+            
+            label = tk.Label(frame, text=f"{param_name} starting value:")
+            label.pack(side=tk.LEFT, padx=2)
+            
+            var = tk.DoubleVar(value=default_value)
+            entry = tk.Entry(frame, textvariable=var, width=10)
+            entry.pack(side=tk.RIGHT, padx=2)
+            
+            self.param_entries.append((param_name, var))
+    
+    def save_project(self):
+        """Save the current plot settings to a file"""
+        try:
+            # Prompt for a filename to save the project to
+            file_path = filedialog.asksaveasfilename(
+                title="Save Project",
+                defaultextension=".explt",
+                filetypes=[("ExcelPlotter Project Files", "*.explt"), ("All Files", "*.*")]
+            )
+            if not file_path:
+                return  # User cancelled
+                
+            # Create a dictionary with all the current settings
+            settings = self.get_current_settings()
+            
+            # Add the XY Fitting settings to the project
+            settings['xy_fitting'] = {
+                'use_fitting': self.use_fitting_var.get(),
+                'fitting_model': self.fitting_model_var.get(),
+                'fitting_ci': self.fitting_ci_var.get(),
+                'fitting_models': self.fitting_models,
+                'parameters': [(name, var.get()) for name, var in self.param_entries]
+            }
+            
+            # Save to JSON file
+            with open(file_path, 'w') as f:
+                json.dump(settings, f, indent=2)
+                
+            messagebox.showinfo("Success", f"Project saved to {file_path}")
+            
+        except Exception as e:
+            messagebox.showerror("Error Saving Project", f"An error occurred: {str(e)}")
+            
+    def get_current_settings(self):
+        """Gather current application settings for saving"""
+        settings = {
+            'version': self.version,
+            'excel_file': self.excel_file,  # Keep as reference only
+            'sheet': self.sheet_var.get() if hasattr(self, 'sheet_var') else '',
+            'plot_kind': self.plot_kind_var.get(),
+            'columns': {
+                'x_axis': self.xaxis_var.get() if hasattr(self, 'xaxis_var') else '',
+                'group': self.group_var.get() if hasattr(self, 'group_var') else '',
+                'y_axis': [col for var, col in self.value_vars if var.get()] if hasattr(self, 'value_vars') else []
+            },
+            
+            # Embed the current data and any customizations
+            'embedded_data': {
+                'dataframe': self.df.to_dict() if hasattr(self, 'df') and self.df is not None else None,
+                'xaxis_renames': self.xaxis_renames if hasattr(self, 'xaxis_renames') else {},
+                'xaxis_order': self.xaxis_order if hasattr(self, 'xaxis_order') else None
+            },
+            'appearance': {
+                'plot_width': self.plot_width_var.get(),
+                'plot_height': self.plot_height_var.get(),
+                'font_size': self.fontsize_entry.get() if hasattr(self, 'fontsize_entry') else '10',
+                'line_width': self.linewidth.get(),
+                'swap_axes': self.swap_axes_var.get() if hasattr(self, 'swap_axes_var') else False,
+                'show_frame': self.show_frame_var.get() if hasattr(self, 'show_frame_var') else False,
+                'show_hgrid': self.show_hgrid_var.get() if hasattr(self, 'show_hgrid_var') else False,
+                'show_vgrid': self.show_vgrid_var.get() if hasattr(self, 'show_vgrid_var') else False
+            },
+            'axis': {
+                'x_label': self.xlabel_entry.get() if hasattr(self, 'xlabel_entry') else '',
+                'y_label': self.ylabel_entry.get() if hasattr(self, 'ylabel_entry') else '',
+                'x_orientation': self.label_orientation.get() if hasattr(self, 'label_orientation') else 'vertical',
+                'x_min': self.xmin_entry.get() if hasattr(self, 'xmin_entry') else '',
+                'x_max': self.xmax_entry.get() if hasattr(self, 'xmax_entry') else '',
+                'y_min': self.ymin_entry.get() if hasattr(self, 'ymin_entry') else '',
+                'y_max': self.ymax_entry.get() if hasattr(self, 'ymax_entry') else '',
+                'x_log': self.xlogscale_var.get() if hasattr(self, 'xlogscale_var') else False,
+                'y_log': self.logscale_var.get() if hasattr(self, 'logscale_var') else False,
+                'x_log_base': self.xlog_base_var.get() if hasattr(self, 'xlog_base_var') else '10',
+                'y_log_base': self.ylog_base_var.get() if hasattr(self, 'ylog_base_var') else '10'
+            },
+            'statistics': {
+                'use_stats': self.use_stats_var.get() if hasattr(self, 'use_stats_var') else False,
+                'ttest_type': self.ttest_type_var.get() if hasattr(self, 'ttest_type_var') else '',
+                'ttest_alternative': self.ttest_alternative_var.get() if hasattr(self, 'ttest_alternative_var') else '',
+                'anova_type': self.anova_type_var.get() if hasattr(self, 'anova_type_var') else '',
+                'posthoc_type': self.posthoc_type_var.get() if hasattr(self, 'posthoc_type_var') else '',
+                'alpha_level': self.alpha_level_var.get() if hasattr(self, 'alpha_level_var') else '0.05'
+            },
+            'xy_plot': {
+                'marker_symbol': self.xy_marker_symbol_var.get() if hasattr(self, 'xy_marker_symbol_var') else 'o',
+                'marker_size': self.xy_marker_size_var.get() if hasattr(self, 'xy_marker_size_var') else 5.0,
+                'filled': self.xy_filled_var.get() if hasattr(self, 'xy_filled_var') else True,
+                'line_style': self.xy_line_style_var.get() if hasattr(self, 'xy_line_style_var') else 'solid',
+                'line_black': self.xy_line_black_var.get() if hasattr(self, 'xy_line_black_var') else False,
+                'connect': self.xy_connect_var.get() if hasattr(self, 'xy_connect_var') else False,
+                'show_mean': self.xy_show_mean_var.get() if hasattr(self, 'xy_show_mean_var') else True,
+                'show_mean_errorbars': self.xy_show_mean_errorbars_var.get() if hasattr(self, 'xy_show_mean_errorbars_var') else True,
+                'draw_band': self.xy_draw_band_var.get() if hasattr(self, 'xy_draw_band_var') else False
+            },
+            'colors': {
+                'single_color': self.single_color_var.get() if hasattr(self, 'single_color_var') else list(self.custom_colors.keys())[0],
+                'palette': self.palette_var.get() if hasattr(self, 'palette_var') else list(self.custom_palettes.keys())[0],
+                'bar_outline': self.bar_outline_var.get() if hasattr(self, 'bar_outline_var') else False,
+                'strip_black': self.strip_black_var.get() if hasattr(self, 'strip_black_var') else True
+            },
+            'x_axis_renames': self.xaxis_renames,
+            'x_axis_order': self.xaxis_order
+        }
+        
+        # Add XY Fitting settings
+        settings['xy_fitting'] = {
+            'use_fitting': self.use_fitting_var.get(),
+            'fitting_model': self.fitting_model_var.get(),
+            'fitting_ci': self.fitting_ci_var.get(),
+            'fitting_models': self.fitting_models,
+            'parameters': [(name, var.get()) for name, var in self.param_entries]
+        }
+        
+        return settings
+        
+    def apply_settings(self, settings):
+        """Apply loaded settings to the current state"""
+        try:
+            # Check if the file is from an older version
+            file_version = settings.get('version', '0.0.0')
+            current_version = self.version
+            
+            # Handle embedded data if present
+            if 'embedded_data' in settings and settings['embedded_data'].get('dataframe'):
+                # Load dataframe from embedded data
+                self.df = pd.DataFrame.from_dict(settings['embedded_data']['dataframe'])
+                
+                # Load customizations
+                self.xaxis_renames = settings['embedded_data'].get('xaxis_renames', {})
+                self.xaxis_order = settings['embedded_data'].get('xaxis_order', [])
+                
+                # Update sheet dropdown to show 'Embedded Data'
+                self.sheet_options = ['Embedded Data']
+                if hasattr(self, 'sheet_dropdown'):
+                    self.sheet_dropdown['values'] = self.sheet_options
+                if hasattr(self, 'sheet_var'):
+                    self.sheet_var.set('Embedded Data')
+                
+                # Update dropdowns with available columns
+                self.update_columns()
+            # Otherwise try loading from Excel file
+            elif 'excel_file' in settings and os.path.exists(settings['excel_file']):
+                self.excel_file = settings['excel_file']
+                self.load_file(settings['excel_file'])
+                
+                # Select sheet
+                if 'sheet' in settings and settings['sheet'] in self.sheet_dropdown['values']:
+                    self.sheet_var.set(settings['sheet'])
+                    self.load_sheet()
+            
+            # Columns selection
+            if 'columns' in settings:
+                cols = settings['columns']
+                if 'x_axis' in cols and cols['x_axis'] in self.xaxis_dropdown['values']:
+                    self.xaxis_var.set(cols['x_axis'])
+                
+                if 'group' in cols and cols['group'] in self.group_dropdown['values']:
+                    self.group_var.set(cols['group'])
+                
+                if 'y_axis' in cols and hasattr(self, 'value_vars'):
+                    for var, col in self.value_vars:
+                        var.set(col in cols['y_axis'])
+            
+            # Plot kind
+            if 'plot_kind' in settings:
+                self.plot_kind_var.set(settings['plot_kind'])
+            
+            # Appearance
+            if 'appearance' in settings:
+                app = settings['appearance']
+                if 'plot_width' in app:
+                    self.plot_width_var.set(float(app['plot_width']))
+                if 'plot_height' in app:
+                    self.plot_height_var.set(float(app['plot_height']))
+                if 'font_size' in app and hasattr(self, 'fontsize_entry'):
+                    self.fontsize_entry.delete(0, tk.END)
+                    self.fontsize_entry.insert(0, app['font_size'])
+                if 'line_width' in app:
+                    self.linewidth.set(float(app['line_width']))
+                if 'swap_axes' in app and hasattr(self, 'swap_axes_var'):
+                    self.swap_axes_var.set(app['swap_axes'])
+                if 'show_frame' in app and hasattr(self, 'show_frame_var'):
+                    self.show_frame_var.set(app['show_frame'])
+                if 'show_hgrid' in app and hasattr(self, 'show_hgrid_var'):
+                    self.show_hgrid_var.set(app['show_hgrid'])
+                if 'show_vgrid' in app and hasattr(self, 'show_vgrid_var'):
+                    self.show_vgrid_var.set(app['show_vgrid'])
+            
+            # Axis settings
+            if 'axis' in settings:
+                axis = settings['axis']
+                if 'x_label' in axis and hasattr(self, 'xlabel_entry'):
+                    self.xlabel_entry.delete(0, tk.END)
+                    self.xlabel_entry.insert(0, axis['x_label'])
+                if 'y_label' in axis and hasattr(self, 'ylabel_entry'):
+                    self.ylabel_entry.delete(0, tk.END)
+                    self.ylabel_entry.insert(0, axis['y_label'])
+                if 'x_orientation' in axis and hasattr(self, 'label_orientation'):
+                    self.label_orientation.set(axis['x_orientation'])
+                if 'x_min' in axis and hasattr(self, 'xmin_entry'):
+                    self.xmin_entry.delete(0, tk.END)
+                    self.xmin_entry.insert(0, axis['x_min'])
+                if 'x_max' in axis and hasattr(self, 'xmax_entry'):
+                    self.xmax_entry.delete(0, tk.END)
+                    self.xmax_entry.insert(0, axis['x_max'])
+                if 'y_min' in axis and hasattr(self, 'ymin_entry'):
+                    self.ymin_entry.delete(0, tk.END)
+                    self.ymin_entry.insert(0, axis['y_min'])
+                if 'y_max' in axis and hasattr(self, 'ymax_entry'):
+                    self.ymax_entry.delete(0, tk.END)
+                    self.ymax_entry.insert(0, axis['y_max'])
+                if 'x_log' in axis and hasattr(self, 'xlogscale_var'):
+                    self.xlogscale_var.set(axis['x_log'])
+                    self.update_xlog_options()
+                if 'y_log' in axis and hasattr(self, 'logscale_var'):
+                    self.logscale_var.set(axis['y_log'])
+                    self.update_ylog_options()
+                if 'x_log_base' in axis and hasattr(self, 'xlog_base_var'):
+                    self.xlog_base_var.set(axis['x_log_base'])
+                if 'y_log_base' in axis and hasattr(self, 'ylog_base_var'):
+                    self.ylog_base_var.set(axis['y_log_base'])
+            
+            # Statistics settings
+            if 'statistics' in settings:
+                stats = settings['statistics']
+                if 'use_stats' in stats and hasattr(self, 'use_stats_var'):
+                    self.use_stats_var.set(stats['use_stats'])
+                if 'ttest_type' in stats and hasattr(self, 'ttest_type_var'):
+                    self.ttest_type_var.set(stats['ttest_type'])
+                if 'ttest_alternative' in stats and hasattr(self, 'ttest_alternative_var'):
+                    self.ttest_alternative_var.set(stats['ttest_alternative'])
+                if 'anova_type' in stats and hasattr(self, 'anova_type_var'):
+                    self.anova_type_var.set(stats['anova_type'])
+                if 'posthoc_type' in stats and hasattr(self, 'posthoc_type_var'):
+                    self.posthoc_type_var.set(stats['posthoc_type'])
+                if 'alpha_level' in stats and hasattr(self, 'alpha_level_var'):
+                    self.alpha_level_var.set(stats['alpha_level'])
+            
+            # XY plot settings
+            if 'xy_plot' in settings:
+                xy = settings['xy_plot']
+                if 'marker_symbol' in xy and hasattr(self, 'xy_marker_symbol_var'):
+                    self.xy_marker_symbol_var.set(xy['marker_symbol'])
+                if 'marker_size' in xy and hasattr(self, 'xy_marker_size_var'):
+                    self.xy_marker_size_var.set(float(xy['marker_size']))
+                if 'filled' in xy and hasattr(self, 'xy_filled_var'):
+                    self.xy_filled_var.set(xy['filled'])
+                if 'line_style' in xy and hasattr(self, 'xy_line_style_var'):
+                    self.xy_line_style_var.set(xy['line_style'])
+                if 'line_black' in xy and hasattr(self, 'xy_line_black_var'):
+                    self.xy_line_black_var.set(xy['line_black'])
+                if 'connect' in xy and hasattr(self, 'xy_connect_var'):
+                    self.xy_connect_var.set(xy['connect'])
+                if 'show_mean' in xy and hasattr(self, 'xy_show_mean_var'):
+                    self.xy_show_mean_var.set(xy['show_mean'])
+                    self.update_xy_mean_errorbar_state()
+                if 'show_mean_errorbars' in xy and hasattr(self, 'xy_show_mean_errorbars_var'):
+                    self.xy_show_mean_errorbars_var.set(xy['show_mean_errorbars'])
+                if 'draw_band' in xy and hasattr(self, 'xy_draw_band_var'):
+                    self.xy_draw_band_var.set(xy['draw_band'])
+            
+            # Color settings
+            if 'colors' in settings:
+                colors = settings['colors']
+                if 'single_color' in colors and hasattr(self, 'single_color_var'):
+                    if colors['single_color'] in self.single_color_dropdown['values']:
+                        self.single_color_var.set(colors['single_color'])
+                if 'palette' in colors and hasattr(self, 'palette_var'):
+                    if colors['palette'] in self.palette_dropdown['values']:
+                        self.palette_var.set(colors['palette'])
+                if 'bar_outline' in colors and hasattr(self, 'bar_outline_var'):
+                    self.bar_outline_var.set(colors['bar_outline'])
+                if 'strip_black' in colors and hasattr(self, 'strip_black_var'):
+                    self.strip_black_var.set(colors['strip_black'])
+            
+            # X-axis customizations
+            if 'x_axis_renames' in settings:
+                self.xaxis_renames = settings['x_axis_renames']
+            if 'x_axis_order' in settings:
+                self.xaxis_order = settings['x_axis_order']
+            
+            # Apply XY Fitting settings if present
+            if 'xy_fitting' in settings and hasattr(self, 'use_fitting_var'):
+                xy_settings = settings['xy_fitting']
+                
+                # Load fitting models if present
+                if 'fitting_models' in xy_settings:
+                    # Get the saved models
+                    saved_models = xy_settings['fitting_models']
+                    
+                    # Merge saved models with current models (prioritize saved models for existing names)
+                    # This ensures newly added models remain available
+                    for model_name, model_info in saved_models.items():
+                        self.fitting_models[model_name] = model_info
+                    
+                    # Update the dropdown with all available models
+                    if hasattr(self, 'model_dropdown'):
+                        self.model_dropdown['values'] = list(self.fitting_models.keys())
+                    
+                # Set the fitting enabled state
+                if 'use_fitting' in xy_settings:
+                    self.use_fitting_var.set(xy_settings['use_fitting'])
+                    
+                # Set the model and CI options
+                if 'fitting_model' in xy_settings and xy_settings['fitting_model'] in self.fitting_models:
+                    self.fitting_model_var.set(xy_settings['fitting_model'])
+                    self.update_model_parameters()
+                    
+                if 'fitting_ci' in xy_settings:
+                    self.fitting_ci_var.set(xy_settings['fitting_ci'])
+                    
+                # Set parameter values if available
+                if 'parameters' in xy_settings and hasattr(self, 'param_entries'):
+                    params = xy_settings['parameters']
+                    for i, (param_name, param_val) in enumerate(params):
+                        if i < len(self.param_entries):
+                            self.param_entries[i][1].set(param_val)
+            
+        except Exception as e:
+            print(f"Error applying settings: {e}")
+            raise
+            
+    def load_project(self):
+        """Load plot settings from a project file"""
+        try:
+            # Prompt for a project file to load
+            file_path = filedialog.askopenfilename(
+                title="Open Project",
+                filetypes=[("ExcelPlotter Project Files", "*.explt"), ("All Files", "*.*")]
+            )
+            if not file_path:
+                return  # User cancelled
+                
+            # Load the settings from the file
+            with open(file_path, 'r') as f:
+                settings = json.load(f)
+                
+            # Apply the settings to the current state
+            self.apply_settings(settings)
+            
+            messagebox.showinfo("Success", f"Project loaded from {file_path}")
+            
+        except Exception as e:
+            messagebox.showerror("Error Loading Project", f"An error occurred: {str(e)}")
+    
+    def manage_fitting_models(self):
+        """Open a dialog to manage fitting models"""
+        # Create a top-level window
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Manage Fitting Models")
+        dialog.geometry("700x600")
+        dialog.transient(self.root)  # Set to be on top of the main window
+        dialog.grab_set()  # Modal
+        
+        # Left side - model list
+        left_frame = tk.Frame(dialog, borderwidth=1, relief=tk.SUNKEN)
+        left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=False, padx=5, pady=5)
+        
+        tk.Label(left_frame, text="Models:").pack(anchor=tk.W, padx=5, pady=5)
+        
+        # Scrollable list of models
+        model_listbox_frame = tk.Frame(left_frame)
+        model_listbox_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        model_listbox = tk.Listbox(model_listbox_frame, selectmode=tk.SINGLE, width=25)
+        model_scrollbar = tk.Scrollbar(model_listbox_frame, command=model_listbox.yview)
+        model_listbox.config(yscrollcommand=model_scrollbar.set)
+        
+        model_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        model_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Add models to listbox
+        for model in self.fitting_models:
+            model_listbox.insert(tk.END, model)
+        
+        # Buttons frame for model management
+        btn_frame = tk.Frame(left_frame)
+        btn_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        add_btn = tk.Button(btn_frame, text="Add New Model", 
+                          command=lambda: self.add_new_model(model_listbox, dialog))
+        add_btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+        
+        remove_btn = tk.Button(btn_frame, text="Remove Model", 
+                             command=lambda: self.remove_model(model_listbox, dialog))
+        remove_btn.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=2)
+        
+        # Additional buttons frame
+        extra_btn_frame = tk.Frame(left_frame)
+        extra_btn_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        restore_btn = tk.Button(extra_btn_frame, text="Restore Default Models", 
+                             command=lambda: self.restore_default_models(model_listbox))
+        restore_btn.pack(fill=tk.X, expand=True)
+        
+        # Right side - model details
+        right_frame = tk.Frame(dialog)
+        right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Model name
+        name_frame = tk.Frame(right_frame)
+        name_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        tk.Label(name_frame, text="Model Name:").pack(side=tk.LEFT, padx=2)
+        name_var = tk.StringVar()
+        name_entry = tk.Entry(name_frame, textvariable=name_var, width=30)
+        name_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+        
+        # Description
+        desc_frame = tk.LabelFrame(right_frame, text="Description")
+        desc_frame.pack(fill=tk.BOTH, expand=False, padx=5, pady=5)
+        
+        desc_text = tk.Text(desc_frame, height=9, width=40)
+        desc_scrollbar = tk.Scrollbar(desc_frame, command=desc_text.yview)
+        desc_text.config(yscrollcommand=desc_scrollbar.set)
+        
+        desc_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
+        desc_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Parameters
+        param_frame = tk.LabelFrame(right_frame, text="Parameters (name, default value)")
+        param_frame.pack(fill=tk.BOTH, expand=False, padx=5, pady=5)
+        
+        param_text = tk.Text(param_frame, height=5, width=40)
+        param_scrollbar = tk.Scrollbar(param_frame, command=param_text.yview)
+        param_text.config(yscrollcommand=param_scrollbar.set)
+        
+        param_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
+        param_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Formula
+        formula_frame = tk.LabelFrame(right_frame, text="Formula")
+        formula_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        formula_text = tk.Text(formula_frame, height=4, width=40)
+        formula_scrollbar = tk.Scrollbar(formula_frame, command=formula_text.yview)
+        formula_text.config(yscrollcommand=formula_scrollbar.set)
+        
+        formula_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
+        formula_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Save button
+        save_btn = tk.Button(right_frame, text="Save Model", 
+                           command=lambda: self.save_model(name_var, desc_text, param_text, formula_text, model_listbox, dialog))
+        save_btn.pack(fill=tk.X, padx=5, pady=5)
+        
+        # Function to update right panel when model is selected
+        def on_model_select(event):
+            selection = model_listbox.curselection()
+            if selection:
+                model_name = model_listbox.get(selection[0])
+                model_info = self.fitting_models.get(model_name, {})
+                
+                name_var.set(model_name)
+                
+                # Clear and fill description text
+                desc_text.delete(1.0, tk.END)
+                desc_text.insert(tk.END, model_info.get("description", ""))
+                
+                # Clear and fill parameter text
+                param_text.delete(1.0, tk.END)
+                parameters = model_info.get("parameters", [])
+                param_str = "\n".join([f"{name}, {value}" for name, value in parameters])
+                param_text.insert(tk.END, param_str)
+                
+                # Clear and fill formula text
+                formula_text.delete(1.0, tk.END)
+                formula_text.insert(tk.END, model_info.get("formula", ""))
+        
+        model_listbox.bind('<<ListboxSelect>>', on_model_select)
+        
+    def add_new_model(self, listbox, dialog):
+        """Add a new empty model to the list"""
+        count = 1
+        new_name = f"New Model {count}"
+        while new_name in self.fitting_models:
+            count += 1
+            new_name = f"New Model {count}"
+            
+        # Add to models dictionary and listbox
+        self.fitting_models[new_name] = {
+            "parameters": [("A", 1.0), ("B", 1.0)],
+            "formula": "# formula here\ny = A * x + B",
+            "description": "New model - add description here"
+        }
+        
+        # Save to file
+        self.save_fitting_models()
+        
+        listbox.insert(tk.END, new_name)
+        self.model_dropdown['values'] = list(self.fitting_models.keys())
+        
+        # Select the new model
+        idx = listbox.get(0, tk.END).index(new_name)
+        listbox.selection_clear(0, tk.END)
+        listbox.selection_set(idx)
+        listbox.event_generate('<<ListboxSelect>>')
+    
+    def remove_model(self, listbox, dialog):
+        """Remove the selected model"""
+        selection = listbox.curselection()
+        if not selection:
+            messagebox.showwarning("No Selection", "Please select a model to remove.")
+            return
+            
+        model_name = listbox.get(selection[0])
+        
+        # Prevent removing all models
+        if len(self.fitting_models) <= 1:
+            messagebox.showwarning("Cannot Remove", "You must keep at least one model.")
+            return
+        
+        # Confirm removal
+        if messagebox.askyesno("Confirm Removal", f"Are you sure you want to remove the model '{model_name}'?"):
+            # User confirmed removal
+            self.fitting_models.pop(model_name, None)
+            listbox.delete(selection[0])
+            
+            # Save to file
+            self.save_fitting_models()
+            
+            # If current model was removed, select a different one
+            if self.fitting_model_var.get() == model_name:
+                self.fitting_model_var.set(list(self.fitting_models.keys())[0])
+                self.update_model_parameters()
+    
+    def save_fitting_models(self):
+        """Save the fitting models to a JSON file"""
+        try:
+            with open(self.models_file, 'w') as f:
+                json.dump(self.fitting_models, f, indent=2)
+        except Exception as e:
+            print(f"Error saving fitting models: {str(e)}")
+    
+    def load_fitting_models(self):
+        """Load fitting models from JSON file or return defaults if file doesn't exist"""
+        try:
+            if os.path.exists(self.models_file):
+                with open(self.models_file, 'r') as f:
+                    return json.load(f)
+            return {}
+        except Exception as e:
+            print(f"Error loading fitting models: {str(e)}")
+            return {}
+    
+    def restore_default_models(self, listbox=None):
+        """Restore the default models while preserving custom models"""
+        if messagebox.askyesno("Restore Default Models", 
+                             "This will restore all default models while preserving your custom models. Continue?"):
+            # Get current custom models (any model not in default_fitting_models)
+            custom_models = {name: info for name, info in self.fitting_models.items() 
+                           if name not in self.default_fitting_models}
+            
+            # Start with default models
+            self.fitting_models = self.default_fitting_models.copy()
+            
+            # Add back custom models
+            self.fitting_models.update(custom_models)
+            
+            # Save to file
+            self.save_fitting_models()
+            
+            # Update UI if listbox is provided
+            if listbox is not None:
+                listbox.delete(0, tk.END)
+                for model_name in sorted(self.fitting_models.keys()):
+                    listbox.insert(tk.END, model_name)
+            
+            # Update any open model UI
+            if hasattr(self, 'model_dropdown'):
+                self.model_dropdown['values'] = list(self.fitting_models.keys())
+                if self.fitting_model_var.get() not in self.fitting_models:
+                    self.fitting_model_var.set(list(self.fitting_models.keys())[0])
+                self.update_model_parameters()
+            
+            messagebox.showinfo("Success", "Default models have been restored while preserving custom models.")
+    
+    def save_model(self, name_var, desc_text, param_text, formula_text, listbox, dialog):
+        """Save the current model details"""
+        model_name = name_var.get().strip()
+        if not model_name:
+            messagebox.showwarning("Invalid Name", "Please enter a model name.")
+            return
+            
+        # Parse parameters
+        param_lines = param_text.get(1.0, tk.END).strip().split('\n')
+        parameters = []
+        for line in param_lines:
+            if line.strip():
+                parts = line.split(',', 1)
+                if len(parts) != 2:
+                    messagebox.showwarning("Invalid Parameter", 
+                                         f"Parameter must be in format 'name, value': {line}")
+                    return
+                param_name = parts[0].strip()
+                try:
+                    param_value = float(parts[1].strip())
+                    parameters.append((param_name, param_value))
+                except ValueError:
+                    messagebox.showwarning("Invalid Parameter Value", 
+                                         f"Parameter value must be a number: {parts[1]}")
+                    return
+        
+        formula = formula_text.get(1.0, tk.END).strip()
+        if not formula:
+            messagebox.showwarning("Invalid Formula", "Please enter a model formula.")
+            return
+            
+        # Check if this is a renamed model
+        old_name = None
+        selection = listbox.curselection()
+        if selection:
+            old_name = listbox.get(selection[0])
+            
+        if old_name and old_name != model_name:
+            # Handle renaming - remove old name
+            self.fitting_models.pop(old_name, None)
+            listbox.delete(selection[0])
+        
+        # Get description
+        description = desc_text.get(1.0, tk.END).strip()
+        
+        # Save the model
+        self.fitting_models[model_name] = {
+            "parameters": parameters,
+            "formula": formula,
+            "description": description
+        }
+        
+        # Save to file
+        self.save_fitting_models()
+        
+        # Update the list and dropdown
+        if old_name and old_name != model_name:
+            listbox.insert(tk.END, model_name)
+        elif not old_name:  # New model
+            listbox.insert(tk.END, model_name)
+            
+        self.model_dropdown['values'] = list(self.fitting_models.keys())
+        
+        # If currently selected model was renamed, update the variable
+        if old_name and old_name == self.fitting_model_var.get():
+            self.fitting_model_var.set(model_name)
+            self.update_model_parameters()
+            
+        messagebox.showinfo("Model Saved", f"Model '{model_name}' has been saved.")
+    
+    def generate_model_function(self, model_name):
+        """Generate a callable function based on the model formula"""
+        model_info = self.fitting_models.get(model_name, {})
+        formula = model_info.get("formula", "")
+        
+        # Extract the actual formula line (assuming it starts with 'y =')
+        formula_lines = formula.split('\n')
+        formula_line = ""
+        for line in formula_lines:
+            if line.strip().startswith('y ='):
+                formula_line = line.strip()[4:].strip()  # Remove 'y = ' prefix
+                break
+        
+        if not formula_line:
+            return None
+        
+        # Get parameter names
+        parameters = [p[0] for p in model_info.get("parameters", [])]
+        param_str = ", ".join(parameters)
+        
+        # Create a function that will be used for curve_fit
+        try:
+            # Create the function definition
+            func_code = f"def model_func(x, {param_str}):\n    return {formula_line}"
+            
+            # Create a local namespace
+            namespace = {}
+            
+            # Add math functions to the namespace
+            import math
+            for name in dir(math):
+                if name.startswith('__'):
+                    continue
+                namespace[name] = getattr(math, name)
+                
+            # Add numpy functions
+            import numpy as np
+            for name in dir(np):
+                if name.startswith('__'):
+                    continue
+                namespace[name] = getattr(np, name)
+            
+            # Execute the function definition in the namespace
+            exec(func_code, namespace)
+            
+            # Return the function
+            return namespace['model_func']
+        except Exception as e:
+            print(f"Error generating model function: {e}")
+            return None
+    
     def setup_colors_tab(self):
         frame = self.colors_tab
         # --- Color management group ---
@@ -2806,8 +3928,11 @@ class ExcelPlotterApp:
         entry.pack()
         return entry
 
-    def load_file(self):
-        file_path = filedialog.askopenfilename(filetypes=[("Excel Files", "*.xlsx")])
+    def load_file(self, file_path=None):
+        """Load an Excel file either from a provided path or by prompting the user to select one"""
+        if file_path is None:
+            file_path = filedialog.askopenfilename(filetypes=[("Excel Files", "*.xlsx")])
+            
         if file_path:
             self.excel_file = file_path
             xls = pd.ExcelFile(self.excel_file)
@@ -2822,9 +3947,17 @@ class ExcelPlotterApp:
 
     def load_sheet(self, event=None):
         try:
-            self.df = pd.read_excel(self.excel_file, sheet_name=self.sheet_var.get(), dtype=object)
+            if self.sheet_var.get() == 'Embedded Data':
+                # Skip loading from Excel file for embedded data
+                # The dataframe is already loaded
+                pass
+            else:
+                # Load from Excel file for normal sheets
+                self.df = pd.read_excel(self.excel_file, sheet_name=self.sheet_var.get(), dtype=object)
+            
             self.update_columns()
-            self.xaxis_order = []
+            if not hasattr(self, 'xaxis_order'):
+                self.xaxis_order = []
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load sheet: {e}")
 
@@ -2936,6 +4069,13 @@ class ExcelPlotterApp:
             show_errorbars = show_errorbars.get()
         else:
             show_errorbars = True
+            
+        # If model fitting is enabled, ensure we're using XY plot type
+        if hasattr(self, 'use_fitting_var') and self.use_fitting_var.get():
+            current_plot_kind = self.plot_kind_var.get()
+            if current_plot_kind != "xy":
+                print(f"[DEBUG] Forcing plot type to XY since fitting is enabled (was {current_plot_kind})")
+                self.plot_kind_var.set("xy")
 
         if self.df is None:
             return
@@ -2972,13 +4112,62 @@ class ExcelPlotterApp:
         fontsize = int(self.fontsize_entry.get())
         n_rows = len(value_cols) if (self.split_yaxis.get() and plot_mode == 'single') else 1
 
+        # Get plot type early for margin calculations
+        plot_kind = self.plot_kind_var.get()  # "bar", "box", or "xy"
+        
+        # Scale margins based on plot size - smaller plots need relatively larger margins
+        plot_height_val = self.plot_height_var.get()  # User-specified plot height
+        
+        # Base margins with size-dependent scaling
         left_margin = 1.0
         right_margin = 0.5
-        top_margin = 1.5  # for legend
+        
+        # Scale top margin inversely with plot height (smaller plots need relatively larger margins)
+        top_margin = 1.5  # Base margin for legend
+        if plot_height_val < 3.0:  # For smaller plots
+            size_factor = max(1.0, 3.0 / plot_height_val)  # Scaling factor increases as plot height decreases
+            top_margin *= size_factor  # Scale the top margin based on plot size
+        
+        # Add extra top margin for complex plot types
+        if plot_kind == "xy":  # XY plots have legends and potential fit lines
+            # XY plots with fitting need substantial extra space for legends
+            if self.use_fitting_var.get():
+                top_margin += min(2.0, 2.5 / plot_height_val)  # Proportionally more space for smaller plots
+            else:
+                top_margin += 0.5  # Standard XY plots need some extra room too
+        
+        # Use larger top margin for plots with a group column that might need statistics
+        if group_col and self.use_stats_var.get():
+            # Scale based on plot size - smaller plots need relatively more space for annotations
+            stat_margin = 0.5
+            if plot_height_val < 2.0:
+                stat_margin = 1.0  # Double the margin for very small plots
+            top_margin += stat_margin
+            
         bottom_margin = 1.0 + fontsize * 0.1
 
         fig_width = plot_width + left_margin + right_margin
         fig_height = plot_height * n_rows + top_margin + bottom_margin
+        
+        # Configure legend placement strategy based on plot size
+        if plot_height_val <= 2.0 and plot_kind == "xy" and self.use_fitting_var.get():
+            # For small XY plots with fitting, we'll place legends outside the plot area
+            self.legend_outside = True
+            # Add more space on the right for external legend
+            fig_width += 2.0
+        else:
+            # Default placement within the plot
+            self.legend_outside = False
+            
+        # Define a utility function for consistent legend placement
+        def place_legend(ax, handles, labels):
+            if self.legend_outside:
+                return ax.legend(handles, labels, bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0.)
+            else:
+                return ax.legend(handles, labels)
+                
+        # Add the function as an attribute of the class instance
+        self.place_legend = place_legend
 
         # Set all possible linewidths via rcParams for errorbars, axes, ticks, grid, legend
         matplotlib.rcParams.update({
@@ -3407,15 +4596,318 @@ class ExcelPlotterApp:
                             x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
                             y_means_numeric = pd.to_numeric(y_means, errors='coerce')
                             ax.plot(x_sorted_numeric, y_means_numeric, color='black' if line_black else c, linewidth=linewidth, alpha=0.7, linestyle=line_style)
+                        
+                    # Apply model fitting if enabled for XY plots - dedicated block to handle fitting
+                    if plot_kind == "xy" and self.use_fitting_var.get():
+                        print(f"\n[DEBUG] XY Plot fitting should be enabled")
+                        print(f"[DEBUG] plot_kind: {plot_kind}")
+                        print(f"[DEBUG] use_fitting_var: {self.use_fitting_var.get()}")
+                        print(f"[DEBUG] x_col: {x_col}, value_col: {value_col}, hue_col: {hue_col}")
+                        print(f"[DEBUG] model: {self.fitting_model_var.get()}")
+                        
+                        try:
+                            # Get selected model information first - this is common for all fits
+                            model_name = self.fitting_model_var.get()
+                            print(f"[DEBUG] Selected model: {model_name}")
+                            model_func = self.generate_model_function(model_name)
+                            model_info = self.fitting_models.get(model_name, {})
+                            parameters = model_info.get("parameters", [])
+                            param_names = [p[0] for p in parameters]
+                            print(f"[DEBUG] Parameters: {param_names}")
+                            
+                            # Get starting parameter values from UI
+                            p0 = [var.get() for _, var in self.param_entries]
+                            print(f"[DEBUG] Starting parameters: {p0}")
+                            
+                            # Get the confidence interval setting
+                            ci_option = self.fitting_ci_var.get()
+                            if ci_option == "68% (1σ)":
+                                sigma = 1.0
+                            elif ci_option == "95% (2σ)":
+                                sigma = 2.0
+                            
+                            # Clear the results text box initially
+                            self.result_text.delete(1.0, tk.END)
+                            self.result_text.insert(tk.END, f"=== {model_name} Fitting Results ===\n\n")
+                            
+                            # Process the data differently based on whether we have groups (hue_col)
+                            if hue_col and len(df_plot[hue_col].unique()) > 1:
+                                print(f"[DEBUG] Performing separate fits for {len(df_plot[hue_col].unique())} groups")
+                                group_names = df_plot[hue_col].unique()
+                                
+                                # Get color mapping for the groups
+                                palette_name = self.palette_var.get()
+                                palette_full = self.custom_palettes.get(palette_name, ["#333333"])
+                                if len(palette_full) < len(group_names):
+                                    palette_full = (palette_full * ((len(group_names) // len(palette_full)) + 1))[:len(group_names)]
+                                color_map = {name: palette_full[i] for i, name in enumerate(group_names)}
+                                
+                                # Keep track of all fit parameters for each group
+                                all_fit_results = {}
+                                
+                                # Fit each group separately
+                                for group_idx, group_name in enumerate(group_names):
+                                    group_df = df_plot[df_plot[hue_col] == group_name]
+                                    print(f"[DEBUG] Fitting group: {group_name} with {len(group_df)} points")
+                                    
+                                    # Get numeric data for this group
+                                    x_fit = pd.to_numeric(group_df[x_col], errors='coerce')
+                                    y_fit = pd.to_numeric(group_df[value_col], errors='coerce')
+                                    
+                                    # Drop NaN values
+                                    mask = ~(np.isnan(x_fit) | np.isnan(y_fit))
+                                    x_fit = x_fit[mask].values
+                                    y_fit = y_fit[mask].values
+                                    
+                                    if len(x_fit) < len(p0) + 1:
+                                        print(f"[DEBUG] Skipping group {group_name}: not enough data points for fitting ({len(x_fit)} points)")
+                                        continue
+                                    
+                                    if len(x_fit) > 0 and model_func is not None and len(p0) > 0:
+                                        try:
+                                            # Create smooth x values for this group's range
+                                            x_smooth = np.linspace(min(x_fit), max(x_fit), 1000)
+                                            
+                                            # Get the color for this group
+                                            c = color_map.get(group_name, palette_full[0])
+                                            
+                                            # Perform the fit with warnings suppressed
+                                            with warnings.catch_warnings():
+                                                warnings.simplefilter("ignore")
+                                                popt, pcov = curve_fit(model_func, x_fit, y_fit, p0=p0)
+                                                perr = np.sqrt(np.diag(pcov))
+                                            
+                                            # Store results for this group
+                                            all_fit_results[group_name] = {
+                                                'popt': popt,
+                                                'perr': perr,
+                                                'x_smooth': x_smooth,
+                                                'color': c
+                                            }
+                                            
+                                            # Calculate fitted curve
+                                            y_fit_curve = model_func(x_smooth, *popt)
+                                            
+                                            # Plot the fitted curve with color based on user settings
+                                            if self.fitting_use_black_lines_var.get():
+                                                # Use black for all fitted curves
+                                                fit_color = 'black'
+                                            elif self.fitting_use_group_colors_var.get():
+                                                # Use the same color as the group data points
+                                                fit_color = c
+                                            else:
+                                                # Default to red if neither option is selected
+                                                fit_color = 'red'
+                                                
+                                            ax.plot(x_smooth, y_fit_curve, color=fit_color, linewidth=linewidth*1.5, 
+                                                    linestyle='solid', label=f'Fit: {group_name}')
+                                            
+                                            # Calculate and plot confidence intervals if requested
+                                            if ci_option != "None":
+                                                y_lower = []
+                                                y_upper = []
+                                                
+                                                # Calculate prediction uncertainty for each x value
+                                                for x_val in x_smooth:
+                                                    y_val = model_func(x_val, *popt)
+                                                    y_err = 0
+                                                    
+                                                    # Calculate error propagation
+                                                    for i, param in enumerate(popt):
+                                                        delta = param * 0.001 if param != 0 else 0.001
+                                                        params_plus = popt.copy()
+                                                        params_plus[i] += delta
+                                                        y_plus = model_func(x_val, *params_plus)
+                                                        partial_deriv = (y_plus - y_val) / delta
+                                                        y_err += (partial_deriv * perr[i])**2
+                                                    
+                                                    y_err = np.sqrt(y_err) * sigma
+                                                    y_lower.append(y_val - y_err)
+                                                    y_upper.append(y_val + y_err)
+                                                
+                                                # Determine color for the confidence interval band
+                                                if self.fitting_use_black_bands_var.get():
+                                                    # Use black for confidence intervals
+                                                    band_color = 'black'
+                                                else:
+                                                    # Otherwise use the same color as the fit line
+                                                    band_color = fit_color
+                                                    
+                                                # Plot confidence interval
+                                                ax.fill_between(x_smooth, y_lower, y_upper, alpha=0.2, color=band_color,
+                                                              label=f'{group_name} {ci_option} CI')
+                                            
+                                            # Calculate R² for this group
+                                            y_pred = model_func(x_fit, *popt)
+                                            ss_res = np.sum((y_fit - y_pred)**2)
+                                            ss_tot = np.sum((y_fit - np.mean(y_fit))**2)
+                                            r_squared = 1 - (ss_res / ss_tot)
+                                            
+                                            # Add this group's results to the text area
+                                            self.result_text.insert(tk.END, f"Group: {group_name}\n")
+                                            for i, param_name in enumerate(param_names):
+                                                if i < len(popt):
+                                                    self.result_text.insert(tk.END, f"  {param_name} = {popt[i]:.6f} ± {perr[i]:.6f}\n")
+                                            self.result_text.insert(tk.END, f"  R² = {r_squared:.6f}\n\n")
+                                            
+                                            # Add the equation with the fitted parameters
+                                            equation = model_info.get("formula", "")
+                                            for line in equation.split('\n'):
+                                                if line.strip().startswith('y ='): 
+                                                    eq = line.strip()
+                                                    for i, param_name in enumerate(param_names):
+                                                        if i < len(popt):
+                                                            eq = eq.replace(param_name, f"{popt[i]:.4f}")
+                                                    self.result_text.insert(tk.END, f"  {eq}\n")
+                                            self.result_text.insert(tk.END, "\n")
+                                            
+                                        except Exception as e:
+                                            print(f"Fitting error for group {group_name}: {str(e)}")
+                                            self.result_text.insert(tk.END, f"Group: {group_name} - Fitting failed: {str(e)}\n\n")
+                                
+                                # If we didn't successfully fit any groups, show an error
+                                if not all_fit_results:
+                                    self.result_text.insert(tk.END, "No groups could be successfully fitted.\n")
+                                    self.result_text.insert(tk.END, "Check that your data has enough points per group and try different initial parameters.")
+                            
+                            else:
+                                # Single fit for all data points (no groups or only one group)
+                                print(f"[DEBUG] Performing a single fit for all data points")
+                                
+                                # Get data for fitting (ensure numeric)
+                                x_fit = pd.to_numeric(df_plot[x_col], errors='coerce')
+                                y_fit = pd.to_numeric(df_plot[value_col], errors='coerce')
+                                print(f"[DEBUG] Data shape: x={x_fit.shape}, y={y_fit.shape}")
+                                
+                                # Drop any NaN values
+                                mask = ~(np.isnan(x_fit) | np.isnan(y_fit))
+                                x_fit = x_fit[mask].values
+                                y_fit = y_fit[mask].values
+                                print(f"[DEBUG] After removing NaN values: x={len(x_fit)}, y={len(y_fit)}")
+                                
+                                if len(x_fit) > 0 and model_func is not None and len(p0) > 0:
+                                    # Smooth x values for curve plotting
+                                    x_smooth = np.linspace(min(x_fit), max(x_fit), 1000)
+                                    
+                                    # Suppress warnings during curve_fit
+                                    with warnings.catch_warnings():
+                                        warnings.simplefilter("ignore")
+                                        
+                                        try:
+                                            # Perform the fit
+                                            popt, pcov = curve_fit(model_func, x_fit, y_fit, p0=p0)
+                                            perr = np.sqrt(np.diag(pcov))
+                                            print(f"[DEBUG] Fit successful! Parameters: {popt}")
+                                            
+                                            # Calculate the fitted curve
+                                            y_fit_curve = model_func(x_smooth, *popt)
+                                            
+                                            # Determine color for the fitted curve based on user settings
+                                            if self.fitting_use_black_lines_var.get():
+                                                # Use black for fitted curve
+                                                fit_color = 'black'
+                                            elif self.fitting_use_group_colors_var.get():
+                                                # Use the first color from the palette
+                                                fit_color = palette[0]
+                                            else:
+                                                # Default to red
+                                                fit_color = 'red'
+                                                
+                                            # Plot the fitted curve
+                                            ax.plot(x_smooth, y_fit_curve, color=fit_color, linewidth=linewidth*1.5, 
+                                                    linestyle='solid', label=f'Fit: {model_name}')
+                                            
+                                            # Calculate confidence intervals if requested
+                                            if ci_option != "None":
+                                                # Calculate confidence intervals using error propagation
+                                                y_lower = []
+                                                y_upper = []
+                                                
+                                                # Calculate prediction for each x plus/minus the uncertainty
+                                                for x_val in x_smooth:
+                                                    y_val = model_func(x_val, *popt)
+                                                    
+                                                    # Calculate uncertainty
+                                                    y_err = 0
+                                                    for i, param in enumerate(popt):
+                                                        # Small perturbation to calculate partial derivative
+                                                        delta = param * 0.001 if param != 0 else 0.001
+                                                        params_plus = popt.copy()
+                                                        params_plus[i] += delta
+                                                        y_plus = model_func(x_val, *params_plus)
+                                                        partial_deriv = (y_plus - y_val) / delta
+                                                        y_err += (partial_deriv * perr[i])**2
+                                                    
+                                                    y_err = np.sqrt(y_err) * sigma
+                                                    y_lower.append(y_val - y_err)
+                                                    y_upper.append(y_val + y_err)
+                                                
+                                                # Determine color for the confidence interval band
+                                                if self.fitting_use_black_bands_var.get():
+                                                    # Use black for confidence intervals
+                                                    band_color = 'black'
+                                                else:
+                                                    # Otherwise use the same color as the fit line
+                                                    band_color = fit_color
+                                                    
+                                                # Plot confidence interval band
+                                                ax.fill_between(x_smooth, y_lower, y_upper, alpha=0.2, color=band_color,
+                                                                label=f'{ci_option} Confidence')
+                                            
+                                            # Display fitting results in the result text area
+                                            for i, param_name in enumerate(param_names):
+                                                if i < len(popt):
+                                                    self.result_text.insert(tk.END, f"{param_name} = {popt[i]:.6f} ± {perr[i]:.6f}\n")
+                                            
+                                            # Calculate R² (coefficient of determination)
+                                            y_pred = model_func(x_fit, *popt)
+                                            ss_res = np.sum((y_fit - y_pred)**2)
+                                            ss_tot = np.sum((y_fit - np.mean(y_fit))**2)
+                                            r_squared = 1 - (ss_res / ss_tot)
+                                            self.result_text.insert(tk.END, f"\nR² = {r_squared:.6f}\n")
+                                            
+                                            # Also add the equation with the fitted parameters
+                                            self.result_text.insert(tk.END, f"\nFitted equation:\n")
+                                            equation = model_info.get("formula", "")
+                                            for line in equation.split('\n'):
+                                                if line.strip().startswith('y ='): 
+                                                    eq = line.strip()
+                                                    for i, param_name in enumerate(param_names):
+                                                        if i < len(popt):
+                                                            eq = eq.replace(param_name, f"{popt[i]:.4f}")
+                                                    self.result_text.insert(tk.END, f"{eq}\n")
+                                            print(f"[DEBUG] Updated fitting results with equation: {eq}")
+                                            
+                                        except Exception as e:
+                                            print(f"Fitting error: {str(e)}")
+                                            traceback_info = traceback.format_exc()
+                                            print(f"[DEBUG] Traceback: {traceback_info}")
+                                            self.result_text.delete(1.0, tk.END)
+                                            self.result_text.insert(tk.END, f"Fitting error: {str(e)}\n")
+                                            self.result_text.insert(tk.END, "Try adjusting the initial parameter values or selecting a different model.\n")
+                                            self.result_text.insert(tk.END, "Make sure your X and Y columns contain valid numeric data.")
+                        except Exception as e:
+                            print(f"Error in model fitting: {str(e)}")
+                            traceback_info = traceback.format_exc()
+                            print(f"[DEBUG] Traceback: {traceback_info}")
+                            self.result_text.delete(1.0, tk.END)
+                            self.result_text.insert(tk.END, f"Error in model fitting: {str(e)}\n")
+                            self.result_text.insert(tk.END, "Make sure you've selected numeric data columns for XY plotting.")
+                                            
+                    
+                    
                     if hue_col:
                         handles, labels = ax.get_legend_handles_labels()
+                        
                         if handles and len(handles) > 0:
-                            handles, labels = ax.get_legend_handles_labels()
-                        if handles and len(handles) > 0:
-                            ax.legend()
+                            # Use our utility function for consistent legend placement
+                            self.place_legend(ax, handles, labels)
+                
                 else:
                     # Plot raw data points (scatter) when show_mean is False
+                    
                     marker_kwargs = dict(marker=marker_symbol, s=marker_size**2)
+                    
                     if hue_col:
                         group_names = list(df_plot[hue_col].dropna().unique())
                         palette_name = self.palette_var.get()
@@ -3631,7 +5123,7 @@ class ExcelPlotterApp:
                         if hue_col:
                             handles, labels = ax.get_legend_handles_labels()
                             if handles and len(handles) > 0:
-                                ax.legend()
+                                self.place_legend(ax, handles, labels)
                     else:
                         # Ungrouped mean plot
                         c = palette[0]
@@ -3740,8 +5232,8 @@ class ExcelPlotterApp:
                             ax.plot(x_sorted_numeric, means_numeric, color='black' if line_black else c, linewidth=linewidth, alpha=0.7, linestyle=line_style)
                 ax.tick_params(axis='x', which='both', direction='in', length=4, width=linewidth, top=False, bottom=True, labeltop=False, labelbottom=True)
 
-            # --- Stripplot (if enabled) ---
-            if show_stripplot:
+            # --- Stripplot (if enabled and not XY plot) ---
+            if show_stripplot and plot_kind != "xy":
                 if strip_black:
                     stripplot_args["palette"] = ["black"]
                     stripplot_args["color"] = "black"
@@ -3800,7 +5292,8 @@ class ExcelPlotterApp:
                     handles,
                     [str(l) for l in hue_levels],
                     loc="upper center", bbox_to_anchor=(0.5, 1.18), borderaxespad=0,
-                    frameon=False, fontsize=fontsize, ncol=max(1, len(handles))
+                    frameon=False, fontsize=fontsize,
+                    ncol=self.optimize_legend_layout(ax, handles, [str(l) for l in hue_levels], fontsize=fontsize)
                 )
             elif hue_col and plot_kind == "bar":
                 # Only use bar handles (Rectangle, not PathCollection)
@@ -3814,7 +5307,8 @@ class ExcelPlotterApp:
                     bar_handles,
                     bar_labels,
                     loc="upper center", bbox_to_anchor=(0.5, 1.18), borderaxespad=0,
-                    frameon=False, fontsize=fontsize, ncol=max(1, len(bar_handles))
+                    frameon=False, fontsize=fontsize,
+                    ncol=self.optimize_legend_layout(ax, bar_handles, bar_labels, fontsize=fontsize)
                 )
             elif hue_col and plot_kind == "xy":
                 handles, labels = ax.get_legend_handles_labels()
@@ -3822,7 +5316,8 @@ class ExcelPlotterApp:
                 ax.legend(
                     by_label.values(), by_label.keys(),
                     loc="upper center", bbox_to_anchor=(0.5, 1.18), borderaxespad=0,
-                    frameon=False, fontsize=fontsize, ncol=max(1, len(by_label))
+                    frameon=False, fontsize=fontsize,
+                    ncol=self.optimize_legend_layout(ax, list(by_label.values()), list(by_label.keys()), fontsize=fontsize)
                 )
 
             # --- Grids ---
@@ -4310,9 +5805,36 @@ class ExcelPlotterApp:
                                     y_values = [y1, y2]
                                     y_max_group = max(y_values)
                                         
-                                    # Determine spacing for annotation based on heights - with reduced distance
+                                    # Determine spacing for annotation based on heights and number of annotations
                                     base_offset = 0.15  # Start closer to the bars
-                                    spacing = 0.15     # Less space between each comparison
+                                    spacing = 0.15     # Space between each comparison
+                                    
+                                    # Check how many comparisons we expect to have
+                                    total_possible_comparisons = len(group_names) * (len(group_names) - 1) // 2
+                                    
+                                    # Special handling for small figures with multiple comparisons
+                                    if annotation_count == 0:
+                                        plot_height_val = self.plot_height_var.get()
+                                        
+                                        # Aggressively adjust figure height for small plots with many annotations
+                                        if total_possible_comparisons > 2:  # More than 2 comparisons
+                                            # Get current figure height and increase it to accommodate annotations
+                                            current_height = self.fig.get_figheight()
+                                            
+                                            # Scale extra height based on plot size and number of comparisons
+                                            comparison_factor = min(1.0, 0.25 * total_possible_comparisons)  # Cap at reasonable value
+                                            size_factor = max(1.0, 3.0 / plot_height_val)  # Higher factor for smaller plots
+                                            extra_height = comparison_factor * size_factor * plot_height_val
+                                            
+                                            # Apply the height increase
+                                            self.fig.set_figheight(current_height + extra_height)
+                                            
+                                            # Update y-axis limits to maintain visual spacing
+                                            if not swap_axes:
+                                                current_ylim = ax.get_ylim()
+                                                ax.set_ylim(current_ylim[0], current_ylim[1] * (1 + extra_height/current_height/2))
+                                    
+                                    # Calculate annotation height
                                     annotation_height = y_max_group + (y_max * (base_offset + spacing * annotation_vertical_offset))
                                     p_text = self.pval_to_annotation(pval)
                                     print(f"[DEBUG] Adding annotation: {x_val}, {g1} vs {g2} -> {p_text} (p={pval})")
@@ -4340,6 +5862,28 @@ class ExcelPlotterApp:
                                         
                                         # Place the significance marker above the line with specified spacing
                                         mid_pos = (g1_pos + g2_pos) / 2
+                                        
+                                        # Check if we're near the top of the plot and have multiple rows of annotations
+                                        y_top = ax.get_ylim()[1]
+                                        plot_height_val = self.plot_height_var.get()
+                                        
+                                        # For small plots, be more aggressive about resizing
+                                        if line_height + (y_max * 0.05) > 0.9 * y_top:
+                                            # If we're getting too close to the top, add more figure height
+                                            current_height = self.fig.get_figheight()
+                                            
+                                            # Determine scaling factor - more aggressive for smaller plots
+                                            if plot_height_val < 2.0:
+                                                height_scale = 1.25  # 25% increase for very small plots
+                                            else:
+                                                height_scale = 1.1   # 10% increase for normal plots
+                                                
+                                            # Cap the height increase to avoid excessively tall plots
+                                            if current_height < plot_height_val * 3:  # Allow up to 3x original height
+                                                self.fig.set_figheight(current_height * height_scale)
+                                                # Update y-axis limits to maintain visual spacing
+                                                ax.set_ylim(ax.get_ylim()[0], y_top * 1.3)
+                                        
                                         ax.text(mid_pos, line_height + (y_max * 0.03), p_text, ha='center', va='bottom', fontsize=fontsize, color='black', zorder=11)
                                     else:
                                         # Similar logic for swapped axes
