@@ -1,6 +1,6 @@
-# Excel Plotter - Data visualization tool for Excel files
+# ExPlot - Data visualization tool for Excel files
 
-VERSION = "0.5.7"
+VERSION = "0.5.8"
 # =====================================================================
 
 import tkinter as tk
@@ -53,7 +53,7 @@ DEFAULT_PALETTES = {
 # --- in plot_graph, replace all key = ... and latest_pvals lookups with stat_key
 # --- add debug print if a key is missing in plot_graph when drawing annotation
 
-class ExcelPlotterApp:
+class ExPlotApp:
     def optimize_legend_layout(self, ax, handles, labels, fontsize=10, max_fraction=0.8, min_ncol=1, max_ncol=None):
         """
         Determine the optimal number of legend columns so the legend doesn't exceed max_fraction of figure width.
@@ -882,12 +882,12 @@ class ExcelPlotterApp:
     def get_config_dir(self):
         """Return the user config directory for settings (cross-platform)."""
         if sys.platform == "darwin":
-            return Path.home() / "Library" / "Application Support" / "ExcelPlotter"
+            return Path.home() / "Library" / "Application Support" / "ExPlot"
         elif sys.platform.startswith("win"):
-            return Path(os.environ.get("APPDATA", str(Path.home() / "AppData" / "Roaming"))) / "ExcelPlotter"
+            return Path(os.environ.get("APPDATA", str(Path.home() / "AppData" / "Roaming"))) / "ExPlot"
         else:
             # Linux and other
-            return Path.home() / ".config" / "ExcelPlotter"
+            return Path.home() / ".config" / "ExPlot"
 
     def setup_menu(self):
         """Setup the application menu."""
@@ -928,7 +928,7 @@ class ExcelPlotterApp:
         # Ask user for save location
         file_path = filedialog.asksaveasfilename(
             defaultextension=".explt",
-            filetypes=[("ExcelPlotter Projects", "*.explt"), ("All files", "*.*")],
+            filetypes=[("ExPlot Projects", "*.explt"), ("All files", "*.*")],
             title="Save Project"
         )
         
@@ -1027,7 +1027,7 @@ class ExcelPlotterApp:
     def load_project(self):
         """Load a saved project file."""
         file_path = filedialog.askopenfilename(
-            filetypes=[("ExcelPlotter Projects", "*.explt"), ("All files", "*.*")],
+            filetypes=[("ExPlot Projects", "*.explt"), ("All files", "*.*")],
             title="Load Project"
         )
         
@@ -1755,7 +1755,7 @@ class ExcelPlotterApp:
         
         # Add a button to copy information to clipboard
         def copy_to_clipboard():
-            package_info = f"\"ExcelPlotter\" (version {self.version}) was used for data visualization and statistical analysis. "
+            package_info = f"\"ExPlot\" (version {self.version}) was used for data visualization and statistical analysis. "
             package_info += f"It utilizes the following Python packages: matplotlib {matplotlib_version}, seaborn {seaborn_version}, "
             package_info += f"pandas {pandas_version}, numpy {numpy_version}, scipy {scipy_version}, pingouin {pingouin_version}, "
             package_info += f"and scikit-posthocs {scikit_posthocs_version}.\n"
@@ -1984,7 +1984,7 @@ class ExcelPlotterApp:
         general_text.insert('end', '\n   • Use ANOVA followed by a post-hoc test to identify which specific groups differ\n', 'normal')
         general_text.insert('end', '3. For non-parametric data (data that doesn\'t follow normal distribution):', 'subheading')
         general_text.insert('end', '\n   • Consider using non-parametric alternatives like Dunn\'s test for post-hoc comparisons\n', 'normal')
-        general_text.insert('end', '\nThe ExcelPlotter automatically selects appropriate tests based on your data structure.\n', 'normal')
+        general_text.insert('end', '\nThe ExPlot automatically selects appropriate tests based on your data structure.\n', 'normal')
         general_text.configure(state='disabled')  # Make read-only
         
         # t-tests information
@@ -3488,7 +3488,7 @@ class ExcelPlotterApp:
             file_path = filedialog.asksaveasfilename(
                 title="Save Project",
                 defaultextension=".explt",
-                filetypes=[("ExcelPlotter Project Files", "*.explt"), ("All Files", "*.*")]
+                filetypes=[("ExPlot Project Files", "*.explt"), ("All Files", "*.*")]
             )
             if not file_path:
                 return  # User cancelled
@@ -3809,7 +3809,7 @@ class ExcelPlotterApp:
             # Prompt for a project file to load
             file_path = filedialog.askopenfilename(
                 title="Open Project",
-                filetypes=[("ExcelPlotter Project Files", "*.explt"), ("All Files", "*.*")]
+                filetypes=[("ExPlot Project Files", "*.explt"), ("All Files", "*.*")]
             )
             if not file_path:
                 return  # User cancelled
@@ -6511,5 +6511,5 @@ class ExcelPlotterApp:
 
 if __name__ == '__main__':
     root = tk.Tk()
-    app = ExcelPlotterApp(root)
+    app = ExPlotApp(root)
     root.mainloop()
