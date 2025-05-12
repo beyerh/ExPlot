@@ -1,6 +1,6 @@
 # Excel Plotter - Data visualization tool for Excel files
 
-VERSION = "0.5.6"
+VERSION = "0.5.7"
 # =====================================================================
 
 import tkinter as tk
@@ -28,6 +28,7 @@ import warnings
 import traceback  # For better error reporting
 from matplotlib.patches import Polygon
 from matplotlib.collections import PatchCollection
+from tkinter import font as tkfont
 
 DEFAULT_COLORS = {
     "Black": "#000000",
@@ -1770,6 +1771,176 @@ class ExcelPlotterApp:
         copy_button = ttk.Button(button_frame, text="Copy Citation Text", command=copy_to_clipboard)
         copy_button.pack(side='right')
         
+    def open_label_formatter(self, axis_type):
+        """Open a dialog for formatting axis labels with rich text capabilities."""
+        # Get current label text
+        entry_widget = self.xlabel_entry if axis_type == 'x' else self.ylabel_entry
+        current_text = entry_widget.get()
+        
+        # Create dialog window
+        window = tk.Toplevel(self.root)
+        window.title(f"Format {'X' if axis_type == 'x' else 'Y'}-Axis Label")
+        window.geometry("650x580")
+        window.transient(self.root)
+        window.grab_set()
+        
+        # Create main frame with padding
+        main_frame = ttk.Frame(window, padding="10")
+        main_frame.pack(fill='both', expand=True)
+        
+        # Create preview frame
+        preview_frame = ttk.LabelFrame(main_frame, text="Preview")
+        preview_frame.pack(fill='x', padx=5, pady=5)
+        
+        # Create canvas for preview
+        preview_fig = plt.Figure(figsize=(5, 1.5), dpi=100)
+        preview_ax = preview_fig.add_subplot(111)
+        preview_canvas = FigureCanvasTkAgg(preview_fig, master=preview_frame)
+        preview_canvas.get_tk_widget().pack(fill='both', expand=True)
+        preview_ax.set_xticks([])
+        preview_ax.set_yticks([])
+        
+        # Function to update preview
+        def update_preview(text=None):
+            if text is None:
+                text = text_entry.get("1.0", tk.END).strip()
+            preview_ax.clear()
+            preview_ax.set_xticks([])
+            preview_ax.set_yticks([])
+            if axis_type == 'x':
+                preview_ax.set_xlabel(text, fontsize=12)
+            else:
+                preview_ax.set_ylabel(text, fontsize=12)
+            preview_fig.tight_layout()
+            preview_canvas.draw()
+        
+        # Create editing frame
+        edit_frame = ttk.LabelFrame(main_frame, text="Edit Label Text")
+        edit_frame.pack(fill='both', expand=True, padx=5, pady=5)
+        
+        # Text entry for the label
+        text_entry = tk.Text(edit_frame, height=3, width=50, wrap=tk.WORD)
+        text_entry.pack(fill='both', expand=True, padx=5, pady=5)
+        text_entry.insert("1.0", current_text)
+        
+        # Bind text change to preview update
+        text_entry.bind("<KeyRelease>", lambda e: update_preview())
+        
+        # Create formatting buttons frame
+        format_frame = ttk.LabelFrame(main_frame, text="Formatting Options")
+        format_frame.pack(fill='x', padx=5, pady=5)
+        
+        # Create two rows for buttons to ensure they all fit
+        buttons_row1 = ttk.Frame(format_frame)
+        buttons_row1.pack(fill='x', padx=5, pady=5)
+        
+        buttons_row2 = ttk.Frame(format_frame)
+        buttons_row2.pack(fill='x', padx=5, pady=5)
+        
+        # First row of formatting buttons
+        ttk.Button(buttons_row1, text="Bold", width=12,
+                  command=lambda: insert_format_tag(r"\mathbf{", "}")).pack(side=tk.LEFT, padx=5, pady=3)
+        ttk.Button(buttons_row1, text="Italic", width=12,
+                  command=lambda: insert_format_tag(r"\it{", "}")).pack(side=tk.LEFT, padx=5, pady=3)
+        ttk.Button(buttons_row1, text="Superscript", width=12,
+                  command=lambda: insert_format_tag("^{", "}")).pack(side=tk.LEFT, padx=5, pady=3)
+        
+        # Second row of formatting buttons
+        ttk.Button(buttons_row2, text="Subscript", width=12,
+                  command=lambda: insert_format_tag("_{", "}")).pack(side=tk.LEFT, padx=5, pady=3)
+        ttk.Button(buttons_row2, text="Greek μ", width=12,
+                  command=lambda: insert_text(r"\mu")).pack(side=tk.LEFT, padx=5, pady=3)
+        ttk.Button(buttons_row2, text="°C", width=12,
+                  command=lambda: insert_text(r"^{\circ}C")).pack(side=tk.LEFT, padx=5, pady=3)
+        
+        # Mathematical mode frame
+        math_frame = ttk.LabelFrame(main_frame, text="Mathematical Mode")
+        math_frame.pack(fill='x', padx=5, pady=5)
+        
+        ttk.Label(math_frame, text="For formatting to work, you must wrap parts that use formatting in $ signs.").pack(pady=2)
+        example_text = "$\\mathbf{Bold}$ normal $\\it{italic}$ $\\mu$mol$^{-1}$"
+        ttk.Label(math_frame, text=f"Example: {example_text}").pack(pady=2)
+        
+        # Insert formatting function
+        def insert_format_tag(prefix, suffix):
+            try:
+                # Get selection or insert position
+                if text_entry.tag_ranges(tk.SEL):
+                    start = text_entry.index(tk.SEL_FIRST)
+                    end = text_entry.index(tk.SEL_LAST)
+                    selected_text = text_entry.get(start, end)
+                    
+                    # Check if we need to add dollar signs
+                    text_before = text_entry.get("1.0", start)
+                    text_after = text_entry.get(end, tk.END)
+                    
+                    needs_dollars = True
+                    if "$" in text_before and text_before.count("$") % 2 == 1:
+                        # We're already in math mode
+                        needs_dollars = False
+                    
+                    # Apply formatting
+                    formatted_text = selected_text
+                    if needs_dollars:
+                        formatted_text = f"${prefix}{selected_text}{suffix}$"
+                    else:
+                        formatted_text = f"{prefix}{selected_text}{suffix}"
+                        
+                    text_entry.delete(start, end)
+                    text_entry.insert(start, formatted_text)
+                else:
+                    # No selection, insert at cursor
+                    cursor_pos = text_entry.index(tk.INSERT)
+                    text_entry.insert(cursor_pos, f"${prefix}text{suffix}$")
+                    
+                    # Select the word "text" for easy replacement
+                    start_pos = f"{cursor_pos}+{1 + len(prefix)}c"
+                    end_pos = f"{start_pos}+4c"  # "text" is 4 characters
+                    text_entry.mark_set(tk.INSERT, start_pos)
+                    text_entry.tag_add(tk.SEL, start_pos, end_pos)
+                    text_entry.focus_set()
+                
+                update_preview()
+            except Exception as e:
+                print(f"Error in insert_format_tag: {e}")
+        
+        # Insert text function
+        def insert_text(text):
+            cursor_pos = text_entry.index(tk.INSERT)
+            
+            # Check if we're in math mode
+            text_before = text_entry.get("1.0", cursor_pos)
+            text_after = text_entry.get(cursor_pos, tk.END)
+            
+            in_math_mode = text_before.count("$") % 2 == 1
+            
+            if in_math_mode:
+                text_entry.insert(cursor_pos, text)
+            else:
+                text_entry.insert(cursor_pos, f"${text}$")
+            
+            update_preview()
+        
+        # Buttons frame
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill='x', padx=5, pady=10)
+        
+        # Apply and cancel buttons
+        def apply_format():
+            new_text = text_entry.get("1.0", tk.END).strip()
+            entry_widget.delete(0, tk.END)
+            entry_widget.insert(0, new_text)
+            window.destroy()
+        
+        ttk.Button(button_frame, text="Apply", command=apply_format).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(button_frame, text="Cancel", command=window.destroy).pack(side=tk.RIGHT, padx=5)
+        
+        # Initial preview
+        update_preview(current_text)
+        
+        # Set focus to text entry
+        text_entry.focus_set()
+        
     def show_stats_info(self):
         """Display information about statistical tests and when to use them."""
         window = tk.Toplevel(self.root)
@@ -3048,6 +3219,7 @@ class ExcelPlotterApp:
         tk.Label(xlabel_frame, text="X-axis Label:", width=14, anchor="w").grid(row=0, column=0, padx=2)
         self.xlabel_entry = tk.Entry(xlabel_frame)
         self.xlabel_entry.grid(row=0, column=1, sticky="ew", padx=2)
+        tk.Button(xlabel_frame, text="Format", command=lambda: self.open_label_formatter('x')).grid(row=0, column=2, padx=2)
         
         # Y-axis label row (just below X)
         ylabel_frame = tk.Frame(labels_frame)
@@ -3056,6 +3228,7 @@ class ExcelPlotterApp:
         tk.Label(ylabel_frame, text="Y-axis Label:", width=14, anchor="w").grid(row=0, column=0, padx=2)
         self.ylabel_entry = tk.Entry(ylabel_frame)
         self.ylabel_entry.grid(row=0, column=1, sticky="ew", padx=2)
+        tk.Button(ylabel_frame, text="Format", command=lambda: self.open_label_formatter('y')).grid(row=0, column=2, padx=2)
         
         # --- Label orientation (horizontal layout) ---
         orient_frame = tk.Frame(frame)
@@ -5485,7 +5658,11 @@ class ExcelPlotterApp:
                 ax.set_ylabel(self.xlabel_entry.get() or x_col, fontsize=fontsize)
                 ax.set_xlabel(value_col if n_rows > 1 else (self.ylabel_entry.get() or value_col), fontsize=fontsize)
             else:
+                # Enable math text rendering
+                plt.rcParams['mathtext.default'] = 'regular'
                 ax.set_xlabel(self.xlabel_entry.get() or x_col, fontsize=fontsize)
+                # Enable math text rendering
+                plt.rcParams['mathtext.default'] = 'regular'
                 ax.set_ylabel(value_col if n_rows > 1 else (self.ylabel_entry.get() or value_col), fontsize=fontsize)
 
             rotation = 90 if self.label_orientation.get() == 'vertical' and not swap_axes else 0
