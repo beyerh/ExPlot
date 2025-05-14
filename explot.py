@@ -1,6 +1,6 @@
 # ExPlot - Data visualization tool for Excel files
 
-VERSION = "0.5.8"
+VERSION = "0.5.9"
 # =====================================================================
 
 import tkinter as tk
@@ -59,8 +59,6 @@ class ExPlotApp:
         Determine the optimal number of legend columns so the legend doesn't exceed max_fraction of figure width.
         Returns the best ncol value.
         """
-        import matplotlib.pyplot as plt
-        import numpy as np
         from matplotlib.text import Text
 
         fig = ax.figure
@@ -105,371 +103,83 @@ class ExPlotApp:
 
     def calculate_statistics(self, df_plot, x_col, value_col, hue_col=None):
         """
-        Centralized statistics calculation method that both annotations and
-        statistical details panel will use. This ensures consistency between
-        the two and respects settings in the statistics tab.
+        Centralized statistics calculation method for ExPlot.
         
-        Returns a dictionary with comprehensive statistical results.
+        This function is a wrapper that uses the explot_stats module to perform all statistical
+        calculations, ensuring consistency between plot annotations and the statistical details panel.
+        
+        Args:
+            df_plot (pd.DataFrame): The DataFrame containing the data to analyze
+            x_col (str): The column name to use for x-axis categories
+            value_col (str): The column name containing the values to compare
+            hue_col (str, optional): The column name for grouping data, if applicable
+        
+        Returns:
+            dict: A comprehensive dictionary of statistical results
         """
-        import itertools
-        import numpy as np
-        
-        # Initialize statistics storage
-        try:
-            alpha = float(self.alpha_level_var.get())
-        except (ValueError, AttributeError):
-            alpha = 0.05  # Default if not set or invalid
-            
-        self.latest_stats = {
-            'pvals': {},                # P-values for annotations
-            'test_results': {},         # Complete test result objects
-            'test_type': self.ttest_type_var.get(),
-            'alternative': self.ttest_alternative_var.get(),
-            'alpha_level': alpha,        # Alpha level for significance
-            'raw_data': {},             # Raw data used for calculations
-            'x_col': x_col,
-            'value_col': value_col,
-            'hue_col': hue_col
-        }
-        
-        # Clear previous p-values (for backward compatibility)
-        self.latest_pvals = {}
-        
-        # Skip all calculations if statistics are disabled
-        if not self.use_stats_var.get():
+        # Skip calculations if statistics are disabled
+        if hasattr(self, 'use_stats_var') and not self.use_stats_var.get():
             print("[DEBUG] Statistics disabled, skipping calculations")
-            return self.latest_stats
-            
-        print(f"[DEBUG] calculate_statistics: x_col={x_col}, value_col={value_col}, hue_col={hue_col}")
+            results = {
+                'pvals': {},
+                'x_col': x_col,
+                'value_col': value_col,
+                'hue_col': hue_col,
+                'summary': "Statistical testing disabled."
+            }
+            self.latest_stats = results
+            self.latest_pvals = {}
+            return results
         
-        # X-category comparisons (for both with and without hue groups)
-        x_values = [g for g in df_plot[x_col].dropna().unique()]
-        self.latest_stats['x_values'] = x_values
-        print(f"[DEBUG] X-values: {x_values}")
+        try:
+            # Import the statistical module
+            from explot_stats import calculate_statistics as stats_calc
+            
+            # Get relevant settings from the app
+            app_settings = {
+                'alpha_level': float(self.alpha_level_var.get()) if hasattr(self, 'alpha_level_var') else 0.05,
+                'test_type': self.ttest_type_var.get() if hasattr(self, 'ttest_type_var') else "Independent t-test",
+                'alternative': self.ttest_alternative_var.get() if hasattr(self, 'ttest_alternative_var') else "two-sided",
+                'anova_type': self.anova_type_var.get() if hasattr(self, 'anova_type_var') else "One-way ANOVA",
+                'posthoc_type': self.posthoc_type_var.get() if hasattr(self, 'posthoc_type_var') else "Tukey's HSD"
+            }
+            
+            # Delegate to the statistics module
+            results = stats_calc(df_plot, x_col, value_col, hue_col, app_settings)
+            
+        except ImportError as e:
+            print(f"[ERROR] Could not import explot_stats module: {e}")
+            print("Falling back to older statistical methods. Please ensure explot_stats.py is in the same directory.")
+            # Initialize an empty result with basic structure
+            results = {
+                'pvals': {},
+                'x_col': x_col,
+                'value_col': value_col,
+                'hue_col': hue_col,
+                'summary': "Error calculating statistics: Could not import statistical module."
+            }
+        except Exception as e:
+            print(f"[ERROR] Statistical calculation failed: {e}")
+            # Initialize an empty result with basic structure
+            results = {
+                'pvals': {},
+                'x_col': x_col,
+                'value_col': value_col,
+                'hue_col': hue_col,
+                'summary': f"Error in statistical calculation: {str(e)}"
+            }
+            
+        # Store results for backward compatibility
+        self.latest_stats = results
+        self.latest_pvals = results.get('pvals', {})
         
-        # Process based on whether we have hue groups or not
-        if not hue_col or (hue_col and len(df_plot[hue_col].dropna().unique()) == 1):
-            # Either no hue column, or just one hue group
-            single_group = None
-            if hue_col:
-                hue_groups = list(df_plot[hue_col].dropna().unique())
-                if len(hue_groups) == 1:
-                    single_group = hue_groups[0]
-                    print(f"[DEBUG] Single group detected: {single_group}")
-                    
-            # If we have multiple x-values (e.g., Control, Experimental, Predicted)
-            # Calculate p-values between all pairs
-            if len(x_values) > 1:
-                print(f"[DEBUG] Multiple x-values detected: {x_values}")
-                pairs = list(itertools.combinations(x_values, 2))
-                
-                # Store test data for Statistical Details panel
-                self.latest_stats['comparison_type'] = 'x_categories'
-                self.latest_stats['pairs'] = pairs
-                
-                # Determine if we should use ANOVA + post-hoc tests
-                use_anova = len(x_values) > 2 and self.anova_type_var.get() != "None"
-                posthoc_results = None
-                
-                # If we have more than 2 categories, try ANOVA + post-hoc first
-                if use_anova:
-                    try:
-                        import pingouin as pg
-                        import scikit_posthocs as sp
-                        print(f"[DEBUG] Using ANOVA + post-hoc for multiple x-categories")
-                        
-                        # Prepare data for ANOVA
-                        if single_group:
-                            # Filter by the single group
-                            df_anova = df_plot[df_plot[hue_col] == single_group].copy()
-                        else:
-                            df_anova = df_plot.copy()
-                        
-                        # Ensure data is numeric for ANOVA
-                        try:
-                            df_anova[value_col] = pd.to_numeric(df_anova[value_col], errors='coerce')
-                            df_anova = df_anova.dropna(subset=[value_col])
-                            print(f"[DEBUG] Converted {value_col} to numeric for ANOVA, shape: {df_anova.shape}")
-                        except Exception as e:
-                            print(f"[DEBUG] Error converting {value_col} to numeric: {e}")
-                            raise
-                        
-                        # Perform ANOVA based on the selected type
-                        anova_type = self.anova_type_var.get()
-                        print(f"[DEBUG] Using ANOVA type: {anova_type}")
-                        
-                        if anova_type == "Welch's ANOVA":
-                            aov = pg.welch_anova(data=df_anova, dv=value_col, between=x_col)
-                            self.latest_stats['anova_type'] = "Welch's ANOVA"
-                        elif anova_type == "Repeated measures ANOVA":
-                            # For repeated measures ANOVA, we need a subject identifier
-                            # We'll use the hue column if available as the subject ID
-                            subject_col = 'Subject'
-                            if hue_col in df_anova.columns:
-                                # Use the hue column as a proxy for subject ID if no explicit subject column
-                                subject_id = hue_col
-                            else:
-                                # If no subject ID available, create dummy IDs
-                                df_anova[subject_col] = np.arange(len(df_anova))
-                                subject_id = subject_col
-                                
-                            try:
-                                aov = pg.rm_anova(data=df_anova, dv=value_col, within=x_col, subject=subject_id)
-                                self.latest_stats['anova_type'] = "Repeated measures ANOVA"
-                            except Exception as e:
-                                print(f"[DEBUG] Repeated measures ANOVA failed: {e}. Falling back to one-way ANOVA.")
-                                aov = pg.anova(data=df_anova, dv=value_col, between=x_col)
-                                self.latest_stats['anova_type'] = "One-way ANOVA (fallback)"
-                        else:  # Regular one-way ANOVA
-                            aov = pg.anova(data=df_anova, dv=value_col, between=x_col)
-                            self.latest_stats['anova_type'] = "One-way ANOVA"
-                        
-                        # Store ANOVA results
-                        self.latest_stats['anova_results'] = aov
-                        
-                        # Perform post-hoc test based on the selected type
-                        posthoc_type = self.posthoc_type_var.get()
-                        print(f"[DEBUG] Using post-hoc test: {posthoc_type}")
-                        
-                        try:
-                            # Number of data points for debug
-                            print(f"[DEBUG] Running post-hoc test with {len(df_anova)} data points")
-                            
-                            if posthoc_type == "Tukey's HSD":
-                                # Tukey's HSD requires equal variances and is available through pingouin
-                                posthoc = pg.pairwise_tukey(data=df_anova, dv=value_col, between=x_col)
-                                # Convert to matrix format for consistency
-                                groups = df_anova[x_col].unique()
-                                posthoc_matrix = pd.DataFrame(index=groups, columns=groups)
-                                for i, row in posthoc.iterrows():
-                                    g1, g2 = row['A'], row['B']
-                                    p_value = row['p-tukey']
-                                    # Store actual p-values, not rounded values
-                                    posthoc_matrix.loc[g1, g2] = p_value
-                                    posthoc_matrix.loc[g2, g1] = p_value
-                                # Fill diagonal with 1.0 (no difference)
-                                for g in groups:
-                                    posthoc_matrix.loc[g, g] = 1.0
-                                # Ensure p-values are properly stored as floats
-                                posthoc_matrix = posthoc_matrix.astype(float)
-                                posthoc = posthoc_matrix
-                                
-                            elif posthoc_type == "Scheffe's test":
-                                # Scheffe's test is robust for unequal sample sizes
-                                posthoc = sp.posthoc_scheffe(df_anova, val_col=value_col, group_col=x_col)
-                                
-                            elif posthoc_type == "Dunn's test":
-                                # Dunn's test is non-parametric, good for non-normal distributions
-                                # First create a cross-tabulation of data
-                                posthoc = sp.posthoc_dunn(df_anova, val_col=value_col, group_col=x_col)
-                                
-                            else:  # Default to Tamhane's T2
-                                # Tamhane's T2 is for unequal variances
-                                posthoc = sp.posthoc_tamhane(df_anova, val_col=value_col, group_col=x_col)
-                            
-                            # Store results
-                            posthoc_results = posthoc
-                            self.latest_stats['posthoc_results'] = posthoc
-                            self.latest_stats['posthoc_type'] = posthoc_type
-                            print(f"[DEBUG] Post-hoc test successful: {posthoc_type}")
-                            
-                        except Exception as e:
-                            print(f"[DEBUG] Post-hoc test '{posthoc_type}' failed: {e}")
-                            raise
-                        
-                        # Use post-hoc p-values for annotations instead of individual t-tests
-                        for g1, g2 in pairs:
-                            try:
-                                # Get p-value from post-hoc test
-                                if g1 in posthoc.index and g2 in posthoc.columns:
-                                    pval = posthoc.loc[g1, g2]
-                                elif g2 in posthoc.index and g1 in posthoc.columns:
-                                    pval = posthoc.loc[g2, g1]
-                                else:
-                                    raise KeyError(f"Cannot find {g1}, {g2} pair in post-hoc results")
-                                
-                                # Store raw data for reference
-                                if single_group:
-                                    vals1 = df_plot[(df_plot[x_col] == g1) & (df_plot[hue_col] == single_group)][value_col].dropna().astype(float)
-                                    vals2 = df_plot[(df_plot[x_col] == g2) & (df_plot[hue_col] == single_group)][value_col].dropna().astype(float)
-                                else:
-                                    vals1 = df_plot[df_plot[x_col] == g1][value_col].dropna().astype(float)
-                                    vals2 = df_plot[df_plot[x_col] == g2][value_col].dropna().astype(float)
-                                self.latest_stats['raw_data'][(g1, g2)] = (vals1, vals2)
-                                
-                                # Store using multiple key formats
-                                key1 = self.stat_key(g1, g2)  # Sorted key
-                                key2 = (g1, g2)  # Direct key
-                                key3 = (g2, g1)  # Reversed key
-                                
-                                # Store p-values from post-hoc test
-                                self.latest_pvals[key1] = pval
-                                self.latest_pvals[key2] = pval
-                                self.latest_pvals[key3] = pval
-                                self.latest_stats['pvals'][key1] = pval
-                                self.latest_stats['pvals'][key2] = pval
-                                self.latest_stats['pvals'][key3] = pval
-                                
-                                print(f"[DEBUG] Stored post-hoc p-value for {g1} vs {g2}: {pval}")
-                            except Exception as e:
-                                print(f"[DEBUG] Error storing post-hoc p-value for {g1} vs {g2}: {e}")
-                                # Fall back to individual t-tests for this pair
-                                posthoc_results = None
-                    except Exception as e:
-                        print(f"[DEBUG] ANOVA + post-hoc failed, falling back to pairwise t-tests: {e}")
-                        posthoc_results = None
-                
-                # If ANOVA failed or we're not using it, fall back to individual t-tests
-                if not use_anova or posthoc_results is None:
-                    for g1, g2 in pairs:
-                        # Get the data for each x value
-                        if single_group:
-                            # If we have a single group, filter by it
-                            vals1 = df_plot[(df_plot[x_col] == g1) & (df_plot[hue_col] == single_group)][value_col].dropna().astype(float)
-                            vals2 = df_plot[(df_plot[x_col] == g2) & (df_plot[hue_col] == single_group)][value_col].dropna().astype(float)
-                        else:
-                            # No hue group
-                            vals1 = df_plot[df_plot[x_col] == g1][value_col].dropna().astype(float)
-                            vals2 = df_plot[df_plot[x_col] == g2][value_col].dropna().astype(float)
-                        
-                        # Store raw data for future reference
-                        self.latest_stats['raw_data'][(g1, g2)] = (vals1, vals2)
-                        
-                        if len(vals1) < 2 or len(vals2) < 2:
-                            print(f"[DEBUG] Skipping comparison {g1} vs {g2} due to insufficient data")
-                            continue
-                            
-                        # Perform statistical test based on user settings
-                        ttest_type = self.ttest_type_var.get()
-                        alternative = self.ttest_alternative_var.get()
-                        
-                        try:
-                            if ttest_type == "Paired t-test" and len(vals1) == len(vals2):
-                                ttest = stats.ttest_rel(vals1, vals2, alternative=alternative)
-                            elif ttest_type == "Student's t-test (unpaired)":
-                                ttest = stats.ttest_ind(vals1, vals2, alternative=alternative, equal_var=True)
-                            else:  # Welch's t-test (default)
-                                ttest = stats.ttest_ind(vals1, vals2, alternative=alternative, equal_var=False)
-                                
-                            # Store the full test result for statistical details panel
-                            self.latest_stats['test_results'][(g1, g2)] = ttest
-                            
-                            # Store p-value using multiple key formats to ensure retrieval works
-                            pval = ttest.pvalue
-                            key1 = self.stat_key(g1, g2)  # Sorted key
-                            key2 = (g1, g2)  # Direct key
-                            key3 = (g2, g1)  # Reversed key
-                            
-                            # Store p-values in both new and old locations for compatibility
-                            self.latest_pvals[key1] = pval
-                            self.latest_pvals[key2] = pval
-                            self.latest_pvals[key3] = pval
-                            self.latest_stats['pvals'][key1] = pval
-                            self.latest_stats['pvals'][key2] = pval
-                            self.latest_stats['pvals'][key3] = pval
-                            
-                            print(f"[DEBUG] Stored t-test p-value for {g1} vs {g2}: {pval}")
-                        except Exception as e:
-                            print(f"[DEBUG] Error calculating p-value for {g1} vs {g2}: {e}")
-            
-            # Special case: For a single x-value with multiple data points
-            elif len(x_values) == 1:
-                print(f"[DEBUG] Single x-value with multiple data points: {x_values[0]}")
-                g = x_values[0]  # The single x value
-                if single_group:
-                    values = df_plot[(df_plot[x_col] == g) & (df_plot[hue_col] == single_group)][value_col].dropna().astype(float)
-                else:
-                    values = df_plot[df_plot[x_col] == g][value_col].dropna().astype(float)
-                
-                # Store comparison type
-                self.latest_stats['comparison_type'] = 'one_sample'
-                self.latest_stats['raw_data']['one_sample'] = values
-                
-                # If there are enough data points, compute a one-sample t-test
-                if len(values) >= 2:
-                    try:
-                        ttest = stats.ttest_1samp(values, 0)
-                        key = self.stat_key(g, "one_sample")
-                        key_display = self.stat_key(g, "display")
-                        
-                        # Store results
-                        self.latest_stats['test_results']['one_sample'] = ttest
-                        self.latest_pvals[key] = ttest.pvalue
-                        self.latest_pvals[key_display] = ttest.pvalue
-                        self.latest_stats['pvals'][key] = ttest.pvalue
-                        self.latest_stats['pvals'][key_display] = ttest.pvalue
-                        
-                        print(f"[DEBUG] Stored one-sample p-value for {g}: {ttest.pvalue}")
-                    except Exception as e:
-                        print(f"[DEBUG] Error calculating one-sample p-value for {g}: {e}")
-            
-            # No meaningful comparisons possible
-            else:
-                print(f"[DEBUG] No meaningful comparisons possible with x_values={x_values}")
-        
-        # Multiple hue groups within x-categories
-        else:  
-            base_groups = [g for g in df_plot[x_col].dropna().unique()]
-            hue_groups = [g for g in df_plot[hue_col].dropna().unique()]
-            
-            print(f"[DEBUG] Multiple hue groups within x-categories: x={base_groups}, hue={hue_groups}")
-            
-            # Store for statistical details panel
-            self.latest_stats['comparison_type'] = 'within_x_groups'
-            self.latest_stats['base_groups'] = base_groups
-            self.latest_stats['hue_groups'] = hue_groups
-            
-            # Perform within-group comparisons
-            for g in base_groups:
-                df_sub = df_plot[df_plot[x_col] == g]
-                pairs = list(itertools.combinations(hue_groups, 2))
-                
-                for h1, h2 in pairs:
-                    # Get the data
-                    vals1 = df_sub[df_sub[hue_col] == h1][value_col].dropna().astype(float)
-                    vals2 = df_sub[df_sub[hue_col] == h2][value_col].dropna().astype(float)
-                    
-                    # Store raw data
-                    self.latest_stats['raw_data'][(g, h1, h2)] = (vals1, vals2)
-                    
-                    if len(vals1) < 2 or len(vals2) < 2:
-                        print(f"[DEBUG] Skipping comparison {g}: {h1} vs {h2} due to insufficient data")
-                        continue
-                        
-                    # Perform statistical test
-                    ttest_type = self.ttest_type_var.get()
-                    alternative = self.ttest_alternative_var.get()
-                    
-                    try:
-                        if ttest_type == "Paired t-test" and len(vals1) == len(vals2):
-                            ttest = stats.ttest_rel(vals1, vals2, alternative=alternative)
-                        elif ttest_type == "Student's t-test (unpaired)":
-                            ttest = stats.ttest_ind(vals1, vals2, alternative=alternative, equal_var=True)
-                        else:  # Welch's t-test (default)
-                            ttest = stats.ttest_ind(vals1, vals2, alternative=alternative, equal_var=False)
-                        
-                        # Store the full test result and p-value
-                        key = self.stat_key(g, h1, h2)
-                        self.latest_stats['test_results'][key] = ttest
-                        pval = ttest.pvalue
-                        
-                        # Store in both locations
-                        self.latest_pvals[key] = pval
-                        self.latest_stats['pvals'][key] = pval
-                        
-                        print(f"[DEBUG] Stored p-value for {g}: {h1} vs {h2}: {pval}")
-                    except Exception as e:
-                        print(f"[DEBUG] Error calculating p-value for {g}: {h1} vs {h2}: {e}")
-        
-        return self.latest_stats
-    
-    # Define a backward-compatible method to maintain existing interfaces
+        return results
+
     def calculate_and_store_pvals(self, df_plot, x_col, value_col, hue_col=None):
         """Backward-compatible wrapper for calculate_statistics"""
         stats_result = self.calculate_statistics(df_plot, x_col, value_col, hue_col)
         # Return the result for compatibility
         return stats_result
-    
     def __init__(self, root):
         self.latest_pvals = {}  # {(group, h1, h2): pval or (h1, h2): pval}
 
@@ -489,8 +199,10 @@ class ExPlotApp:
         self.xaxis_renames = {}
         self.xaxis_order = []
         self.use_stats_var = tk.BooleanVar(value=False)
+        self.black_errorbars_var = tk.BooleanVar(value=False)
         self.linewidth = tk.DoubleVar(value=1.0)
         self.errorbar_capsize_var = tk.StringVar(value="Default")  # Capsize style for error bars
+        self.upward_errorbar_var = tk.BooleanVar(value=True)  # True = upward-only, False = bidirectional
         self.strip_black_var = tk.BooleanVar(value=True)
         self.show_stripplot_var = tk.BooleanVar(value=True)
         self.bar_outline_var = tk.BooleanVar(value=False)
@@ -1481,6 +1193,7 @@ class ExPlotApp:
         
         # Bar Graph tab
         self.settings_bar_outline_var = tk.BooleanVar(value=self.bar_outline_var.get())
+        self.settings_upward_errorbar_var = tk.BooleanVar(value=self.upward_errorbar_var.get())
         
         # Statistics tab
         self.settings_use_stats_var = tk.BooleanVar(value=self.use_stats_var.get())
@@ -1582,6 +1295,7 @@ class ExPlotApp:
         
         # Bar Graph Tab Content
         tk.Checkbutton(bar_graph_tab, text="Draw bar outlines", variable=self.settings_bar_outline_var).grid(row=0, column=0, sticky="w", padx=10, pady=10)
+        tk.Checkbutton(bar_graph_tab, text="Upward-only error bars", variable=self.settings_upward_errorbar_var).grid(row=1, column=0, sticky="w", padx=10, pady=10)
         
         # XY Plot Tab Content
         tk.Label(xy_plot_tab, text="Marker Symbol:", anchor="w").grid(row=0, column=0, sticky="w", padx=10, pady=10)
@@ -2045,7 +1759,10 @@ class ExPlotApp:
                 break
         if monospace_font is None:
             monospace_font = "Courier"  # fallback
-        details_text.configure(font=(monospace_font, 10))
+        try:
+            details_text.config(font=(monospace_font, 10))  # Set font to monospace for better table alignment
+        except Exception as e:
+            print(f"[DEBUG] Failed to set monospace font: {e}")
         details_text.insert(tk.END, "Statistical Details\n\n")
         # Legend
         details_text.insert(tk.END, "Significance Levels:\n")
@@ -2121,26 +1838,70 @@ class ExPlotApp:
                             ttest_type = self.ttest_type_var.get()
                             alternative = self.ttest_alternative_var.get()
                             
+                            # Convert data to numeric format first
+                            df_numeric = df_plot.copy()
+                            df_numeric[val_col] = pd.to_numeric(df_numeric[val_col], errors='coerce')
+                            
+                            # Get data for each category
+                            data1 = df_numeric[df_numeric[x_col] == cat1][val_col].dropna()
+                            data2 = df_numeric[df_numeric[x_col] == cat2][val_col].dropna()
+                            
                             details_text.insert(tk.END, f"Test Used: {ttest_type} ({alternative}) between {cat1} and {cat2}\n\n")
                             
                             # Check if we have p-values from previous calculations
+                            p_val = None
+                            
+                            # First try string-based keys
                             key = self.stat_key(cat1, cat2)
                             if key in self.latest_pvals:
                                 p_val = self.latest_pvals[key]
+                            
+                            # Then try numeric indices (0 and 1 for two categories)
+                            if p_val is None:
+                                # Try both regular tuples and numpy integer tuples
+                                possible_keys = [
+                                    (0, 1), (1, 0),  # Regular integer tuples
+                                    (np.int64(0), np.int64(1)),  # numpy integer tuples
+                                    (np.int64(1), np.int64(0))
+                                ]
+                                
+                                for test_key in possible_keys:
+                                    if test_key in self.latest_pvals:
+                                        p_val = self.latest_pvals[test_key]
+                                        break
+                            
+                            if p_val is not None:
                                 sig = self.pval_to_annotation(p_val)
                                 details_text.insert(tk.END, f"P-value: {p_val:.4g} {sig}\n")
-                                
-                                # Note about using same p-values as annotations
                                 details_text.insert(tk.END, "\nNote: These statistics are the same as those used for plot annotations.\n")
                             else:
-                                details_text.insert(tk.END, "No statistical results available for these categories.\n")
+                                # Calculate new p-value if we don't have one stored
+                                if len(data1) > 0 and len(data2) > 0:
+                                    try:
+                                        if ttest_type == "Independent t-test":
+                                            stat, p_val = stats.ttest_ind(data1, data2, alternative=alternative)
+                                        else:  # Paired t-test
+                                            if len(data1) != len(data2):
+                                                details_text.insert(tk.END, "Error: Paired t-test requires equal number of samples in both groups.\n")
+                                                return
+                                            stat, p_val = stats.ttest_rel(data1, data2, alternative=alternative)
+                                        
+                                        # Store the new p-value
+                                        key = self.stat_key(cat1, cat2)
+                                        self.latest_pvals[key] = p_val
+                                        
+                                        sig = self.pval_to_annotation(p_val)
+                                        details_text.insert(tk.END, f"P-value: {p_val:.4g} {sig}\n")
+                                    except Exception as e:
+                                        details_text.insert(tk.END, f"Error calculating t-test: {str(e)}\n")
+                                else:
+                                    details_text.insert(tk.END, "No valid numeric data available for statistical test.\n")
                         elif n_x_categories > 2:
                             # For 3+ categories, display ANOVA + post-hoc test results
                             # Get the stored information about the statistical tests
                             anova_type = self.latest_stats.get('anova_type', "One-way ANOVA")
                             posthoc_type = self.latest_stats.get('posthoc_type', "Tukey's HSD")
                             
-                            details_text.insert(tk.END, f"Test Used: {anova_type} + {posthoc_type} across {n_x_categories} categories\n\n")
                             
                             # Display the main ANOVA result if available
                             anova_results = self.latest_stats.get('anova_results', None)
@@ -2174,65 +1935,280 @@ class ExPlotApp:
                             has_pvals = False
                             # Display the p-value matrix
                             p_matrix = pd.DataFrame(index=x_categories, columns=x_categories)
+                            
+                            # Check key structures in latest_pvals
+                            key_lengths = [len(k) if isinstance(k, tuple) else 0 for k in self.latest_pvals.keys()]
+                            has_triplet_keys = any(length == 3 for length in key_lengths)
+                            has_numeric_keys = any(isinstance(k[0], (int, float, np.integer, np.floating)) 
+                                                 for k in self.latest_pvals.keys() 
+                                                 if isinstance(k, tuple) and len(k) >= 2)
+                            
+                            print(f"[DEBUG] Has numeric keys: {has_numeric_keys}")
+                            print(f"[DEBUG] Has triplet keys: {has_triplet_keys}")
+                            print(f"[DEBUG] Key lengths: {key_lengths}")
                                 
                             # Fill matrix with p-values
-                            for g1 in x_categories:
-                                for g2 in x_categories:
+                            for i, g1 in enumerate(x_categories):
+                                for j, g2 in enumerate(x_categories):
                                     if g1 == g2:
                                         p_matrix.loc[g1, g2] = float('nan')  # Diagonal is not applicable
                                     else:
-                                        # Try all possible key formats
+                                        p_val = None
+                                        
+                                        # First, try standard string-based keys
                                         key1 = self.stat_key(g1, g2)  # Standard key
                                         key2 = (g1, g2)  # Direct tuple
                                         key3 = (g2, g1)  # Reversed tuple
 
-                                        # Check all possible keys
                                         print(f"[DEBUG] Looking for p-value for {g1} vs {g2}: keys {key1}, {key2}, {key3}")
                                         if key1 in self.latest_pvals:
                                             print(f"[DEBUG] Found using key1: {key1}")
-                                            p_matrix.loc[g1, g2] = self.latest_pvals[key1]
+                                            p_val = self.latest_pvals[key1]
                                             has_pvals = True
                                         elif key2 in self.latest_pvals:
                                             print(f"[DEBUG] Found using key2: {key2}")
-                                            p_matrix.loc[g1, g2] = self.latest_pvals[key2]
+                                            p_val = self.latest_pvals[key2]
                                             has_pvals = True
                                         elif key3 in self.latest_pvals:
                                             print(f"[DEBUG] Found using key3: {key3}")
-                                            p_matrix.loc[g1, g2] = self.latest_pvals[key3]
+                                            p_val = self.latest_pvals[key3]
                                             has_pvals = True
+                                            
+                                        # If not found yet and we have numeric keys, try with indices
+                                        if p_val is None and has_numeric_keys:
+                                            # Try both orderings of numeric indices (int)
+                                            if (i, j) in self.latest_pvals:
+                                                print(f"[DEBUG] Found using numeric indices: ({i}, {j})")
+                                                p_val = self.latest_pvals[(i, j)]
+                                                has_pvals = True
+                                            elif (j, i) in self.latest_pvals:
+                                                print(f"[DEBUG] Found using numeric indices: ({j}, {i})")
+                                                p_val = self.latest_pvals[(j, i)]
+                                                has_pvals = True
+                                            # Also try with float indices
+                                            elif (float(i), float(j)) in self.latest_pvals:
+                                                print(f"[DEBUG] Found using float indices: ({float(i)}, {float(j)})")
+                                                p_val = self.latest_pvals[(float(i), float(j))]
+                                                has_pvals = True
+                                            elif (float(j), float(i)) in self.latest_pvals:
+                                                print(f"[DEBUG] Found using float indices: ({float(j)}, {float(i)})")
+                                                p_val = self.latest_pvals[(float(j), float(i))]
+                                                has_pvals = True
+                                        
+                                        # If still not found, look for numpy numeric indices (int64, float64, etc.)
+                                        if p_val is None and has_numeric_keys:
+                                            for key, val in self.latest_pvals.items():
+                                                # First check if this is a triplet key for metric comparisons
+                                                if (isinstance(key, tuple) and len(key) == 3 and
+                                                    isinstance(key[0], (np.integer, np.floating)) and
+                                                    isinstance(key[1], str) and isinstance(key[2], str)):
+                                                    # This is a metric comparison key (idx, metric1, metric2)
+                                                    # Skip it here - these are handled separately
+                                                    continue
+                                                    
+                                                # Handle regular numeric indices in pairs
+                                                if (isinstance(key, tuple) and len(key) == 2 and
+                                                   (isinstance(key[0], (np.integer, np.floating)) or 
+                                                    isinstance(key[1], (np.integer, np.floating)))):
+                                                    # Check if this key matches our indices (allowing for float/int conversion)
+                                                    try:
+                                                        key0_matches_i = (float(key[0]) == float(i))
+                                                        key0_matches_j = (float(key[0]) == float(j))
+                                                        key1_matches_i = (float(key[1]) == float(i))
+                                                        key1_matches_j = (float(key[1]) == float(j))
+                                                        
+                                                        if (key0_matches_i and key1_matches_j) or (key0_matches_j and key1_matches_i):
+                                                            print(f"[DEBUG] Found using numpy numeric: {key}")
+                                                            p_val = val
+                                                            has_pvals = True
+                                                            break
+                                                    except ValueError:
+                                                        # Skip keys that can't be converted to float
+                                                        continue
+                                        
+                                        # Before giving up, check triplet keys that might contain metric comparisons
+                                        if p_val is None and has_triplet_keys:
+                                            # Extract all available metric pairs from triplet keys
+                                            metric_pairs = []
+                                            x_values = []
+                                            for key in self.latest_pvals.keys():
+                                                if isinstance(key, tuple) and len(key) == 3:
+                                                    x_val = key[0]
+                                                    metric1 = key[1]
+                                                    metric2 = key[2]
+                                                    x_values.append(x_val)
+                                                    if (metric1, metric2) not in metric_pairs and (metric2, metric1) not in metric_pairs:
+                                                        metric_pairs.append((metric1, metric2))
+                                            
+                                            if metric_pairs and x_values:
+                                                # Check for matching x-indices for this category pair
+                                                potential_i = None
+                                                potential_j = None
+                                                
+                                                # Try to match string category to numeric index
+                                                for idx, x_val in enumerate(x_categories):
+                                                    if x_val == g1 or str(x_val) == str(i):
+                                                        potential_i = idx
+                                                    if x_val == g2 or str(x_val) == str(j):
+                                                        potential_j = idx
+                                                
+                                                if potential_i is not None and potential_j is not None:
+                                                    # Try all metric pairs with all potential indices
+                                                    for pair in metric_pairs:
+                                                        metric1, metric2 = pair
+                                                        # Try forward and reversed tuples with np.int64
+                                                        test_keys = [
+                                                            (np.int64(potential_i), metric1, metric2),
+                                                            (np.int64(potential_j), metric1, metric2)
+                                                        ]
+                                                        
+                                                        for test_key in test_keys:
+                                                            if test_key in self.latest_pvals:
+                                                                p_val = self.latest_pvals[test_key]
+                                                                has_pvals = True
+                                                                print(f"[DEBUG] Found using triplet key: {test_key} -> {p_val}")
+                                                                break
+                                                        
+                                                        if p_val is not None:
+                                                            break
+                                        
+                                        # Store the p-value in the matrix if found
+                                        if p_val is not None:
+                                            p_matrix.loc[g1, g2] = p_val
                                         else:
                                             p_matrix.loc[g1, g2] = float('nan')
                                 
-                            # Format and display p-value matrix if we found values
-                            if has_pvals:
-                                details_text.insert(tk.END, "P-values from statistical calculations:\n")
-                                details_text.insert(tk.END, self.format_pvalue_matrix(p_matrix) + '\n')
+                            # Check if we have triplet keys with metric comparisons
+                            if has_triplet_keys:
+                                # Collect all unique metric pairs from triplet keys
+                                metric_pairs = []
+                                metric_results = {}
                                 
-                                # Add significance indicators
-                                details_text.insert(tk.END, "\nSignificance Indicators:\n")
-                                for i, g1 in enumerate(x_categories):
-                                    for j, g2 in enumerate(x_categories):
-                                        if i < j:  # Only show each pair once
-                                            # Try all possible key formats
-                                            key1 = self.stat_key(g1, g2)  # Standard key
-                                            key2 = (g1, g2)  # Direct tuple
-                                            key3 = (g2, g1)  # Reversed tuple
+                                for key, val in self.latest_pvals.items():
+                                    if isinstance(key, tuple) and len(key) == 3:
+                                        x_val = key[0]
+                                        metric1 = key[1]
+                                        metric2 = key[2]
+                                        metric_pair = (metric1, metric2)
+                                        
+                                        if metric_pair not in metric_pairs and (metric2, metric1) not in metric_pairs:
+                                            metric_pairs.append(metric_pair)
+                                        
+                                        # Store with x_category name if possible
+                                        x_index = None
+                                        try:
+                                            x_index = int(float(x_val))
+                                            if 0 <= x_index < len(x_categories):
+                                                x_name = x_categories[x_index]
+                                            else:
+                                                x_name = str(x_val)
+                                        except:
+                                            x_name = str(x_val)
                                             
+                                        result_key = (x_name, metric1, metric2)
+                                        metric_results[result_key] = val
+                                
+                                if metric_pairs:
+                                    details_text.insert(tk.END, "P-values for metric comparisons:\n\n")
+                                    for pair in metric_pairs:
+                                        metric1, metric2 = pair
+                                        details_text.insert(tk.END, f"Comparing {metric1} vs {metric2}:\n")
+                                        
+                                        for x_cat in x_categories:
+                                            result_key = (x_cat, metric1, metric2)
+                                            if result_key in metric_results:
+                                                p_val = metric_results[result_key]
+                                                sig = self.pval_to_annotation(p_val)
+                                                details_text.insert(tk.END, f"  {x_cat}: p = {p_val:.4g} {sig}\n")
+                                    details_text.insert(tk.END, "\n")
+                                    has_pvals = True
+                            
+                            # Format and display p-value matrix if we found values
+                            if not has_triplet_keys:  # Skip this section entirely if we're dealing with metric comparisons
+                                if has_pvals:
+                                    details_text.insert(tk.END, f"Test Used: {anova_type} + {posthoc_type} across {n_x_categories} categories\n\nP-values from statistical calculations:\n")
+                                    details_text.insert(tk.END, self.format_pvalue_matrix(p_matrix) + '\n')
+                                    
+                                    # Add significance indicators
+                                    details_text.insert(tk.END, "\nSignificance Indicators:\n")
+                                    
+                                    # Track which pairs we've already processed to avoid duplicates
+                                    processed_pairs = set()
+                                    
+                                    for i, g1 in enumerate(x_categories):
+                                        for j, g2 in enumerate(x_categories):
+                                            # Skip self-comparisons and only process each pair once
+                                            if i == j:  # Skip self-comparisons
+                                                continue
+                                                
+                                            # Create a canonical representation of the pair to avoid duplicates
+                                            pair_key = tuple(sorted([str(g1), str(g2)]))
+                                            if pair_key in processed_pairs:
+                                                continue
+                                                
+                                            processed_pairs.add(pair_key)
+                                            
+                                            # Reset p_val for each new pair
                                             p_val = None
-                                            if key1 in self.latest_pvals:
-                                                p_val = self.latest_pvals[key1]
-                                            elif key2 in self.latest_pvals:
-                                                p_val = self.latest_pvals[key2]
-                                            elif key3 in self.latest_pvals:
-                                                p_val = self.latest_pvals[key3]
                                             
+                                            # First try looking up in the post-hoc matrix directly
+                                            if isinstance(p_matrix, pd.DataFrame) and g1 in p_matrix.index and g2 in p_matrix.columns:
+                                                p_val = p_matrix.loc[g1, g2]
+                                                
+                                            # If not found, try standard string-based keys
+                                            if p_val is None:
+                                                key1 = self.stat_key(g1, g2)  # Standard key
+                                                key2 = (g1, g2)  # Direct tuple
+                                                key3 = (g2, g1)  # Reversed tuple
+                                                
+                                                if key1 in self.latest_pvals:
+                                                    p_val = self.latest_pvals[key1]
+                                                elif key2 in self.latest_pvals:
+                                                    p_val = self.latest_pvals[key2]
+                                                elif key3 in self.latest_pvals:
+                                                    p_val = self.latest_pvals[key3]
+                                            
+                                            # If not found yet and we have numeric keys, try with indices
+                                            if p_val is None and has_numeric_keys:
+                                                # Try both orderings of numeric indices (int)
+                                                if (i, j) in self.latest_pvals:
+                                                    p_val = self.latest_pvals[(i, j)]
+                                                elif (j, i) in self.latest_pvals:
+                                                    p_val = self.latest_pvals[(j, i)]
+                                                # Also try with float indices
+                                                elif (float(i), float(j)) in self.latest_pvals:
+                                                    p_val = self.latest_pvals[(float(i), float(j))]
+                                                elif (float(j), float(i)) in self.latest_pvals:
+                                                    p_val = self.latest_pvals[(float(j), float(i))]
+                                            
+                                            # If still not found, try with numpy numeric indices
+                                            if p_val is None and has_numeric_keys:
+                                                for key, val in self.latest_pvals.items():
+                                                    if (isinstance(key, tuple) and len(key) == 2 and
+                                                        (isinstance(key[0], (np.integer, np.floating)) or 
+                                                         isinstance(key[1], (np.integer, np.floating)))):
+                                                        # Check if this key matches our indices (allowing for float/int conversion)
+                                                        try:
+                                                            key0_matches_i = (float(key[0]) == float(i))
+                                                            key0_matches_j = (float(key[0]) == float(j))
+                                                            key1_matches_i = (float(key[1]) == float(i))
+                                                            key1_matches_j = (float(key[1]) == float(j))
+                                                            
+                                                            if (key0_matches_i and key1_matches_j) or (key0_matches_j and key1_matches_i):
+                                                                p_val = val
+                                                                break
+                                                        except ValueError:
+                                                            # Skip keys that can't be converted to float
+                                                            continue
+                                            
+                                            # Only show if we found a valid p-value
                                             if p_val is not None:
                                                 sig = self.pval_to_annotation(p_val)
                                                 details_text.insert(tk.END, f"{g1} vs {g2}: p = {p_val:.4g} {sig}\n")
                                 
                                 # Note about using same p-values as annotations
                                 details_text.insert(tk.END, "\nNote: These statistics are the same as those used for plot annotations.\n")
-                            else:
+                            elif not has_triplet_keys:  # Only show error if we haven't already displayed metric comparisons
                                 details_text.insert(tk.END, "No matching p-values found in latest_pvals dictionary.\n")
                                 details_text.insert(tk.END, f"Keys available: {list(self.latest_pvals.keys())[:5]}\n")
                     else:
@@ -2270,13 +2246,20 @@ class ExPlotApp:
                                 
                                 details_text.insert(tk.END, f"Test Used: {ttest_type} ({alternative}) between {cat1} and {cat2}\n")
                                 try:
-                                    # Use the selected t-test type for the calculation
-                                    if ttest_type == "Paired t-test" and len(df_cat1) == len(df_cat2):
-                                        ttest_cats = stats.ttest_rel(df_cat1, df_cat2, alternative=alternative)
-                                    elif ttest_type == "Student's t-test (unpaired)":
-                                        ttest_cats = stats.ttest_ind(df_cat1, df_cat2, alternative=alternative, equal_var=True)
-                                    else:  # Welch's t-test (unequal variance)
-                                        ttest_cats = stats.ttest_ind(df_cat1, df_cat2, alternative=alternative, equal_var=False)
+                                    # Use the explot_stats module for consistency
+                                    from explot_stats import run_ttest
+                                    
+                                    # Create a temporary DataFrame for the t-test
+                                    temp_df = pd.DataFrame({
+                                        'group': [cat1] * len(df_cat1) + [cat2] * len(df_cat2),
+                                        'value': np.concatenate([df_cat1, df_cat2])
+                                    })
+                                    
+                                    # Use run_ttest from explot_stats module
+                                    p_val, ttest_cats = run_ttest(
+                                        temp_df, 'value', cat1, cat2, 'group', 
+                                        test_type=ttest_type, alternative=alternative
+                                    )
                                     p_annotation = self.pval_to_annotation(ttest_cats.pvalue)
                                     details_text.insert(tk.END, f"t = {ttest_cats.statistic:.4g}, p = {ttest_cats.pvalue:.4g} {p_annotation}\n")
                                 except Exception as e:
@@ -2307,24 +2290,51 @@ class ExPlotApp:
                                         aov = self.latest_stats.get('anova_results', None)
                                         if aov is None:
                                             # Perform the ANOVA based on the selected type
-                                            if anova_type == "Welch's ANOVA":
-                                                aov = pg.welch_anova(data=df_long, dv='MeltedValue', between=x_col)
-                                            elif anova_type == "Repeated measures ANOVA":
-                                                # For repeated measures, we need a subject identifier
-                                                # We'll use dummy IDs for now
-                                                df_long['Subject'] = np.arange(len(df_long))
+                                            try:
+                                                # Use the explot_stats module for consistency
+                                                from explot_stats import run_anova, run_posthoc
+                                                
+                                                # Create a long format dataframe for the ANOVA
+                                                df_long = pd.DataFrame({
+                                                    x_col: np.concatenate([[cat] * len(df_plot[df_plot[x_col] == cat][value_col].dropna()) for cat in x_categories]),
+                                                    'MeltedValue': np.concatenate([df_plot[df_plot[x_col] == cat][value_col].dropna().values for cat in x_categories])
+                                                })
+                                                
+                                                # Run ANOVA using the explot_stats module
+                                                if anova_type == "Repeated measures ANOVA":
+                                                    # Need subject column for repeated measures ANOVA
+                                                    details_text.insert(tk.END, "Using results from prior calculation.\n")
+                                                else:
+                                                    # Run ANOVA using the explot_stats module
+                                                    aov = run_anova(df_long, 'MeltedValue', x_col, anova_type)
+                                                    
+                                                # These should be inside the try block
+                                                details_text.insert(tk.END, str(aov) + '\n')
+                                                anova_success = True
+                                            except ImportError:
+                                                # Fall back to direct calculations if module not available
                                                 try:
-                                                    aov = pg.rm_anova(data=df_long, dv='MeltedValue', within=x_col, subject='Subject')
-                                                except Exception:
-                                                    details_text.insert(tk.END, "Repeated measures ANOVA failed, falling back to regular ANOVA\n")
-                                                    aov = pg.anova(data=df_long, dv='MeltedValue', between=x_col)
-                                            else:  # Regular one-way ANOVA
-                                                aov = pg.anova(data=df_long, dv='MeltedValue', between=x_col)
-                                        
-                                        details_text.insert(tk.END, str(aov) + '\n')
-                                        anova_success = True
+                                                    if anova_type == "Welch's ANOVA":
+                                                        aov = pg.welch_anova(data=df_long, dv='MeltedValue', between=x_col)
+                                                    elif anova_type == "Repeated measures ANOVA":
+                                                        # For repeated measures, we need a subject identifier
+                                                        df_long['Subject'] = np.arange(len(df_long))
+                                                        try:
+                                                            aov = pg.rm_anova(data=df_long, dv='MeltedValue', within=x_col, subject='Subject')
+                                                        except Exception:
+                                                            details_text.insert(tk.END, "Repeated measures ANOVA failed, falling back to regular ANOVA\n")
+                                                            aov = pg.anova(data=df_long, dv='MeltedValue', between=x_col)
+                                                    else:  # Regular one-way ANOVA
+                                                        aov = pg.anova(data=df_long, dv='MeltedValue', between=x_col)
+                                                        
+                                                    details_text.insert(tk.END, str(aov) + '\n')
+                                                    anova_success = True
+                                                except Exception as e2:
+                                                    details_text.insert(tk.END, f"ANOVA calculation failed: {e2}\n")
+                                                    anova_success = False
                                 except Exception as e:
                                     details_text.insert(tk.END, f"ANOVA failed: {e}\n")
+                                    anova_success = False
                                 
                                 # Only run post-hoc test if ANOVA was successful
                                 if anova_success and sp is not None:
@@ -2332,41 +2342,23 @@ class ExPlotApp:
                                         # Use stored post-hoc results if available, otherwise calculate new ones
                                         posthoc = self.latest_stats.get('posthoc_results', None)
                                         if posthoc is None:
-                                            # Perform the post-hoc test based on the selected type
-                                            if posthoc_type == "Tukey's HSD":
-                                                # Try to convert Tukey results to matrix format
-                                                tukey_pairwise = pg.pairwise_tukey(data=df_long, dv='MeltedValue', between=x_col)
-                                                groups = df_long[x_col].unique()
-                                                posthoc = pd.DataFrame(index=groups, columns=groups)
-                                                for i, row in tukey_pairwise.iterrows():
-                                                    g1, g2 = row['A'], row['B']
-                                                    p_value = row['p-tukey']
-                                                    posthoc.loc[g1, g2] = p_value
-                                                    posthoc.loc[g2, g1] = p_value
-                                                # Fill diagonal with 1.0 (no difference)
-                                                for g in groups:
-                                                    posthoc.loc[g, g] = 1.0
-                                                print(f"[DEBUG] Tukey's HSD result matrix created")
+                                            # Use run_posthoc from explot_stats module for consistency
+                                            posthoc = run_posthoc(df_long, 'MeltedValue', x_col, posthoc_type)
                                             
-                                            elif posthoc_type == "Scheffe's test":
-                                                posthoc = sp.posthoc_scheffe(df_long, val_col='MeltedValue', group_col=x_col)
+                                            # Ensure index and columns are strings for consistency
+                                            posthoc.index = posthoc.index.astype(str)
+                                            posthoc.columns = posthoc.columns.astype(str)
                                             
-                                            elif posthoc_type == "Dunn's test":
-                                                posthoc = sp.posthoc_dunn(df_long, val_col='MeltedValue', group_col=x_col)
-                                            
-                                            else:  # Default to Tamhane's T2
-                                                posthoc = sp.posthoc_tamhane(df_long, val_col='MeltedValue', group_col=x_col)
-                                                # Ensure p-values are properly stored for access in the statistical details panel
-                                                # Store these values in latest_pvals for display
-                                                groups = df_long[x_col].unique()
-                                                for i, g1 in enumerate(groups):
-                                                    for j, g2 in enumerate(groups):
-                                                        if i != j:  # Skip diagonal
-                                                            # Store p-value for this pair
-                                                            pval = posthoc.loc[g1, g2]
-                                                            key = self.stat_key(g1, g2)
-                                                            self.latest_pvals[key] = pval
-                                                            self.latest_stats['pvals'][key] = pval
+                                            # Store these values in latest_pvals for display
+                                            groups = df_long[x_col].unique()
+                                            for i, g1 in enumerate(groups):
+                                                for j, g2 in enumerate(groups):
+                                                    if i != j:  # Skip diagonal
+                                                        # Store p-value for this pair
+                                                        pval = posthoc.loc[g1, g2]
+                                                        key = self.stat_key(g1, g2)
+                                                        self.latest_pvals[key] = pval
+                                                        self.latest_stats['pvals'][key] = pval
                                         
                                         details_text.insert(tk.END, f"Post-hoc {stored_posthoc_type} test:\n")
                                         details_text.insert(tk.END, self.format_pvalue_matrix(posthoc) + '\n')
@@ -2428,136 +2420,120 @@ class ExPlotApp:
                                 
                                 # Perform the selected ANOVA test
                                 try:
-                                    # First run the appropriate ANOVA test
-                                    if anova_type == "Welch's ANOVA":
-                                        aov = pg.welch_anova(data=df_sub, dv=val_col, between=group_col)
-                                    elif anova_type == "Repeated measures ANOVA":
-                                        # For repeated measures, we need a subject identifier
-                                        df_sub["Subject"] = np.arange(len(df_sub))
-                                        try:
-                                            aov = pg.rm_anova(data=df_sub, dv=val_col, within=group_col, subject="Subject")
-                                        except Exception:
-                                            print(f"[DEBUG] Repeated measures ANOVA failed, falling back to One-way ANOVA")
-                                            aov = pg.anova(data=df_sub, dv=val_col, between=group_col)
-                                    else:  # One-way ANOVA
-                                        aov = pg.anova(data=df_sub, dv=val_col, between=group_col)
-                                    
-                                    # Use individual t-tests as fallback if specific posthoc tests fail
-                                    fallback_to_pairwise_ttest = False
-                                    posthoc = None
-
+                                    # Use explot_stats module for consistent ANOVA calculations
                                     try:
-                                        # Run the selected post-hoc test
-                                        if posthoc_type == "Tukey's HSD":
-                                            # Use pingouin for Tukey's HSD
-                                            tukey_result = pg.pairwise_tukey(data=df_sub, dv=val_col, between=group_col)
-                                            # Create a matrix format for consistency
-                                            posthoc = pd.DataFrame(index=hue_groups, columns=hue_groups)
-                                            # Populate the matrix with p-values from the tukey result
-                                            for i, row in tukey_result.iterrows():
+                                        # Import directly here to avoid circular imports
+                                        from explot_stats import run_anova
+                                        
+                                        # Run ANOVA using the explot_stats module
+                                        if anova_type == "Repeated measures ANOVA":
+                                            # For repeated measures, we need a subject identifier
+                                            df_sub['Subject'] = np.arange(len(df_sub))
+                                            # Run repeated measures ANOVA
+                                            aov = run_anova(df_sub, val_col, group_col, anova_type, subject_col='Subject')
+                                        else:
+                                            # Run one-way or Welch's ANOVA
+                                            aov = run_anova(df_sub, val_col, group_col, anova_type)
+                                    except ImportError:
+                                        # Fall back to direct calculations if module not available
+                                        if anova_type == "Welch's ANOVA":
+                                            aov = pg.welch_anova(data=df_sub, dv=val_col, between=group_col)
+                                        elif anova_type == "Repeated measures ANOVA":
+                                            # For repeated measures, we need a subject identifier
+                                            df_sub['Subject'] = np.arange(len(df_sub))
+                                            try:
+                                                aov = pg.rm_anova(data=df_sub, dv=val_col, within=group_col, subject='Subject')
+                                            except Exception:
+                                                details_text.insert(tk.END, "Repeated measures ANOVA failed, falling back to regular ANOVA\n")
+                                                aov = pg.anova(data=df_sub, dv=val_col, between=group_col)
+                                        else:  # Regular one-way ANOVA
+                                            aov = pg.anova(data=df_sub, dv=val_col, between=group_col)
+                                    
+                                    # Use explot_stats module for consistent posthoc calculations
+                                    try:
+                                        # Run post-hoc test using the explot_stats module
+                                        posthoc = run_posthoc(df_sub, val_col, group_col, posthoc_type)
+                                        
+                                        # Convert index and columns to string for consistency if needed
+                                        if not isinstance(posthoc.index[0], str):
+                                            posthoc.index = posthoc.index.astype(str)
+                                        if not isinstance(posthoc.columns[0], str):
+                                            posthoc.columns = posthoc.columns.astype(str)
+                                            
+                                    except ImportError:
+                                        # Fall back to direct calculations if module not available
+                                        if posthoc_type == "Tukey's HSD" and pg is not None:
+                                            # Try to convert Tukey results to matrix format
+                                            tukey_pairwise = pg.pairwise_tukey(data=df_sub, dv=val_col, between=group_col)
+                                            groups = df_sub[group_col].unique()
+                                            posthoc = pd.DataFrame(index=groups, columns=groups)
+                                            for i, row in tukey_pairwise.iterrows():
                                                 g1, g2 = row['A'], row['B']
                                                 p_value = row['p-tukey']
                                                 posthoc.loc[g1, g2] = p_value
                                                 posthoc.loc[g2, g1] = p_value
                                             # Fill diagonal with 1.0 (no difference)
-                                            for g in hue_groups:
+                                            for g in groups:
                                                 posthoc.loc[g, g] = 1.0
-                                            print(f"[DEBUG] Tukey's HSD result matrix created")
-                                        
-                                        elif posthoc_type == "Scheffe's test":
-                                            # Create a manual pairwise comparison result for Scheffe's test
-                                            posthoc = pd.DataFrame(index=hue_groups, columns=hue_groups)
-                                            # Fill diagonal with 1.0
-                                            for g in hue_groups:
-                                                posthoc.loc[g, g] = 1.0
-                                            # Calculate pairwise p-values
-                                            for h1, h2 in pairs:
-                                                vals1 = df_sub[df_sub[group_col] == h1][val_col].dropna().astype(float)
-                                                vals2 = df_sub[df_sub[group_col] == h2][val_col].dropna().astype(float)
-                                                if len(vals1) >= 2 and len(vals2) >= 2:
-                                                    # Calculate F-statistic for Scheffe's test
-                                                    f_stat, p_val = stats.f_oneway(vals1, vals2)
-                                                    # Apply Scheffe's correction
-                                                    p_val = min(1.0, p_val * (len(hue_groups) - 1))  # Conservative correction
-                                                    posthoc.loc[h1, h2] = p_val
-                                                    posthoc.loc[h2, h1] = p_val
-                                                else:
-                                                    posthoc.loc[h1, h2] = float('nan')
-                                                    posthoc.loc[h2, h1] = float('nan')
-                                            print(f"[DEBUG] Scheffe's test result matrix created manually")
-                                        
-                                        elif posthoc_type == "Dunn's test":
-                                            # For Dunn's test, manually calculate p-values
-                                            posthoc = pd.DataFrame(index=hue_groups, columns=hue_groups)
-                                            # Fill diagonal with 1.0
-                                            for g in hue_groups:
-                                                posthoc.loc[g, g] = 1.0
-                                            # Calculate pairwise p-values
-                                            for h1, h2 in pairs:
-                                                vals1 = df_sub[df_sub[group_col] == h1][val_col].dropna().astype(float)
-                                                vals2 = df_sub[df_sub[group_col] == h2][val_col].dropna().astype(float)
-                                                if len(vals1) >= 2 and len(vals2) >= 2:
-                                                    # Use Mann-Whitney U test as a non-parametric test
-                                                    u_stat, p_val = stats.mannwhitneyu(vals1, vals2, alternative='two-sided')
-                                                    posthoc.loc[h1, h2] = p_val
-                                                    posthoc.loc[h2, h1] = p_val
-                                                else:
-                                                    posthoc.loc[h1, h2] = float('nan')
-                                                    posthoc.loc[h2, h1] = float('nan')
-                                            print(f"[DEBUG] Dunn's test result matrix created manually")
-                                        
-                                        else:  # Default to pairwise t-tests
-                                            # Create matrix for t-test results
-                                            posthoc = pd.DataFrame(index=hue_groups, columns=hue_groups)
-                                            # Fill diagonal with 1.0
-                                            for g in hue_groups:
-                                                posthoc.loc[g, g] = 1.0
-                                            # Calculate pairwise p-values
-                                            for h1, h2 in pairs:
-                                                vals1 = df_sub[df_sub[group_col] == h1][val_col].dropna().astype(float)
-                                                vals2 = df_sub[df_sub[group_col] == h2][val_col].dropna().astype(float)
-                                                if len(vals1) >= 2 and len(vals2) >= 2:
-                                                    t_stat, p_val = stats.ttest_ind(vals1, vals2, equal_var=False)
-                                                    posthoc.loc[h1, h2] = p_val
-                                                    posthoc.loc[h2, h1] = p_val
-                                                else:
-                                                    posthoc.loc[h1, h2] = float('nan')
-                                                    posthoc.loc[h2, h1] = float('nan')
-                                            print(f"[DEBUG] Pairwise t-test result matrix created")
-                                    
-                                    except Exception as e:
-                                        print(f"[DEBUG] Error in post-hoc test: {e}, falling back to pairwise t-tests")
-                                        fallback_to_pairwise_ttest = True
-                                        posthoc = None
-                                    
-                                    # If post-hoc test failed, use pairwise t-tests as fallback
-                                    if fallback_to_pairwise_ttest or posthoc is None:
+                                        elif posthoc_type == "Scheffe's test" and sp is not None:
+                                            posthoc = sp.posthoc_scheffe(df_sub, val_col=val_col, group_col=group_col)
+                                        elif posthoc_type == "Dunn's test" and sp is not None:
+                                            posthoc = sp.posthoc_dunn(df_sub, val_col=val_col, group_col=group_col)
+                                        else:  # Default to Tamhane's T2 when available
+                                            if sp is not None:
+                                                posthoc = sp.posthoc_tamhane(df_sub, val_col=val_col, group_col=group_col)
+                                            else:
+                                                # Fall back to pairwise t-tests
+                                                fallback_to_pairwise_ttest = True
+                                    # Handle fallback for pairwise tests if needed
+                                    if fallback_to_pairwise_ttest:
+                                        # Use pairwise t-tests instead
+                                        details_text.insert(tk.END, "Using pairwise t-tests as fallback.\n")
+                                        posthoc = pd.DataFrame(index=df_sub[group_col].unique(), columns=df_sub[group_col].unique())
+                                        # Here we begin a properly structured section for post-hoc tests
                                         try:
-                                            # Create matrix for t-test results
-                                            posthoc = pd.DataFrame(index=hue_groups, columns=hue_groups)
-                                            # Fill diagonal with 1.0
-                                            for g in hue_groups:
-                                                posthoc.loc[g, g] = 1.0
-                                            # Calculate pairwise p-values with t-tests
-                                            for h1, h2 in pairs:
-                                                vals1 = df_sub[df_sub[group_col] == h1][val_col].dropna().astype(float)
-                                                vals2 = df_sub[df_sub[group_col] == h2][val_col].dropna().astype(float)
-                                                if len(vals1) >= 2 and len(vals2) >= 2:
-                                                    t_stat, p_val = stats.ttest_ind(vals1, vals2, equal_var=False)
-                                                    posthoc.loc[h1, h2] = p_val
-                                                    posthoc.loc[h2, h1] = p_val
-                                                else:
-                                                    posthoc.loc[h1, h2] = float('nan')
-                                                    posthoc.loc[h2, h1] = float('nan')
-                                            print(f"[DEBUG] Fallback: Pairwise t-test result matrix created")
-                                        except Exception as e2:
-                                            print(f"[DEBUG] Fallback also failed: {e2}")
+                                            # Try to use explot_stats module for post-hoc tests if available
+                                            try:
+                                                from explot_stats import run_posthoc, make_stat_key
+                                                # Run post-hoc test using the modern module
+                                                posthoc = run_posthoc(df_sub, val_col, group_col, posthoc_type)
+                                                print(f"[DEBUG] Used explot_stats module for post-hoc tests")
+                                            except ImportError:
+                                                # Fall back to direct implementation
+                                                print(f"[DEBUG] Could not import explot_stats, using direct implementation")
+                                                
+                                                # Create a matrix for posthoc results
+                                                posthoc = pd.DataFrame(index=df_sub[group_col].unique(), 
+                                                                    columns=df_sub[group_col].unique())
+                                                # Fill diagonal with 1.0 (no difference)
+                                                for g in posthoc.index:
+                                                    posthoc.loc[g, g] = 1.0
+                                                # Calculate pairwise p-values
+                                                for h1 in posthoc.index:
+                                                    for h2 in posthoc.columns:
+                                                        if h1 != h2:
+                                                            vals1 = df_sub[df_sub[group_col] == h1][val_col].dropna()
+                                                            vals2 = df_sub[df_sub[group_col] == h2][val_col].dropna()
+                                                            if len(vals1) >= 2 and len(vals2) >= 2:
+                                                                # Use t-test
+                                                                tstat, pval = stats.ttest_ind(vals1, vals2, equal_var=False)
+                                                                posthoc.loc[h1, h2] = pval
+                                                                posthoc.loc[h2, h1] = pval
+                                                            else:
+                                                                posthoc.loc[h1, h2] = float('nan')
+                                                                posthoc.loc[h2, h1] = float('nan')
+                                        except Exception as e:
+                                            print(f"[DEBUG] Error in post-hoc test: {e}, falling back to pairwise t-tests")
                                             posthoc = None
-                                    
-                                    # Print the posthoc result for debugging
-                                    if posthoc is not None:
-                                        print(f"[DEBUG] Post-hoc result matrix:\n{posthoc}")
-                                except Exception:
+                                            
+                                        # Handle fallback for pairwise t-tests if needed
+                                        if posthoc is None:
+                                            details_text.insert(tk.END, "Unable to run post-hoc tests for this data.\n")
+                                        else:
+                                            # Print the posthoc result for debugging
+                                            print(f"[DEBUG] Post-hoc result matrix created successfully")
+                                except Exception as outer_e:
+                                    details_text.insert(tk.END, f"Statistical analysis failed: {outer_e}\n")
                                     posthoc = None
                                 # Fill matrix with p-values
                                 for h1 in hue_groups:
@@ -2578,11 +2554,38 @@ class ExPlotApp:
                                                     print(f"[DEBUG] Could not find p-value for {h1} vs {h2} in posthoc result")
                                                     pval_val = float('nan')
                                                 
-                                                # Convert to string with appropriate formatting
-                                                if not pd.isna(pval_val):
-                                                    pval_matrix.loc[h1, h2] = f"{pval_val:.4g}"
-                                                else:
-                                                    pval_matrix.loc[h1, h2] = 'nan'
+                                                # Try to use explot_stats module for consistent p-value formatting
+                                                try:
+                                                    from explot_stats import pval_to_annotation
+                                                    # Use the standardized p-value formatting from explot_stats
+                                                    if not np.isnan(pval_val):
+                                                        annotation = pval_to_annotation(pval_val, alpha=0.05)
+                                                        
+                                                        # Format p-value based on magnitude using the same approach as annotations
+                                                        if pval_val < 0.001:
+                                                            pstr = f"p < 0.001 {annotation}"
+                                                        elif pval_val < 0.01:
+                                                            pstr = f"p < 0.01 {annotation}"
+                                                        elif pval_val < 0.05:
+                                                            pstr = f"p < 0.05 {annotation}"
+                                                        else:
+                                                            pstr = f"p = {pval_val:.3f} {annotation}"
+                                                        
+                                                        pval_matrix.loc[h1, h2] = pstr
+                                                except ImportError:
+                                                    # Fall back to original formatting if module not available
+                                                    if not np.isnan(pval_val):
+                                                        # Format p-value based on magnitude
+                                                        if pval_val < 0.001:
+                                                            pstr = f"p < 0.001"
+                                                        elif pval_val < 0.01:
+                                                            pstr = f"p < 0.01"
+                                                        elif pval_val < 0.05:
+                                                            pstr = f"p < 0.05"
+                                                        else:
+                                                            pstr = f"p = {pval_val:.3f}"
+                                                        
+                                                        pval_matrix.loc[h1, h2] = pstr
                                             except Exception as e:
                                                 print(f"[DEBUG] Error extracting p-value for {h1} vs {h2}: {e}")
                                                 pval_matrix.loc[h1, h2] = 'error'
@@ -2692,17 +2695,34 @@ class ExPlotApp:
                                     alternative = self.ttest_alternative_var.get()
                                     
                                     try:
-                                        # Use the selected t-test type
-                                        if ttest_type == "Paired t-test" and len(vals1) == len(vals2):
-                                            ttest = stats.ttest_rel(vals1, vals2, alternative=alternative)
-                                        elif ttest_type == "Student's t-test (unpaired)":
-                                            ttest = stats.ttest_ind(vals1, vals2, alternative=alternative, equal_var=True)
-                                        else:  # Welch's t-test (default)
-                                            ttest = stats.ttest_ind(vals1, vals2, alternative=alternative, equal_var=False)
-                                        p_annotation = self.pval_to_annotation(ttest.pvalue)
-                                        details_text.insert(tk.END, f"{g}: {h1} vs {h2}: t = {ttest.statistic:.4g}, p = {ttest.pvalue:.4g} {p_annotation}\n")
-                                        key = (g, h1, h2) if (g, h1, h2) not in self.latest_pvals else (g, h2, h1)
-                                        self.latest_pvals[key] = ttest.pvalue
+                                        # Use explot_stats module for consistent calculations
+                                        try:
+                                            # Import directly here to avoid circular imports
+                                            from explot_stats import run_ttest
+                                            
+                                            # Create a temporary DataFrame for the t-test
+                                            temp_df = pd.DataFrame({
+                                                'group': [h1] * len(vals1) + [h2] * len(vals2),
+                                                'value': np.concatenate([vals1, vals2])
+                                            })
+                                            
+                                            # Use run_ttest from explot_stats module
+                                            p_val, ttest_cats = run_ttest(
+                                                temp_df, 'value', h1, h2, 'group', 
+                                                test_type=ttest_type, alternative=alternative
+                                            )
+                                        except ImportError:
+                                            # Fall back to direct calculations if module not available
+                                            if ttest_type == "Paired t-test" and len(vals1) == len(vals2):
+                                                ttest_cats = stats.ttest_rel(vals1, vals2, alternative=alternative)
+                                            elif ttest_type == "Student's t-test (unpaired)":
+                                                ttest_cats = stats.ttest_ind(vals1, vals2, alternative=alternative, equal_var=True)
+                                            else:  # Welch's t-test (default)
+                                                ttest_cats = stats.ttest_ind(vals1, vals2, alternative=alternative, equal_var=False)
+                                            p_annotation = self.pval_to_annotation(ttest_cats.pvalue)
+                                            details_text.insert(tk.END, f"{g}: {h1} vs {h2}: t = {ttest_cats.statistic:.4g}, p = {ttest_cats.pvalue:.4g} {p_annotation}\n")
+                                            key = (g, h1, h2) if (g, h1, h2) not in self.latest_pvals else (g, h2, h1)
+                                            self.latest_pvals[key] = ttest_cats.pvalue
                                     except Exception as e:
                                         details_text.insert(tk.END, f"T-test failed for {g}: {h1} vs {h2}: {e}\n")
 
@@ -2756,6 +2776,7 @@ class ExPlotApp:
             'errorbar_black': True,
             'errorbar_capsize': 'Default',
             'bar_outline': False,
+            'upward_errorbar': True,  # Use upward-only error bars by default
             'use_stats': False,  # Default 'Use statistics' setting
             'ttest_type': "Welch's t-test (unpaired, unequal variances)",
             'ttest_alternative': 'two-sided',
@@ -2808,6 +2829,8 @@ class ExPlotApp:
             self.errorbar_capsize_var.set(preferences['errorbar_capsize'])
         if hasattr(self, 'bar_outline_var') and 'bar_outline' in preferences:
             self.bar_outline_var.set(preferences['bar_outline'])
+        if hasattr(self, 'upward_errorbar_var') and 'upward_errorbar' in preferences:
+            self.upward_errorbar_var.set(preferences['upward_errorbar'])
             
         # Statistics tab
         if hasattr(self, 'use_stats_var') and 'use_stats' in preferences:
@@ -2874,6 +2897,8 @@ class ExPlotApp:
         # Bar Graph tab
         if hasattr(self, 'settings_bar_outline_var'):
             preferences['bar_outline'] = self.settings_bar_outline_var.get()
+        if hasattr(self, 'settings_upward_errorbar_var'):
+            preferences['upward_errorbar'] = self.settings_upward_errorbar_var.get()
             
         # Statistics tab
         if hasattr(self, 'settings_use_stats_var'):
@@ -3033,6 +3058,7 @@ class ExPlotApp:
         col_grp.pack(fill='x', padx=6, pady=4)
         tk.Label(col_grp, text="X-axis column:").grid(row=0, column=0, sticky="w", pady=2)
         self.xaxis_var = tk.StringVar()
+        self.xaxis_var.trace_add('write', self.update_x_axis_label)
         self.xaxis_dropdown = ttk.Combobox(col_grp, textvariable=self.xaxis_var, width=18)
         self.xaxis_dropdown.grid(row=0, column=1, sticky="ew", padx=2, pady=2)
         tk.Label(col_grp, text="Group column:").grid(row=1, column=0, sticky="w", pady=2)
@@ -3058,8 +3084,9 @@ class ExPlotApp:
         # Options group
         opt_grp = tk.LabelFrame(frame, text="Options", padx=6, pady=6)
         opt_grp.pack(fill='x', padx=6, pady=4)
-        self.split_yaxis = tk.BooleanVar(value=False)
-        tk.Checkbutton(opt_grp, text="Split Y-axis if multiple", variable=self.split_yaxis).pack(anchor="w", pady=1)
+
+
+        
         # We use the use_stats_var that was initialized in __init__
         # No need to create it again here
         stats_frame = tk.Frame(opt_grp)
@@ -3171,6 +3198,7 @@ class ExPlotApp:
         bar_grp = tk.LabelFrame(frame, text="Bar Graph", padx=6, pady=6)
         bar_grp.pack(fill='x', padx=6, pady=4)
         tk.Checkbutton(bar_grp, text="Draw bar outlines", variable=self.bar_outline_var).pack(anchor="w", pady=1)
+        tk.Checkbutton(bar_grp, text="Upward-only error bars", variable=self.upward_errorbar_var).pack(anchor="w", pady=1)
         
         # --- XY Plot group ---
         xy_grp = tk.LabelFrame(frame, text="XY Plot", padx=6, pady=6)
@@ -3202,8 +3230,7 @@ class ExPlotApp:
         tk.Checkbutton(disp_grp, text="Show horizontal grid", variable=self.show_hgrid_var).pack(anchor="w", pady=1)
         self.show_vgrid_var = tk.BooleanVar(value=False)
         tk.Checkbutton(disp_grp, text="Show vertical grid", variable=self.show_vgrid_var).pack(anchor="w", pady=1)
-        self.swap_axes_var = tk.BooleanVar(value=False)
-        tk.Checkbutton(disp_grp, text="Swap X and Y axes", variable=self.swap_axes_var).pack(anchor="w", pady=1)
+        # Note: Swap axes setting moved to Axis tab
 
     def setup_axis_tab(self):
         frame = self.axis_tab
@@ -3238,9 +3265,15 @@ class ExPlotApp:
         tk.Radiobutton(orient_frame, text="Vertical", variable=self.label_orientation, 
                       value="vertical").pack(side="left", padx=5)
         tk.Radiobutton(orient_frame, text="Horizontal", variable=self.label_orientation, 
-                      value="horizontal").pack(side="left", padx=5)
+                       value="horizontal").pack(side="left", padx=5)
         tk.Radiobutton(orient_frame, text="Angled", variable=self.label_orientation, 
                       value="angled").pack(side="left", padx=5)
+        
+        # --- Axis swap option ---
+        swap_frame = tk.Frame(frame)
+        swap_frame.pack(fill='x', padx=4, pady=(10, 1))
+        self.swap_axes_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(swap_frame, text="Swap X and Y axes", variable=self.swap_axes_var).pack(anchor="w", pady=2)
         
         # --- X-Axis settings (more compact with grid layout) ---
         xaxis_grp = tk.LabelFrame(frame, text="X-Axis Settings", padx=4, pady=2)
@@ -3359,7 +3392,7 @@ class ExPlotApp:
         # Model dropdown
         tk.Label(model_grp, text="Fitting Model:").grid(row=0, column=0, sticky="w", pady=2)
         self.model_dropdown = ttk.Combobox(model_grp, textvariable=self.fitting_model_var, 
-                                           values=list(self.fitting_models.keys()), width=25, state="readonly")
+                                           values=sorted(list(self.fitting_models.keys())), width=25, state="readonly")
         self.model_dropdown.grid(row=0, column=1, sticky="ew", padx=2, pady=2)
         self.model_dropdown.bind('<<ComboboxSelected>>', self.update_model_parameters)
         
@@ -3778,7 +3811,7 @@ class ExPlotApp:
                     
                     # Update the dropdown with all available models
                     if hasattr(self, 'model_dropdown'):
-                        self.model_dropdown['values'] = list(self.fitting_models.keys())
+                        self.model_dropdown['values'] = sorted(list(self.fitting_models.keys()))
                     
                 # Set the fitting enabled state
                 if 'use_fitting' in xy_settings:
@@ -3853,7 +3886,7 @@ class ExPlotApp:
         model_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
         # Add models to listbox
-        for model in self.fitting_models:
+        for model in sorted(self.fitting_models.keys()):
             model_listbox.insert(tk.END, model)
         
         # Buttons frame for model management
@@ -3971,7 +4004,7 @@ class ExPlotApp:
         self.save_fitting_models()
         
         listbox.insert(tk.END, new_name)
-        self.model_dropdown['values'] = list(self.fitting_models.keys())
+        self.model_dropdown['values'] = sorted(list(self.fitting_models.keys()))
         
         # Select the new model
         idx = listbox.get(0, tk.END).index(new_name)
@@ -4051,7 +4084,7 @@ class ExPlotApp:
             
             # Update any open model UI
             if hasattr(self, 'model_dropdown'):
-                self.model_dropdown['values'] = list(self.fitting_models.keys())
+                self.model_dropdown['values'] = sorted(list(self.fitting_models.keys()))
                 if self.fitting_model_var.get() not in self.fitting_models:
                     self.fitting_model_var.set(list(self.fitting_models.keys())[0])
                 self.update_model_parameters()
@@ -4119,7 +4152,7 @@ class ExPlotApp:
         elif not old_name:  # New model
             listbox.insert(tk.END, model_name)
             
-        self.model_dropdown['values'] = list(self.fitting_models.keys())
+        self.model_dropdown['values'] = sorted(list(self.fitting_models.keys()))
         
         # If currently selected model was renamed, update the variable
         if old_name and old_name == self.fitting_model_var.get():
@@ -4298,11 +4331,33 @@ class ExPlotApp:
         # Recreate value column checkboxes
         for col in columns:
             var = tk.BooleanVar()
+            var.trace_add('write', lambda *args, c=col: self.update_y_axis_label(c))
             cb = tk.Checkbutton(self.value_vars_inner_frame, text=col, variable=var)
             cb.pack(anchor='w')
             self.value_vars.append((var, col))
             self.value_checkbuttons.append(cb)
 
+    def update_x_axis_label(self, *args):
+        """Update the X-axis label entry with the selected column name."""
+        if hasattr(self, 'xlabel_entry') and self.xaxis_var.get():
+            # Only update if the field is empty or matches a previous column name
+            current_label = self.xlabel_entry.get()
+            if not current_label or current_label in self.df.columns:
+                self.xlabel_entry.delete(0, tk.END)
+                self.xlabel_entry.insert(0, self.xaxis_var.get())
+    
+    def update_y_axis_label(self, column):
+        """Update the Y-axis label entry with the selected Y column name."""
+        if hasattr(self, 'ylabel_entry'):
+            # Get the first selected Y column
+            selected_y_cols = [col for var, col in self.value_vars if var.get()]
+            if selected_y_cols:
+                # Only update if the field is empty or matches a previous column name
+                current_label = self.ylabel_entry.get()
+                if not current_label or current_label in self.df.columns:
+                    self.ylabel_entry.delete(0, tk.END)
+                    self.ylabel_entry.insert(0, selected_y_cols[0])
+    
     def rename_xaxis_labels(self):
         if self.df is None or not self.xaxis_var.get():
             messagebox.showerror("Error", "Load a file and select an X-axis first.")
@@ -4428,10 +4483,27 @@ class ExPlotApp:
         plot_width = self.plot_width_var.get()
         plot_height = self.plot_height_var.get()
         fontsize = int(self.fontsize_entry.get())
-        n_rows = len(value_cols) if (self.split_yaxis.get() and plot_mode == 'single') else 1
+        n_rows = 1  # No longer supporting split Y-axis
 
         # Get plot type early for margin calculations
         plot_kind = self.plot_kind_var.get()  # "bar", "box", or "xy"
+        
+        # Handle categorical vs numeric X values
+        # Always treat X as categories for bar and box plots, numerical for xy plots
+        if plot_kind in ["bar", "box"]:
+            # For bar and box plots with categorical X, create a mapping of values to categories
+            # Get unique values and filter out NaN/None values
+            unique_vals = self.df[x_col].unique()
+            # Filter out NaN values (pd.isna handles both np.nan and None)
+            unique_vals = [val for val in unique_vals if not pd.isna(val)]
+            # Sort using string conversion for consistent handling of mixed types
+            x_values = sorted(unique_vals, key=lambda x: str(x))
+            self.x_categorical_map = {val: i for i, val in enumerate(x_values)}
+            # Reverse mapping from indices to original labels (for tick labels)
+            self.x_categorical_reverse_map = {i: val for val, i in self.x_categorical_map.items()}
+            # Create a temporary column for plotting
+            self.df['_x_plot'] = self.df[x_col].map(self.x_categorical_map)
+            x_col = '_x_plot'
         
         # Scale margins based on plot size - smaller plots need relatively larger margins
         plot_height_val = self.plot_height_var.get()  # User-specified plot height
@@ -4531,7 +4603,8 @@ class ExPlotApp:
 
             if plot_mode == 'overlay' and len(value_cols) > 1:
                 df_plot = pd.melt(df_plot, id_vars=[x_col] + ([group_col] if group_col else []),
-                                  value_vars=value_cols, var_name='Measurement', value_name=value_col)
+                                   value_vars=value_cols, var_name='Measurement', value_name='_plotted_value')
+                value_col = '_plotted_value'  # Use this new column for plotting
                 hue_col = 'Measurement'
             else:
                 # Value column is already set to the selected column
@@ -5339,15 +5412,159 @@ class ExPlotApp:
                 linewidth = self.linewidth.get()
                 
                 # Modern way to handle errorbar styling in Seaborn
-                plot_args['err_kws'] = {'linewidth': linewidth}
-                plot_args['capsize'] = capsize  # This goes directly to barplot, not in err_kws
+                # Handle error bars in a way that's compatible with newer seaborn versions
+                # Prepare error bar styling
+                err_kws = {}
                 
-                # Remove deprecated parameter if it exists
-                if 'errwidth' in plot_args:
-                    plot_args.pop('errwidth')
+                # Remove any pre-existing color in err_kws
+                if 'err_kws' in plot_args:
+                    plot_args['err_kws'].pop('color', None)
+
+                # Get the linewidth setting
+                linewidth = self.linewidth.get()
+
+                # Determine error bar type for Seaborn
+                try:
+                    if hasattr(self, 'errorbar_type_var'):
+                        errorbar_type = self.errorbar_type_var.get().lower()
+                        print(f"Using errorbar_type_var: {errorbar_type}")
+                    elif hasattr(self, 'settings_errorbar_type_var'):
+                        errorbar_type = self.settings_errorbar_type_var.get().lower()
+                        print(f"Using settings_errorbar_type_var: {errorbar_type}")
+                    else:
+                        errorbar_type = 'sd'
+                        print("No errorbar type variable found, using default 'sd'")
+                except Exception as e:
+                    print(f"Error getting errorbar type: {e}")
+                    errorbar_type = 'sd'
+
+                # Map to Seaborn errorbar parameter
+                if errorbar_type == 'sem':
+                    # Standard error of the mean
+                    plot_args['errorbar'] = 'se'
+                    print(f"Using Standard Error of Mean (SEM) for error bars")
+                else:
+                    # Standard deviation
+                    plot_args['errorbar'] = 'sd'
+                    print(f"Using Standard Deviation (SD) for error bars")
                 
-                sns.barplot(**plot_args)
-                # (All manual ax.errorbar code for bars removed)
+                # Ensure errorbar parameter is correctly set
+                print(f"Plot args for errorbar: {plot_args.get('errorbar')}")
+                
+                # Make sure it's not being overridden elsewhere
+                if 'err_style' in plot_args:
+                    print(f"Warning: err_style is already set to {plot_args['err_style']}")
+                if 'ci' in plot_args:
+                    print(f"Warning: ci is already set to {plot_args['ci']}")
+
+                # Get error bar styling preferences
+                try:
+                    # Check appropriate variable for black errorbars
+                    if hasattr(self, 'errorbar_black_var'):
+                        black_errorbars = bool(self.errorbar_black_var.get())
+                    elif hasattr(self, 'settings_errorbar_black_var'):
+                        black_errorbars = bool(self.settings_errorbar_black_var.get())
+                    else:
+                        black_errorbars = bool(self.black_errorbars_var.get())
+                except Exception:
+                    black_errorbars = False
+
+                # Apply error bar color based on settings
+                if black_errorbars:
+                    # Use black when the option is checked
+                    err_kws['color'] = 'black'
+                else:
+                    # Use plot's original color
+                    if 'palette' in plot_args and plot_args['palette']:
+                        # Use first color from palette
+                        err_kws['color'] = plot_args['palette'][0]
+                    elif 'color' in plot_args:
+                        # Explicit color specified in plot args
+                        err_kws['color'] = plot_args['color']
+                    else:
+                        # Use single color from custom colors
+                        color = self.custom_colors.get(self.single_color_var.get(), 'black')
+                        err_kws['color'] = color
+
+                # Always set linewidth
+                err_kws['linewidth'] = linewidth
+
+                # Remove any existing color specification
+                if 'err_kws' in plot_args:
+                    plot_args['err_kws'].pop('color', None)
+                
+                # Handle capsize based on errorbar_capsize_var
+                capsize_val = 0  # Default to no caps
+                if hasattr(self, 'errorbar_capsize_var'):
+                    capsize_setting = self.errorbar_capsize_var.get()
+                    
+                    # Determine bar width (default to 0.8 if not specified)
+                    bar_width = plot_args.get('width', 0.8)
+                    
+                    # Calculate capsize proportional to bar width
+                    if capsize_setting == 'Default':
+                        capsize_val = bar_width * 0.5  # Moderate caps
+                    elif capsize_setting == 'Narrow':
+                        capsize_val = bar_width * 0.2  # Narrow caps
+                    elif capsize_setting == 'Wide':
+                        capsize_val = bar_width * 0.7  # Wide caps
+                    elif capsize_setting == 'Wider':
+                        capsize_val = bar_width  # Very wide caps
+                    elif capsize_setting == 'None':
+                        capsize_val = 0  # No caps
+                
+                # Add capsize to plot_args
+                plot_args['capsize'] = capsize_val
+                
+                # Add error bar styling if we have color settings
+                if err_kws:
+                    plot_args['err_kws'] = err_kws
+                
+                # Add yerr to plot_args if provided
+                if 'yerr' in plot_args:
+                    # Ensure only upward error bars
+                    yerr_data = plot_args['yerr']
+                    plot_args['yerr'] = [[0] * len(yerr_data), yerr_data]
+                
+                # Remove parameters that cause issues in newer seaborn versions
+                # Keep 'errorbar' since we need it for SD/SEM, but remove others
+                for param in ['errwidth', 'elinewidth', 'capthick']:
+                    if param in plot_args:
+                        plot_args.pop(param)
+                
+                # Get desired z-order for error bars based on upward-only setting
+                # z-order concept: error bars (behind=5, front=15) | bars (10) | stripplot (15) | axes (20)
+                
+                # Check if upward-only error bars are enabled
+                upward_only = self.upward_errorbar_var.get() if hasattr(self, 'upward_errorbar_var') else False
+                
+                # Modify err_kws to include appropriate z-order
+                if 'err_kws' not in plot_args:
+                    plot_args['err_kws'] = {}
+                    
+                if upward_only:
+                    # For upward-only: error bars should be BEHIND the bars
+                    plot_args['err_kws']['zorder'] = 5  # Lower z-order than bars
+                else:
+                    # For bidirectional: error bars should be IN FRONT of bars
+                    plot_args['err_kws']['zorder'] = 15  # Higher z-order than bars
+                
+                # Set z-order for bars (always the same)
+                plot_args['zorder'] = 10
+                
+                # Create barplot with properly positioned error bars
+                ax = sns.barplot(**plot_args)
+                    
+                # Fix axis element visibility by bringing them to the front
+                for spine in ax.spines.values():
+                    spine.set_zorder(20)  # Highest z-order for axis elements
+                ax.xaxis.set_zorder(20)
+                ax.yaxis.set_zorder(20)
+                
+                # Fix outline color issues - if no outline is desired, set edgecolor to match facecolor
+                if hasattr(self, 'bar_outline_var') and not self.bar_outline_var.get():
+                    for bar in ax.patches:
+                        bar.set_edgecolor(bar.get_facecolor())
             elif plot_kind == "box":
                 # For ungrouped data, we need to adjust the boxplot parameters
                 # to ensure proper centering over X-values
@@ -5369,6 +5586,12 @@ class ExPlotApp:
                     
                 ax.tick_params(axis='x', which='both', direction='in', length=4, width=linewidth, top=False, bottom=True, labeltop=False, labelbottom=True)
             elif plot_kind == "xy":
+                # For XY plots, always use original X values (not categorical)
+                if hasattr(self, 'x_categorical_map'):
+                    delattr(self, 'x_categorical_map')
+                    if '_x_plot' in self.df.columns:
+                        self.df = self.df.drop('_x_plot', axis=1)
+                
                 marker_size = self.xy_marker_size_var.get()
                 marker_symbol = self.xy_marker_symbol_var.get()
                 connect = self.xy_connect_var.get()
@@ -5568,8 +5791,13 @@ class ExPlotApp:
                     else:
                         # For no hue column, use the first color from palette
                         stripplot_args["palette"] = palette
-                # Suppress legend for stripplot
-                stripplot_args["legend"] = False
+                # Suppress legend for stripplot (modern way without using unsupported parameters)
+                # We'll handle the legend separately if needed
+                
+                # Create stripplot with compatible parameters
+                # Set z-order higher than bars (10) to ensure stripplot points are visible
+                stripplot_args['zorder'] = 15
+                sns.stripplot(**stripplot_args)
 
                 if plot_kind == 'bar' and not hue_col:
                     # Reduce jitter for more precise positioning
@@ -5595,6 +5823,8 @@ class ExPlotApp:
                             palette_full = (palette_full * ((len(hue_groups) // len(palette_full)) + 1))
                         stripplot_args["palette"] = palette_full[:len(hue_groups)]
                 
+                # Make sure z-order is set correctly for this stripplot too
+                stripplot_args['zorder'] = 15
                 sns.stripplot(**stripplot_args)
 
             # --- Always rebuild legend after all plotting ---
@@ -5637,6 +5867,18 @@ class ExPlotApp:
                     frameon=False, fontsize=fontsize,
                     ncol=self.optimize_legend_layout(ax, list(by_label.values()), list(by_label.keys()), fontsize=fontsize)
                 )
+
+            # Set X-axis tick labels for bar and box plots using categorical mapping
+            if plot_kind in ["bar", "box"] and hasattr(self, 'x_categorical_reverse_map'):
+                # Get the current tick positions
+                tick_positions = ax.get_xticks()
+                # Filter only tick positions that are integer values and within our mapping
+                valid_ticks = [pos for pos in tick_positions if pos.is_integer() and int(pos) in self.x_categorical_reverse_map]
+                # Create labels for those positions
+                labels = [self.x_categorical_reverse_map[int(pos)] for pos in valid_ticks]
+                # Set the tick positions and labels
+                ax.set_xticks(valid_ticks)
+                ax.set_xticklabels(labels, rotation=45 if len(labels) > 3 else 0, ha='right' if len(labels) > 3 else 'center')
 
             # --- Grids ---
             if show_hgrid:
@@ -6048,10 +6290,18 @@ class ExPlotApp:
                                     continue
                                     
                                 # Find the y values (heights) for both groups at this x_val
+                                # Find the y values (heights) for both groups at this x_val
                                 y1 = df_plot[(df_plot[x_col]==x_val) & (df_plot[hue_col]==g1)][value_col].mean()
                                 y2 = df_plot[(df_plot[x_col]==x_val) & (df_plot[hue_col]==g2)][value_col].mean()
                                 y_max_group = max(y1, y2)
-                                annotation_height = y_max_group + (y_max * 0.08)
+                                
+                                # Get error bar values if they exist
+                                err1 = error_metrics[x_val]['std'] if self.errorbar_type_var.get() == "SD" else 0
+                                
+                                # Position annotation closer to the bars while still above error bars
+                                # Use a percentage of the error bar value for more proportional spacing
+                                err_factor = 1.1 if err1 > 0 else 0
+                                annotation_height = y_max_group + (err1 * err_factor) + (y_max * 0.08)
                                 annotation_text = self.pval_to_annotation(pval)
                                 print(f"[DEBUG] Adding annotation: {x_val}, {g1} vs {g2} -> {annotation_text} (p={pval})")
                                 annotation_count += 1
@@ -6126,10 +6376,13 @@ class ExPlotApp:
                                     y2 = df_plot[(df_plot[x_col]==x_val) & (df_plot[hue_col]==g2)][value_col].mean()
                                     y_values = [y1, y2]
                                     y_max_group = max(y_values)
-                                        
+                                    
+                                    # Get error bar values if they exist
+                                    err1 = error_metrics[x_val]['std'] if self.errorbar_type_var.get() == "SD" else 0
+                                    
                                     # Determine spacing for annotation based on heights and number of annotations
-                                    base_offset = 0.15  # Start closer to the bars
-                                    spacing = 0.15     # Space between each comparison
+                                    base_offset = 0.10  # Start closer to the bars
+                                    spacing = 0.12     # Space between each comparison
                                     
                                     # Check how many comparisons we expect to have
                                     total_possible_comparisons = len(group_names) * (len(group_names) - 1) // 2
@@ -6156,8 +6409,10 @@ class ExPlotApp:
                                                 current_ylim = ax.get_ylim()
                                                 ax.set_ylim(current_ylim[0], current_ylim[1] * (1 + extra_height/current_height/2))
                                     
-                                    # Calculate annotation height
-                                    annotation_height = y_max_group + (y_max * (base_offset + spacing * annotation_vertical_offset))
+                                    # Calculate annotation height, accounting for error bars
+                                    # Use a percentage of the error bar value for more proportional spacing
+                                    err_factor = 1.1 if err1 > 0 else 0
+                                    annotation_height = y_max_group + (err1 * err_factor) + (y_max * (base_offset + spacing * annotation_vertical_offset))
                                     p_text = self.pval_to_annotation(pval)
                                     print(f"[DEBUG] Adding annotation: {x_val}, {g1} vs {g2} -> {p_text} (p={pval})")
                                     annotation_count += 1
