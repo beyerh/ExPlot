@@ -1,6 +1,6 @@
 # ExPlot - Data visualization tool for Excel files
 
-VERSION = "0.5.9"
+VERSION = "0.6.0"
 # =====================================================================
 
 import tkinter as tk
@@ -4298,6 +4298,11 @@ class ExPlotApp:
 
     def load_sheet(self, event=None):
         try:
+            # Store previous X and Y axis labels to check if they were from previous sheet columns
+            old_xlabel = self.xlabel_entry.get() if hasattr(self, 'xlabel_entry') else ''
+            old_ylabel = self.ylabel_entry.get() if hasattr(self, 'ylabel_entry') else ''
+            old_columns = list(self.df.columns) if self.df is not None else []
+            
             if self.sheet_var.get() == 'Embedded Data':
                 # Skip loading from Excel file for embedded data
                 # The dataframe is already loaded
@@ -4306,13 +4311,17 @@ class ExPlotApp:
                 # Load from Excel file for normal sheets
                 self.df = pd.read_excel(self.excel_file, sheet_name=self.sheet_var.get(), dtype=object)
             
-            self.update_columns()
+            # Flag to indicate if labels should be reset due to sheet change
+            reset_labels = (old_xlabel in old_columns or not old_xlabel) and \
+                           (old_ylabel in old_columns or not old_ylabel)
+            
+            self.update_columns(reset_labels=reset_labels)
             if not hasattr(self, 'xaxis_order'):
                 self.xaxis_order = []
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load sheet: {e}")
 
-    def update_columns(self):
+    def update_columns(self, reset_labels=False):
         columns = list(self.df.columns)
         
         # Update dropdown values
@@ -4322,6 +4331,13 @@ class ExPlotApp:
         # Reset selections when switching sheets
         self.xaxis_var.set('')  # Clear X-axis selection
         self.group_var.set('None')  # Reset group selection to None
+        
+        # Reset axis labels if coming from a different sheet
+        if reset_labels:
+            if hasattr(self, 'xlabel_entry'):
+                self.xlabel_entry.delete(0, tk.END)
+            if hasattr(self, 'ylabel_entry'):
+                self.ylabel_entry.delete(0, tk.END)
         
         # Clear Y-axis checkboxes
         for cb in self.value_checkbuttons:
@@ -5797,6 +5813,10 @@ class ExPlotApp:
                 # Create stripplot with compatible parameters
                 # Set z-order higher than bars (10) to ensure stripplot points are visible
                 stripplot_args['zorder'] = 15
+                
+                # Suppress legend entries for stripplot (don't show duplicate labels)
+                stripplot_args['legend'] = False
+                
                 sns.stripplot(**stripplot_args)
 
                 if plot_kind == 'bar' and not hue_col:
@@ -5825,6 +5845,10 @@ class ExPlotApp:
                 
                 # Make sure z-order is set correctly for this stripplot too
                 stripplot_args['zorder'] = 15
+                
+                # Suppress legend entries for this stripplot too
+                stripplot_args['legend'] = False
+                
                 sns.stripplot(**stripplot_args)
 
             # --- Always rebuild legend after all plotting ---
