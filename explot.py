@@ -1,8 +1,9 @@
 # ExPlot - Data visualization tool for Excel files
 
-VERSION = "0.6.0"
+VERSION = "0.6.1"
 # =====================================================================
 
+import numpy as np
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk, colorchooser
 import pandas as pd
@@ -1015,8 +1016,8 @@ class ExPlotApp:
             messagebox.showerror("Error", f"Failed to load project: {str(e)}")
             
     def process_excel_file(self, file_path):
-        """Process an Excel file by loading it and setting up UI elements."""
         try:
+            # Store file paths
             self.excel_file = file_path
             self.current_excel_file = file_path  # Store path for project saving/loading
             
@@ -1025,17 +1026,32 @@ class ExPlotApp:
                 self.df = pd.read_csv(file_path, dtype=object)
                 # Create a single sheet for CSV
                 self.sheet_options = ['Sheet1']
-                if hasattr(self, 'selected_sheet'):
-                    self.selected_sheet.set('Sheet1')
-                elif hasattr(self, 'sheet_var'):
-                    self.sheet_var.set('Sheet1')
+                self.sheet_var.set('Sheet1')
                 
-                # Update column selection dropdowns
-                self.update_columns()
+                # Initialize both raw and modified dataframes
+                self.raw_df = self.df.copy()
+                self.modified_df = self.df.copy()
+                
+                # Initialize modification tracking variables
+                self.xaxis_renames = {}
+                self.excluded_x_values = set()
+                self.xaxis_order = []
+                self.current_sheet_type = 'external'
+                
+                # Update columns
+                self.update_columns(reset_labels=True)
             else:
                 # Handle Excel files
-                xls = pd.ExcelFile(self.excel_file)
-                self.sheet_options = xls.sheet_names
+                xls = pd.ExcelFile(file_path)
+                all_sheets = xls.sheet_names
+                
+                # Filter out sheets that start with underscore
+                visible_sheets = [sheet for sheet in all_sheets if not str(sheet).startswith('_')]
+                self.sheet_options = visible_sheets
+                
+                # Add special options for raw and modified data
+                if hasattr(self, 'raw_df') and self.raw_df is not None:
+                    self.sheet_options = ['Raw Embedded Data', 'Modified Embedded Data'] + self.sheet_options
                 
                 # Update the sheet dropdown
                 if hasattr(self, 'sheet_dropdown'):
@@ -1047,11 +1063,8 @@ class ExPlotApp:
                 else:
                     sheet_name = self.sheet_options[0]
                 
-                # Handle the different sheet variable names used in the code
-                if hasattr(self, 'selected_sheet'):
-                    self.selected_sheet.set(sheet_name)
-                if hasattr(self, 'sheet_var'):
-                    self.sheet_var.set(sheet_name)
+                # Set the sheet variable
+                self.sheet_var.set(sheet_name)
                 
                 # Load the selected sheet
                 self.load_sheet()
@@ -1086,12 +1099,24 @@ class ExPlotApp:
         example_data_path = os.path.join(script_dir, "example_data.xlsx")
         
         try:
+            print(f"Attempting to load example data from: {example_data_path}")
             if os.path.exists(example_data_path):
-                self.process_excel_file(example_data_path)
+                print("Example data file exists, processing...")
+                try:
+                    self.process_excel_file(example_data_path)
+                    print("Example data loaded successfully")
+                except Exception as e:
+                    error_msg = f"Error processing example data file: {str(e)}"
+                    print(error_msg)
+                    messagebox.showerror("Error", error_msg)
             else:
-                messagebox.showerror("Error", f"Example data file not found at {example_data_path}")
+                error_msg = f"Example data file not found at {example_data_path}"
+                print(error_msg)
+                messagebox.showerror("Error", error_msg)
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to load example data: {str(e)}")
+            error_msg = f"Failed to load example data: {str(e)}"
+            print(error_msg)
+            messagebox.showerror("Error", error_msg)
             
     def export_to_excel(self):
         """Export the current data to an Excel file, preserving any modifications.
@@ -1784,6 +1809,7 @@ class ExPlotApp:
             if not x_col or not value_cols:
                 details_text.insert(tk.END, "No plot or insufficient columns selected.\n")
                 return
+            # Use self.df which has the _renamed_x column if it exists
             df_plot = self.df.copy()
             if self.xaxis_renames:
                 df_plot[x_col] = df_plot[x_col].map(self.xaxis_renames).fillna(df_plot[x_col])
@@ -1822,7 +1848,6 @@ class ExPlotApp:
                         # Ungrouped Data: show statistical tests based on x-axis categories
                         # Import pandas for DataFrame operations
                         import pandas as pd
-                        import numpy as np
                         
                         # Get x categories (these are the values we're comparing)
                         x_categories = df_plot[x_col].dropna().unique() if x_col in df_plot else []
@@ -2402,6 +2427,36 @@ class ExPlotApp:
                             ttest_type = self.ttest_type_var.get()
                             alternative = self.ttest_alternative_var.get()
                             details_text.insert(tk.END, f"Test Used: {ttest_type} ({alternative}) for multiple groups\n")
+                            
+                            # Prepare for storing p-values for two groups
+                            for i, g in enumerate(base_groups):
+                                df_sub = df_plot[df_plot[x_col] == g]
+                                h1, h2 = hue_groups
+                                
+                                # Get data for each group
+                                vals1 = df_sub[df_sub[group_col] == h1][val_col].dropna().astype(float)
+                                vals2 = df_sub[df_sub[group_col] == h2][val_col].dropna().astype(float)
+                                
+                                if len(vals1) >= 2 and len(vals2) >= 2:
+                                    # Perform t-test based on selected type
+                                    if ttest_type == "Welch's t-test":
+                                        t_stat, p_val = stats.ttest_ind(vals1, vals2, equal_var=False, alternative=alternative)
+                                    elif ttest_type == "Student's t-test":
+                                        t_stat, p_val = stats.ttest_ind(vals1, vals2, equal_var=True, alternative=alternative)
+                                    elif ttest_type == "Paired t-test":
+                                        # Ensure equal length for paired test
+                                        min_len = min(len(vals1), len(vals2))
+                                        t_stat, p_val = stats.ttest_rel(vals1[:min_len], vals2[:min_len], alternative=alternative)
+                                    else:
+                                        t_stat, p_val = stats.ttest_ind(vals1, vals2, equal_var=False, alternative=alternative)
+                                    
+                                    # Store p-value for this category and group pair
+                                    key = (g, h1, h2)
+                                    self.latest_pvals[key] = p_val
+                                    
+                                    # Display p-value details
+                                    p_annotation = self.pval_to_annotation(p_val)
+                                    details_text.insert(tk.END, f"{g}: {h1} vs {h2}: p = {p_val:.4g} {p_annotation}\n")
                         else:
                             details_text.insert(tk.END, "Multiple groups present, but no suitable test could be performed.\n")
                             continue
@@ -3106,8 +3161,7 @@ class ExPlotApp:
         tk.Checkbutton(opt_grp, text="Black errorbars", variable=self.errorbar_black_var).pack(anchor="w", pady=1)
         btn_fr = tk.Frame(opt_grp)
         btn_fr.pack(fill='x', pady=(2,0))
-        tk.Button(btn_fr, text="Rename X labels", command=self.rename_xaxis_labels, width=14).pack(side="left", padx=1)
-        tk.Button(btn_fr, text="Reorder X categories", command=self.reorder_xaxis_categories, width=16).pack(side="left", padx=1)
+        tk.Button(btn_fr, text="Modify X categories", command=self.modify_x_categories, width=20).pack(side="left", padx=1)
         # --- Plot type group (with horizontal layout for XY options, no tabs) ---
         type_grp = tk.LabelFrame(frame, text="Plot Type", padx=6, pady=6)
         type_grp.pack(fill='x', padx=6, pady=4)
@@ -3560,11 +3614,16 @@ class ExPlotApp:
                 'y_axis': [col for var, col in self.value_vars if var.get()] if hasattr(self, 'value_vars') else []
             },
             
-            # Embed the current data and any customizations
+            # Embed both raw and modified data and any customizations
             'embedded_data': {
-                'dataframe': self.df.to_dict() if hasattr(self, 'df') and self.df is not None else None,
+                # Store the raw data
+                'raw_dataframe': self.raw_df.to_dict() if hasattr(self, 'raw_df') and self.raw_df is not None else 
+                               (self.df.to_dict() if hasattr(self, 'df') and self.df is not None else None),
+                # Store the modified data
+                'modified_dataframe': self.df.to_dict() if hasattr(self, 'df') and self.df is not None else None,
                 'xaxis_renames': self.xaxis_renames if hasattr(self, 'xaxis_renames') else {},
-                'xaxis_order': self.xaxis_order if hasattr(self, 'xaxis_order') else None
+                'xaxis_order': self.xaxis_order if hasattr(self, 'xaxis_order') else None,
+                'excluded_x_values': list(self.excluded_x_values) if hasattr(self, 'excluded_x_values') else []
             },
             'appearance': {
                 'plot_width': self.plot_width_var.get(),
@@ -3637,20 +3696,43 @@ class ExPlotApp:
             current_version = self.version
             
             # Handle embedded data if present
-            if 'embedded_data' in settings and settings['embedded_data'].get('dataframe'):
-                # Load dataframe from embedded data
-                self.df = pd.DataFrame.from_dict(settings['embedded_data']['dataframe'])
+            if 'embedded_data' in settings:
+                # Initialize raw and modified dataframes
+                raw_df = None
+                modified_df = None
                 
-                # Load customizations
-                self.xaxis_renames = settings['embedded_data'].get('xaxis_renames', {})
-                self.xaxis_order = settings['embedded_data'].get('xaxis_order', [])
+                # Load raw dataframe if available
+                if settings['embedded_data'].get('raw_dataframe'):
+                    raw_df = pd.DataFrame.from_dict(settings['embedded_data']['raw_dataframe'])
                 
-                # Update sheet dropdown to show 'Embedded Data'
-                self.sheet_options = ['Embedded Data']
-                if hasattr(self, 'sheet_dropdown'):
-                    self.sheet_dropdown['values'] = self.sheet_options
-                if hasattr(self, 'sheet_var'):
-                    self.sheet_var.set('Embedded Data')
+                # Load modified dataframe if available
+                if settings['embedded_data'].get('modified_dataframe'):
+                    modified_df = pd.DataFrame.from_dict(settings['embedded_data']['modified_dataframe'])
+                # If only one is available, use it for both
+                elif settings['embedded_data'].get('dataframe'):  # For backward compatibility
+                    modified_df = pd.DataFrame.from_dict(settings['embedded_data']['dataframe'])
+                    raw_df = modified_df.copy()
+                
+                # If we have valid dataframes
+                if raw_df is not None or modified_df is not None:
+                    # Set up the dataframes
+                    self.raw_df = raw_df if raw_df is not None else modified_df.copy()
+                    self.df = modified_df if modified_df is not None else raw_df.copy()
+                    
+                    # Load customizations
+                    self.xaxis_renames = settings['embedded_data'].get('xaxis_renames', {})
+                    self.xaxis_order = settings['embedded_data'].get('xaxis_order', [])
+                    self.excluded_x_values = set(settings['embedded_data'].get('excluded_x_values', []))
+                    
+                    # Update sheet dropdown to show both embedded data options
+                    self.sheet_options = ['Raw Embedded Data', 'Modified Embedded Data']
+                    if hasattr(self, 'sheet_dropdown'):
+                        self.sheet_dropdown['values'] = self.sheet_options
+                    if hasattr(self, 'sheet_var'):
+                        self.sheet_var.set('Modified Embedded Data')
+                        
+                    # We initially work with the modified data
+                    self.df = self.modified_df if hasattr(self, 'modified_df') else self.df
                 
                 # Update dropdowns with available columns
                 self.update_columns()
@@ -4287,12 +4369,18 @@ class ExPlotApp:
         if file_path:
             self.excel_file = file_path
             xls = pd.ExcelFile(self.excel_file)
-            self.sheet_dropdown['values'] = xls.sheet_names
+            # Filter out sheets starting with underscore as they're meant for internal use
+            visible_sheets = [sheet for sheet in xls.sheet_names if not str(sheet).startswith('_')]
+            self.sheet_dropdown['values'] = visible_sheets
 
-            if "export" in xls.sheet_names:
+            # Select 'export' sheet if it's in the visible sheets, otherwise select first visible sheet
+            if visible_sheets and "export" in visible_sheets:
                 self.sheet_var.set("export")
+            elif visible_sheets:
+                self.sheet_var.set(visible_sheets[0])
             else:
-                self.sheet_var.set(xls.sheet_names[0])
+                # If there are no visible sheets (unlikely, but possible), show a message
+                messagebox.showinfo("No Visible Sheets", "This Excel file only contains hidden sheets (starting with '_').")
 
             self.load_sheet()
 
@@ -4303,13 +4391,50 @@ class ExPlotApp:
             old_ylabel = self.ylabel_entry.get() if hasattr(self, 'ylabel_entry') else ''
             old_columns = list(self.df.columns) if self.df is not None else []
             
-            if self.sheet_var.get() == 'Embedded Data':
-                # Skip loading from Excel file for embedded data
-                # The dataframe is already loaded
-                pass
-            else:
+            selected_sheet = self.sheet_var.get()
+            
+            if selected_sheet == 'Raw Embedded Data':
+                # Load the raw data
+                if hasattr(self, 'raw_df') and self.raw_df is not None:
+                    self.df = self.raw_df.copy()
+                    
+                    # Store the current modifications (to restore later)
+                    self._stored_renames = self.xaxis_renames.copy() if hasattr(self, 'xaxis_renames') else {}
+                    self._stored_excluded = self.excluded_x_values.copy() if hasattr(self, 'excluded_x_values') else set()
+                    self._stored_order = self.xaxis_order.copy() if hasattr(self, 'xaxis_order') else []
+                    
+                    # When switching to raw data, temporarily clear all modifications
+                    # so the plot and dialogs show the original data
+                    self.xaxis_renames = {}
+                    self.excluded_x_values = set()
+                    self.xaxis_order = []
+                    self.current_sheet_type = 'raw'
+            elif selected_sheet == 'Modified Embedded Data':
+                # Load the modified data
+                if hasattr(self, 'modified_df') and self.modified_df is not None:
+                    self.df = self.modified_df.copy()
+                elif hasattr(self, 'df') and self.df is not None and hasattr(self, 'raw_df'):
+                    # If we don't have a modified dataframe yet, create one from the current df
+                    self.modified_df = self.df.copy()
+                    # We're already using the current df, so no need to reassign
+                
+                # If we're switching back from raw data, restore the saved modifications
+                if hasattr(self, '_stored_renames') and self.current_sheet_type == 'raw':
+                    self.xaxis_renames = self._stored_renames.copy()
+                    self.excluded_x_values = self._stored_excluded.copy()
+                    self.xaxis_order = self._stored_order.copy()
+                
+                self.current_sheet_type = 'modified'
+            elif selected_sheet not in ['Raw Embedded Data', 'Modified Embedded Data']:
                 # Load from Excel file for normal sheets
-                self.df = pd.read_excel(self.excel_file, sheet_name=self.sheet_var.get(), dtype=object)
+                self.df = pd.read_excel(self.excel_file, sheet_name=selected_sheet, dtype=object)
+                # When loading a new sheet, create a raw copy and initialize modifications
+                self.raw_df = self.df.copy()
+                self.modified_df = self.df.copy()
+                self.xaxis_renames = {}
+                self.excluded_x_values = set()
+                self.xaxis_order = []
+                self.current_sheet_type = 'external'
             
             # Flag to indicate if labels should be reset due to sheet change
             reset_labels = (old_xlabel in old_columns or not old_xlabel) and \
@@ -4318,6 +4443,11 @@ class ExPlotApp:
             self.update_columns(reset_labels=reset_labels)
             if not hasattr(self, 'xaxis_order'):
                 self.xaxis_order = []
+            
+            # Initialize excluded values if not already done
+            if not hasattr(self, 'excluded_x_values'):
+                self.excluded_x_values = set()
+                
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load sheet: {e}")
 
@@ -4374,81 +4504,813 @@ class ExPlotApp:
                     self.ylabel_entry.delete(0, tk.END)
                     self.ylabel_entry.insert(0, selected_y_cols[0])
     
-    def rename_xaxis_labels(self):
+    def modify_x_categories(self):
+        """Opens a dialog to modify X-axis categories (rename and reorder)."""
         if self.df is None or not self.xaxis_var.get():
             messagebox.showerror("Error", "Load a file and select an X-axis first.")
             return
-
-        # Use current order if set, otherwise unique values from DataFrame
-        if self.xaxis_order:
-            current_values = self.xaxis_order
-        else:
-            current_values = list(pd.unique(self.df[self.xaxis_var.get()].dropna()))
-
-        rename_window = tk.Toplevel(self.root)
-        rename_window.title("Rename X-axis Labels")
-
-        entries = {}
-        for val in current_values:
-            frame = tk.Frame(rename_window)
-            frame.pack()
-            tk.Label(frame, text=str(val)).pack(side='left')
-            entry = tk.Entry(frame)
-            # Pre-fill with previous rename if exists, else the value itself
-            entry.insert(0, self.xaxis_renames.get(val, str(val)))
-            entry.pack(side='left')
-            entries[val] = entry
-
-        def save_renames():
-            self.xaxis_renames = {k: e.get() for k, e in entries.items()}
-            # Update the order to the new renamed values
-            self.xaxis_order = [self.xaxis_renames.get(k, k) for k in current_values]
-            rename_window.destroy()
-
-        tk.Button(rename_window, text="Save", command=save_renames).pack()
-
-    def reorder_xaxis_categories(self):
-        if self.df is None or not self.xaxis_var.get():
-            messagebox.showerror("Error", "Load a file and select an X-axis first.")
-            return
-
-        # Use renamed values if available
-        orig_values = list(pd.unique(self.df[self.xaxis_var.get()].dropna()))
-        display_values = [self.xaxis_renames.get(val, val) for val in orig_values]
-
-        order_window = tk.Toplevel(self.root)
-        order_window.title("Reorder X-axis Categories")
-
-        listbox = tk.Listbox(order_window, width=40)
-        for val in display_values:
-            listbox.insert(tk.END, val)
-        listbox.pack()
-
+            
+        # Check if we're working with raw data and give options to the user
+        if hasattr(self, 'current_sheet_type') and self.current_sheet_type == 'raw':
+            result = messagebox.askyesnocancel("Raw Data Selected", 
+                "You are viewing raw data. What would you like to do?\n\n" +
+                "Yes: Start over with fresh modifications based on raw data\n" +
+                "No: Continue with existing modifications\n" +
+                "Cancel: Don't modify data")
+            
+            if result is None:  # Cancel
+                return
+                
+            if result:  # Yes - start over with raw data
+                # Clear any existing modifications but keep working with raw data for now
+                # We'll switch to modified view after making changes
+                self.xaxis_renames = {}
+                self.excluded_x_values = set()
+                self.xaxis_order = []
+                # We'll update modified_df after changes are made
+            else:  # No - continue with existing modifications
+                # Switch to modified data and restore existing modifications
+                if hasattr(self, 'sheet_var') and 'Modified Embedded Data' in self.sheet_dropdown['values']:
+                    self.sheet_var.set('Modified Embedded Data')
+                    self.load_sheet()
+        
+        x_col = self.xaxis_var.get()
+        
+        # Get original values from dataframe
+        all_df_values = list(pd.unique(self.df[x_col].dropna()))
+        
+        # If we don't have existing excluded values, create an empty set
+        if not hasattr(self, 'excluded_x_values'):
+            self.excluded_x_values = set()
+        
+        # Create the dialog window
+        modify_window = tk.Toplevel(self.root)
+        modify_window.title("Modify X Categories")
+        modify_window.geometry("650x500")
+        modify_window.resizable(True, True)
+        
+        # Add main frame with padding
+        main_frame = tk.Frame(modify_window, padx=10, pady=10)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Add explanation text
+        explanation = "Modify X-axis categories: rename labels, reorder items, or exclude them from the plot."
+        tk.Label(main_frame, text=explanation, justify=tk.LEFT).pack(anchor="w", pady=(0, 10))
+        
+        # Create frame for the listbox and edit panel
+        list_frame = tk.Frame(main_frame)
+        list_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+        
+        # Create a listbox with scrollbar (left side)
+        listbox_frame = tk.Frame(list_frame)
+        listbox_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        scrollbar = tk.Scrollbar(listbox_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Create the listbox
+        listbox = tk.Listbox(listbox_frame, selectmode=tk.SINGLE, height=15, width=40)
+        listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        # Connect scrollbar to listbox
+        listbox.config(yscrollcommand=scrollbar.set)
+        scrollbar.config(command=listbox.yview)
+        
+        # Create edit panel (right side)
+        edit_frame = tk.Frame(list_frame, padx=10)
+        edit_frame.pack(side=tk.LEFT, fill=tk.Y)
+        
+        # Create button frame (for reordering buttons)
+        button_frame = tk.Frame(edit_frame)
+        button_frame.pack(side=tk.TOP, fill=tk.Y, pady=(0, 15))
+        
+        # Organize values: first display values in existing order, then any remaining values
+        display_order = []
+        display_values = {}
+        original_values = []
+        
+        # Map displayed values (for renamed items)
+        for val in all_df_values:
+            display_val = self.xaxis_renames.get(val, val)
+            display_values[val] = display_val
+        
+        # Start with values that are already ordered (if any)
+        if hasattr(self, 'xaxis_order') and self.xaxis_order:
+            # Include values that are in both the dataframe and our existing order
+            for val in self.xaxis_order:
+                # Map renamed values back to original values
+                orig_val = None
+                for k, v in self.xaxis_renames.items():
+                    if v == val and k in all_df_values:
+                        orig_val = k
+                        break
+                # If it's not a renamed value, check if it's directly in the dataframe
+                if orig_val is None and val in all_df_values:
+                    orig_val = val
+                    
+                if orig_val is not None and orig_val in all_df_values:
+                    display_order.append(display_values.get(orig_val, str(orig_val)))
+                    original_values.append(orig_val)
+        
+        # Add any remaining values from the dataframe that aren't already in display_order
+        for val in all_df_values:
+            display_val = display_values.get(val, str(val))
+            if val not in [ov for ov in original_values]:
+                display_order.append(display_val)
+                original_values.append(val)
+        
+        # Populate the listbox
+        for i, item in enumerate(display_order):
+            # Mark excluded items with an asterisk
+            if original_values[i] in self.excluded_x_values:
+                listbox.insert(tk.END, f"* {item}")
+            else:
+                listbox.insert(tk.END, item)
+        
+        # Select the first item if available
+        if listbox.size() > 0:
+            listbox.selection_set(0)
+        
+        # Variables for the edit panel
+        selected_index = tk.IntVar(value=-1)
+        original_value_var = tk.StringVar()
+        display_value_var = tk.StringVar()
+        include_var = tk.BooleanVar(value=True)
+        
+        # Labels for the edit panel
+        tk.Label(edit_frame, text="Original Value:").pack(anchor="w", pady=(0, 2))
+        original_label = tk.Label(edit_frame, textvariable=original_value_var, wraplength=150)
+        original_label.pack(anchor="w", pady=(0, 10))
+        
+        tk.Label(edit_frame, text="Display Value:").pack(anchor="w", pady=(0, 2))
+        display_entry = tk.Entry(edit_frame, textvariable=display_value_var, width=20)
+        display_entry.pack(anchor="w", pady=(0, 10))
+        
+        # Callback function to update when checkbox is changed
+        def on_include_change():
+            update_listbox_item()
+            
+        include_check = tk.Checkbutton(edit_frame, text="Include in plot", variable=include_var, command=on_include_change)
+        include_check.pack(anchor="w", pady=(0, 10))
+        
+        # Function to update the edit panel when a listbox item is selected
+        def on_select(event):
+            selection = listbox.curselection()
+            if not selection:
+                return
+                
+            idx = selection[0]
+            selected_index.set(idx)
+            
+            # Get the original value and current display value
+            orig_val = original_values[idx]
+            original_value_var.set(str(orig_val))
+            
+            # Set the display value (either renamed or original)
+            display_val = self.xaxis_renames.get(orig_val, str(orig_val))
+            display_value_var.set(str(display_val))
+            
+            # Set the include checkbox
+            include_var.set(orig_val not in self.excluded_x_values)
+        
+        # Function to update the listbox item when display value or inclusion changes
+        def update_listbox_item():
+            idx = selected_index.get()
+            if idx < 0 or idx >= len(original_values):
+                return
+                
+            # Get the original value
+            orig_val = original_values[idx]
+            
+            # Update the display in the listbox
+            display_text = display_value_var.get()
+            if not include_var.get():
+                listbox.delete(idx)
+                listbox.insert(idx, f"* {display_text}")
+            else:
+                listbox.delete(idx)
+                listbox.insert(idx, display_text)
+                
+            # Reselect the item
+            listbox.selection_clear(0, tk.END)
+            listbox.selection_set(idx)
+            listbox.see(idx)
+        
+        # Bind the listbox selection event
+        listbox.bind('<<ListboxSelect>>', on_select)
+        
+        # Apply button for the current edit
+        def apply_current_edit():
+            idx = selected_index.get()
+            if idx < 0 or idx >= len(original_values):
+                return
+                
+            update_listbox_item()
+        
+        tk.Button(edit_frame, text="Apply Edit", command=apply_current_edit).pack(pady=(5, 15))
+        
+        # Add reordering buttons
+        tk.Label(button_frame, text="Reorder:").pack(anchor="w")
+        tk.Button(button_frame, text="Move Up", command=lambda: move_up()).pack(fill="x", pady=2)
+        tk.Button(button_frame, text="Move Down", command=lambda: move_down()).pack(fill="x", pady=2)
+        tk.Button(button_frame, text="Delete", command=lambda: delete_item()).pack(fill="x", pady=2)
+        
+        # Function to move an item up in the list
         def move_up():
-            i = listbox.curselection()
-            if i and i[0] > 0:
-                val = listbox.get(i)
-                listbox.delete(i)
-                listbox.insert(i[0] - 1, val)
-                listbox.select_set(i[0] - 1)
-
+            selected_idx = listbox.curselection()
+            if not selected_idx or selected_idx[0] == 0:
+                return
+            
+            idx = selected_idx[0]
+            item = listbox.get(idx)
+            orig_val = original_values[idx]
+            
+            # Remove from current position
+            listbox.delete(idx)
+            original_values.pop(idx)
+            
+            # Insert at new position
+            new_idx = idx - 1
+            listbox.insert(new_idx, item)
+            original_values.insert(new_idx, orig_val)
+            
+            # Select the moved item
+            listbox.selection_clear(0, tk.END)
+            listbox.selection_set(new_idx)
+            listbox.see(new_idx)
+        
+        # Function to move an item down in the list
         def move_down():
-            i = listbox.curselection()
-            if i and i[0] < listbox.size() - 1:
-                val = listbox.get(i)
-                listbox.delete(i)
-                listbox.insert(i[0] + 1, val)
-                listbox.select_set(i[0] + 1)
+            selected_idx = listbox.curselection()
+            if not selected_idx or selected_idx[0] == listbox.size() - 1:
+                return
+            
+            idx = selected_idx[0]
+            item = listbox.get(idx)
+            orig_val = original_values[idx]
+            
+            # Remove from current position
+            listbox.delete(idx)
+            original_values.pop(idx)
+            
+            # Insert at new position
+            new_idx = idx + 1
+            listbox.insert(new_idx, item)
+            original_values.insert(new_idx, orig_val)
+            
+            # Select the moved item
+            listbox.selection_clear(0, tk.END)
+            listbox.selection_set(new_idx)
+            listbox.see(new_idx)
+        
+        # Function to delete an item from the list
+        def delete_item():
+            selected_idx = listbox.curselection()
+            if not selected_idx:
+                return
+                
+            idx = selected_idx[0]
+            item_text = listbox.get(idx)
+            
+            # Ask for confirmation
+            if messagebox.askyesno("Confirm Delete", f"Are you sure you want to delete '{item_text}'?"):
+                # Remove from listbox and original_values
+                listbox.delete(idx)
+                original_values.pop(idx)
+                
+                # Select the next item if available
+                if listbox.size() > 0:
+                    next_idx = min(idx, listbox.size() - 1)
+                    listbox.selection_set(next_idx)
+                    listbox.see(next_idx)
+        
+        # Add control buttons at the bottom
+        control_frame = tk.Frame(main_frame)
+        control_frame.pack(fill=tk.X, pady=(10, 0))
+        
+        def save_changes():
+            # Clear existing settings
+            self.xaxis_renames = {}
+            self.excluded_x_values = set()
+            self.xaxis_order = []
+            
+            # Process each item in the listbox
+            for i in range(listbox.size()):
+                # Get the display text (remove asterisk if present)
+                display_text = str(listbox.get(i))
+                is_excluded = display_text.startswith("* ")
+                if is_excluded:
+                    display_text = display_text[2:]  # Remove the "* " prefix
+                
+                # Get the original value
+                orig_val = original_values[i]
+                
+                # Handle excluded values
+                if is_excluded:
+                    self.excluded_x_values.add(orig_val)
+                    continue
+                
+                # Add to the order list
+                self.xaxis_order.append(display_text)
+                
+                # Handle renamed values
+                if str(display_text) != str(orig_val):
+                    # Try to preserve numerical types
+                    try:
+                        if isinstance(orig_val, (int, float)) and display_text.replace('.', '', 1).isdigit():
+                            if '.' in display_text:
+                                display_text = float(display_text)
+                            else:
+                                display_text = int(display_text)
+                    except (ValueError, AttributeError):
+                        pass  # Keep as string if conversion fails
+                    
+                    self.xaxis_renames[orig_val] = display_text
+            
+            # Make sure we have both raw and modified data frames
+            if not hasattr(self, 'raw_df') or self.raw_df is None:
+                self.raw_df = self.df.copy()
+                
+            # Apply the changes to create the modified DataFrame
+            x_col = self.xaxis_var.get()
+            if x_col:
+                # Determine which dataframe to start with based on current view
+                if hasattr(self, 'current_sheet_type') and self.current_sheet_type == 'raw':
+                    # If we're in raw data view and modifying, start with the raw data
+                    base_df = self.raw_df.copy()
+                else:
+                    # Otherwise use the current df
+                    base_df = self.df.copy()
+                
+                # Apply renames to this column
+                if x_col in base_df.columns:
+                    for orig_val, new_val in self.xaxis_renames.items():
+                        # Replace the values in the dataframe
+                        base_df.loc[base_df[x_col] == orig_val, x_col] = new_val
+                    
+                    # Store as the modified dataframe
+                    self.modified_df = base_df
+                    self.df = base_df.copy()
+                    
+            # Always switch to modified data view after saving changes
+            if hasattr(self, 'sheet_var') and 'Modified Embedded Data' in self.sheet_dropdown['values']:
+                self.sheet_var.set('Modified Embedded Data')
+                self.current_sheet_type = 'modified'
+            
+            # Update the sheet options to include both data types if not already there
+            if hasattr(self, 'sheet_dropdown'):
+                if 'Raw Embedded Data' not in self.sheet_dropdown['values'] or \
+                   'Modified Embedded Data' not in self.sheet_dropdown['values']:
+                    # Add the embedded data options
+                    current_options = list(self.sheet_dropdown['values'])
+                    if 'Embedded Data' in current_options:
+                        current_options.remove('Embedded Data')
+                    if 'Raw Embedded Data' not in current_options:
+                        current_options.append('Raw Embedded Data')
+                    if 'Modified Embedded Data' not in current_options:
+                        current_options.append('Modified Embedded Data')
+                    self.sheet_dropdown['values'] = current_options
+                    # Set to Modified Embedded Data
+                    self.sheet_var.set('Modified Embedded Data')
+            
+            # Record that we're currently working with modified data
+            self.current_sheet_type = 'modified'
+            
+            modify_window.destroy()
+        
+        def cancel():
+            modify_window.destroy()
+        
+        # Add save and cancel buttons
+        tk.Button(control_frame, text="Cancel", command=cancel).pack(side=tk.RIGHT, padx=5)
+        tk.Button(control_frame, text="Apply Changes", command=save_changes).pack(side=tk.RIGHT, padx=5)
 
-        tk.Button(order_window, text="Up", command=move_up).pack()
-        tk.Button(order_window, text="Down", command=move_down).pack()
-
+    def rename_x_labels(self):
+        """Opens a dialog to rename X-axis labels using a listbox interface."""
+        if self.df is None or not self.xaxis_var.get():
+            messagebox.showerror("Error", "Load a file and select an X-axis first.")
+            return
+        
+        x_col = self.xaxis_var.get()
+        
+        # Get original values from dataframe
+        all_df_values = list(pd.unique(self.df[x_col].dropna()))
+        
+        # If we don't have existing excluded values, create an empty set
+        if not hasattr(self, 'excluded_x_values'):
+            self.excluded_x_values = set()
+        
+        # Create the dialog window
+        rename_window = tk.Toplevel(self.root)
+        rename_window.title("Rename X Labels")
+        rename_window.geometry("500x450")
+        rename_window.resizable(True, True)
+        
+        # Add main frame with padding
+        main_frame = tk.Frame(rename_window, padx=10, pady=10)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Add explanation text
+        explanation = "Select an item to edit its display name or to exclude it from the plot."
+        tk.Label(main_frame, text=explanation, justify=tk.LEFT).pack(anchor="w", pady=(0, 10))
+        
+        # Create frame for the listbox and edit panel
+        list_frame = tk.Frame(main_frame)
+        list_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+        
+        # Create a listbox with scrollbar (left side)
+        listbox_frame = tk.Frame(list_frame)
+        listbox_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        scrollbar = tk.Scrollbar(listbox_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Create the listbox
+        listbox = tk.Listbox(listbox_frame, selectmode=tk.SINGLE, height=15, width=40)
+        listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        # Connect scrollbar to listbox
+        listbox.config(yscrollcommand=scrollbar.set)
+        scrollbar.config(command=listbox.yview)
+        
+        # Create edit panel (right side)
+        edit_frame = tk.Frame(list_frame, padx=10)
+        edit_frame.pack(side=tk.LEFT, fill=tk.Y)
+        
+        # Organize values: first display values in existing order, then any remaining values
+        display_order = []
+        display_values = {}
+        original_values = []
+        
+        # Map displayed values (for renamed items)
+        for val in all_df_values:
+            display_val = self.xaxis_renames.get(val, val)
+            display_values[val] = display_val
+        
+        # Start with values that are already ordered (if any)
+        if hasattr(self, 'xaxis_order') and self.xaxis_order:
+            # Include values that are in both the dataframe and our existing order
+            for val in self.xaxis_order:
+                # Map renamed values back to original values
+                orig_val = None
+                for k, v in self.xaxis_renames.items():
+                    if v == val and k in all_df_values:
+                        orig_val = k
+                        break
+                # If it's not a renamed value, check if it's directly in the dataframe
+                if orig_val is None and val in all_df_values:
+                    orig_val = val
+                    
+                if orig_val is not None and orig_val in all_df_values:
+                    display_order.append(display_values.get(orig_val, str(orig_val)))
+                    original_values.append(orig_val)
+        
+        # Add any remaining values from the dataframe that aren't already in display_order
+        for val in all_df_values:
+            display_val = display_values.get(val, str(val))
+            if val not in [ov for ov in original_values]:
+                display_order.append(display_val)
+                original_values.append(val)
+        
+        # Populate the listbox
+        for i, item in enumerate(display_order):
+            # Mark excluded items with an asterisk
+            if original_values[i] in self.excluded_x_values:
+                listbox.insert(tk.END, f"* {item}")
+            else:
+                listbox.insert(tk.END, item)
+        
+        # Select the first item if available
+        if listbox.size() > 0:
+            listbox.selection_set(0)
+        
+        # Variables for the edit panel
+        selected_index = tk.IntVar(value=-1)
+        original_value_var = tk.StringVar()
+        display_value_var = tk.StringVar()
+        include_var = tk.BooleanVar(value=True)
+        
+        # Labels for the edit panel
+        tk.Label(edit_frame, text="Original Value:").pack(anchor="w", pady=(0, 2))
+        original_label = tk.Label(edit_frame, textvariable=original_value_var, wraplength=150)
+        original_label.pack(anchor="w", pady=(0, 10))
+        
+        tk.Label(edit_frame, text="Display Value:").pack(anchor="w", pady=(0, 2))
+        display_entry = tk.Entry(edit_frame, textvariable=display_value_var, width=20)
+        display_entry.pack(anchor="w", pady=(0, 10))
+        
+        include_check = tk.Checkbutton(edit_frame, text="Include in plot", variable=include_var, command=update_listbox_item)
+        include_check.pack(anchor="w", pady=(0, 10))
+        
+        # Function to update the edit panel when a listbox item is selected
+        def on_select(event):
+            selection = listbox.curselection()
+            if not selection:
+                return
+                
+            idx = selection[0]
+            selected_index.set(idx)
+            
+            # Get the original value and current display value
+            orig_val = original_values[idx]
+            original_value_var.set(str(orig_val))
+            
+            # Set the display value (either renamed or original)
+            display_val = self.xaxis_renames.get(orig_val, str(orig_val))
+            display_value_var.set(str(display_val))
+            
+            # Set the include checkbox
+            include_var.set(orig_val not in self.excluded_x_values)
+        
+        # Function to update the listbox item when display value or inclusion changes
+        def update_listbox_item():
+            idx = selected_index.get()
+            if idx < 0 or idx >= len(original_values):
+                return
+                
+            # Get the original value
+            orig_val = original_values[idx]
+            
+            # Update the display in the listbox
+            display_text = display_value_var.get()
+            if not include_var.get():
+                listbox.delete(idx)
+                listbox.insert(idx, f"* {display_text}")
+            else:
+                listbox.delete(idx)
+                listbox.insert(idx, display_text)
+                
+            # Reselect the item
+            listbox.selection_clear(0, tk.END)
+            listbox.selection_set(idx)
+            listbox.see(idx)
+        
+        # Bind the listbox selection event
+        listbox.bind('<<ListboxSelect>>', on_select)
+        
+        # Apply button for the current edit
+        def apply_current_edit():
+            idx = selected_index.get()
+            if idx < 0 or idx >= len(original_values):
+                return
+                
+            update_listbox_item()
+        
+        tk.Button(edit_frame, text="Apply Edit", command=apply_current_edit).pack(pady=(10, 0))
+        
+        # Add control buttons at the bottom
+        control_frame = tk.Frame(main_frame)
+        control_frame.pack(fill=tk.X, pady=(10, 0))
+        
+        def save_renames():
+            # Clear existing settings
+            self.xaxis_renames = {}
+            self.excluded_x_values = set()
+            self.xaxis_order = []
+            
+            # Process each item in the listbox
+            for i in range(listbox.size()):
+                # Get the display text (remove asterisk if present)
+                display_text = str(listbox.get(i))
+                is_excluded = display_text.startswith("* ")
+                if is_excluded:
+                    display_text = display_text[2:]  # Remove the "* " prefix
+                
+                # Get the original value
+                orig_val = original_values[i]
+                
+                # Handle excluded values
+                if is_excluded:
+                    self.excluded_x_values.add(orig_val)
+                    continue
+                
+                # Add to the order list
+                self.xaxis_order.append(display_text)
+                
+                # Handle renamed values
+                if str(display_text) != str(orig_val):
+                    # Try to preserve numerical types
+                    try:
+                        if isinstance(orig_val, (int, float)) and display_text.replace('.', '', 1).isdigit():
+                            if '.' in display_text:
+                                display_text = float(display_text)
+                            else:
+                                display_text = int(display_text)
+                    except (ValueError, AttributeError):
+                        pass  # Keep as string if conversion fails
+                    
+                    self.xaxis_renames[orig_val] = display_text
+            
+            rename_window.destroy()
+        
+        def cancel():
+            rename_window.destroy()
+        
+        # Add save and cancel buttons
+        tk.Button(control_frame, text="Cancel", command=cancel).pack(side=tk.RIGHT, padx=5)
+        tk.Button(control_frame, text="Apply Changes", command=save_renames).pack(side=tk.RIGHT, padx=5)
+    
+    def reorder_x_categories(self):
+        """Opens a dialog to reorder X-axis categories using a listbox for more reliable reordering."""
+        if self.df is None or not self.xaxis_var.get():
+            messagebox.showerror("Error", "Load a file and select an X-axis first.")
+            return
+        
+        x_col = self.xaxis_var.get()
+        
+        # Get original values from dataframe
+        all_df_values = list(pd.unique(self.df[x_col].dropna()))
+        
+        # Create the dialog window
+        reorder_window = tk.Toplevel(self.root)
+        reorder_window.title("Reorder X Categories")
+        reorder_window.geometry("400x450")
+        reorder_window.resizable(True, True)
+        
+        # Add main frame with padding
+        main_frame = tk.Frame(reorder_window, padx=10, pady=10)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Add explanation text
+        explanation = "Select an item and use the buttons to move it up or down in the list."
+        tk.Label(main_frame, text=explanation, justify=tk.LEFT).pack(anchor="w", pady=(0, 10))
+        
+        # Create frame for the listbox and buttons
+        list_frame = tk.Frame(main_frame)
+        list_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+        
+        # Create a listbox with scrollbar
+        listbox_frame = tk.Frame(list_frame)
+        listbox_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        scrollbar = tk.Scrollbar(listbox_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Create the listbox
+        listbox = tk.Listbox(listbox_frame, selectmode=tk.SINGLE, height=15, width=40)
+        listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        # Connect scrollbar to listbox
+        listbox.config(yscrollcommand=scrollbar.set)
+        scrollbar.config(command=listbox.yview)
+        
+        # Create button frame
+        button_frame = tk.Frame(list_frame)
+        button_frame.pack(side=tk.LEFT, fill=tk.Y, padx=10)
+        
+        # Organize values: first display values in existing order, then any remaining values
+        display_order = []
+        display_values = {}
+        original_values = []
+        
+        # If we don't have existing excluded values, create an empty set
+        if not hasattr(self, 'excluded_x_values'):
+            self.excluded_x_values = set()
+            
+        # Map displayed values (for renamed items)
+        for val in all_df_values:
+            if val in self.excluded_x_values:
+                continue
+            display_val = self.xaxis_renames.get(val, val)
+            display_values[val] = display_val
+        
+        # Start with values that are already ordered (if any)
+        if hasattr(self, 'xaxis_order') and self.xaxis_order:
+            # Include values that are in both the dataframe and our existing order
+            for val in self.xaxis_order:
+                # Map renamed values back to original values
+                orig_val = None
+                for k, v in self.xaxis_renames.items():
+                    if v == val and k in all_df_values:
+                        orig_val = k
+                        break
+                # If it's not a renamed value, check if it's directly in the dataframe
+                if orig_val is None and val in all_df_values:
+                    orig_val = val
+                    
+                if orig_val is not None and orig_val in all_df_values and orig_val not in self.excluded_x_values:
+                    display_order.append(display_values.get(orig_val, str(orig_val)))
+                    original_values.append(orig_val)
+        
+        # Add any remaining values from the dataframe that aren't already in display_order
+        for val in all_df_values:
+            display_val = display_values.get(val, str(val))
+            if display_val not in display_order and val not in self.excluded_x_values:
+                display_order.append(display_val)
+                original_values.append(val)
+        
+        # Populate the listbox
+        for item in display_order:
+            listbox.insert(tk.END, item)
+        
+        # Select the first item if available
+        if listbox.size() > 0:
+            listbox.selection_set(0)
+        
+        # Function to move an item up in the list
+        def move_up():
+            selected_idx = listbox.curselection()
+            if not selected_idx or selected_idx[0] == 0:
+                return
+            
+            idx = selected_idx[0]
+            item = listbox.get(idx)
+            orig_val = original_values[idx]
+            
+            # Remove from current position
+            listbox.delete(idx)
+            original_values.pop(idx)
+            
+            # Insert at new position
+            new_idx = idx - 1
+            listbox.insert(new_idx, item)
+            original_values.insert(new_idx, orig_val)
+            
+            # Select the moved item
+            listbox.selection_clear(0, tk.END)
+            listbox.selection_set(new_idx)
+            listbox.see(new_idx)
+        
+        # Function to move an item down in the list
+        def move_down():
+            selected_idx = listbox.curselection()
+            if not selected_idx or selected_idx[0] == listbox.size() - 1:
+                return
+            
+            idx = selected_idx[0]
+            item = listbox.get(idx)
+            orig_val = original_values[idx]
+            
+            # Remove from current position
+            listbox.delete(idx)
+            original_values.pop(idx)
+            
+            # Insert at new position
+            new_idx = idx + 1
+            listbox.insert(new_idx, item)
+            original_values.insert(new_idx, orig_val)
+            
+            # Select the moved item
+            listbox.selection_clear(0, tk.END)
+            listbox.selection_set(new_idx)
+            listbox.see(new_idx)
+        
+        # Function to delete an item from the list
+        def delete_item():
+            selected_idx = listbox.curselection()
+            if not selected_idx:
+                return
+                
+            idx = selected_idx[0]
+            item = listbox.get(idx)
+            
+            # Ask for confirmation before deleting
+            confirm = messagebox.askyesno(
+                "Confirm Delete", 
+                f"Are you sure you want to delete '{item}' from the list?"
+            )
+            
+            if not confirm:
+                return
+                
+            # Remove from listbox and original_values list
+            listbox.delete(idx)
+            original_values.pop(idx)
+            
+            # Select the next item if available, or the last item
+            if listbox.size() > 0:
+                new_idx = min(idx, listbox.size() - 1)
+                listbox.selection_set(new_idx)
+                listbox.see(new_idx)
+        
+        # Add buttons to move and delete items
+        tk.Button(button_frame, text="Move Up", command=move_up, width=10).pack(pady=5)
+        tk.Button(button_frame, text="Move Down", command=move_down, width=10).pack(pady=5)
+        tk.Button(button_frame, text="Delete", command=delete_item, width=10).pack(pady=5)
+        
+        # Add control buttons at the bottom
+        control_frame = tk.Frame(main_frame)
+        control_frame.pack(fill=tk.X, pady=(10, 0))
+        
         def save_order():
-            # Save the order as the displayed (renamed) values
-            self.xaxis_order = list(listbox.get(0, tk.END))
-            order_window.destroy()
-
-        tk.Button(order_window, text="Save Order", command=save_order).pack()
+            # Clear existing order
+            self.xaxis_order = []
+            
+            # Create new order based on current listbox order
+            for i in range(listbox.size()):
+                display_val = listbox.get(i)
+                self.xaxis_order.append(display_val)
+            
+            reorder_window.destroy()
+        
+        def cancel():
+            reorder_window.destroy()
+        
+        # Add save and cancel buttons
+        tk.Button(control_frame, text="Cancel", command=cancel).pack(side=tk.RIGHT, padx=5)
+        tk.Button(control_frame, text="Apply Order", command=save_order).pack(side=tk.RIGHT, padx=5)
+    
+    # The modify_dataframe method has been replaced by rename_x_labels and reorder_x_categories methods
 
     def plot_graph(self):
         # This version includes better annotation handling for multiple x-axis categories
@@ -4504,22 +5366,55 @@ class ExPlotApp:
         # Get plot type early for margin calculations
         plot_kind = self.plot_kind_var.get()  # "bar", "box", or "xy"
         
+        # Create a working copy of the dataframe
+        df_work = self.df.copy()
+        
+        # Filter out excluded X values if any exist
+        if hasattr(self, 'excluded_x_values') and self.excluded_x_values:
+            df_work = df_work[~df_work[x_col].isin(self.excluded_x_values)]
+            if df_work.empty:
+                messagebox.showerror("Error", "All X values are excluded. Cannot generate plot.")
+                return
+        
+        # Apply renames to original values if any exist
+        if self.xaxis_renames:
+            renamed_series = df_work[x_col].map(lambda x: self.xaxis_renames.get(x, x))
+            df_work['_renamed_x'] = renamed_series
+            original_x_col = x_col
+            x_col = '_renamed_x'
+        else:
+            original_x_col = x_col
+            
         # Handle categorical vs numeric X values
         # Always treat X as categories for bar and box plots, numerical for xy plots
         if plot_kind in ["bar", "box"]:
             # For bar and box plots with categorical X, create a mapping of values to categories
             # Get unique values and filter out NaN/None values
-            unique_vals = self.df[x_col].unique()
+            unique_vals = df_work[x_col].unique()
             # Filter out NaN values (pd.isna handles both np.nan and None)
             unique_vals = [val for val in unique_vals if not pd.isna(val)]
-            # Sort using string conversion for consistent handling of mixed types
-            x_values = sorted(unique_vals, key=lambda x: str(x))
+            
+            # Use xaxis_order if available, otherwise sort
+            if self.xaxis_order:
+                # Filter out any xaxis_order values that don't exist in the data
+                x_values = [val for val in self.xaxis_order if val in unique_vals]
+                # Add any values that might be in the data but not in xaxis_order
+                x_values.extend([val for val in unique_vals if val not in self.xaxis_order])
+            else:
+                # Sort using string conversion for consistent handling of mixed types
+                x_values = sorted(unique_vals, key=lambda x: str(x))
+                
+            # Create the categorical mapping
             self.x_categorical_map = {val: i for i, val in enumerate(x_values)}
             # Reverse mapping from indices to original labels (for tick labels)
             self.x_categorical_reverse_map = {i: val for val, i in self.x_categorical_map.items()}
             # Create a temporary column for plotting
-            self.df['_x_plot'] = self.df[x_col].map(self.x_categorical_map)
+            df_work['_x_plot'] = df_work[x_col].map(self.x_categorical_map)
+            # Use the temporary column for plotting
             x_col = '_x_plot'
+            
+            # Replace the original dataframe with our working copy
+            self.df = df_work
         
         # Scale margins based on plot size - smaller plots need relatively larger margins
         plot_height_val = self.plot_height_var.get()  # User-specified plot height
@@ -4609,13 +5504,8 @@ class ExPlotApp:
 
         for idx, value_col in enumerate(value_cols):
             ax = axes[idx] if n_rows > 1 else axes[0]
-            df_plot = self.df.copy()
-
-            if self.xaxis_renames:
-                df_plot[x_col] = df_plot[x_col].map(self.xaxis_renames).fillna(df_plot[x_col])
-
-            if self.xaxis_order:
-                df_plot[x_col] = pd.Categorical(df_plot[x_col], categories=self.xaxis_order, ordered=True)
+            # Use df_work which has the _renamed_x column if it exists
+            df_plot = df_work.copy()
 
             if plot_mode == 'overlay' and len(value_cols) > 1:
                 df_plot = pd.melt(df_plot, id_vars=[x_col] + ([group_col] if group_col else []),
@@ -5894,15 +6784,13 @@ class ExPlotApp:
 
             # Set X-axis tick labels for bar and box plots using categorical mapping
             if plot_kind in ["bar", "box"] and hasattr(self, 'x_categorical_reverse_map'):
-                # Get the current tick positions
-                tick_positions = ax.get_xticks()
-                # Filter only tick positions that are integer values and within our mapping
-                valid_ticks = [pos for pos in tick_positions if pos.is_integer() and int(pos) in self.x_categorical_reverse_map]
-                # Create labels for those positions
-                labels = [self.x_categorical_reverse_map[int(pos)] for pos in valid_ticks]
-                # Set the tick positions and labels
-                ax.set_xticks(valid_ticks)
-                ax.set_xticklabels(labels, rotation=45 if len(labels) > 3 else 0, ha='right' if len(labels) > 3 else 'center')
+                # Extract labels from our categorical mapping
+                x_tick_locs = sorted(self.x_categorical_reverse_map.keys())
+                x_tick_labels = [self.x_categorical_reverse_map[i] for i in x_tick_locs]
+                ax.set_xticks(x_tick_locs)
+                # Set appropriate rotation based on number of labels and existing settings
+                rotation_angle = 45 if len(x_tick_labels) > 3 else 0
+                ax.set_xticklabels(x_tick_labels, rotation=rotation_angle, fontsize=fontsize)
 
             # --- Grids ---
             if show_hgrid:
