@@ -1,4 +1,4 @@
 conda create --name excelplotter python
 conda activate excelplotter
 conda install scipy pandas matplotlib seaborn pingouin pdf2image openpyxl nuitka
-pip install scikit_posthocs
+pip install scikit_posthocs statannotations

@@ -9,9 +9,11 @@ import numpy as np
 import pandas as pd
 import itertools
 import scipy.stats as stats
+import math
 import pingouin as pg
 import scikit_posthocs as sp
 import warnings
+import traceback
 
 # Suppress specific warnings from pingouin and scikit-posthocs
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -44,30 +46,30 @@ def make_stat_key(*args):
         return args
 
 
-def pval_to_annotation(p_val, alpha_levels=None):
+def pval_to_annotation(p_val, alpha=0.05):
     """
-    Convert p-value to significance annotation.
+    Convert p-value to significance annotation using the same threshold logic as in explot.py.
     
     Args:
         p_val (float): The p-value to convert
-        alpha_levels (list): List of significance thresholds [0.05, 0.01, 0.001, 0.0001]
+        alpha (float): The significance threshold (default: 0.05)
         
     Returns:
         str: Significance annotation (ns, *, **, ***, ****)
     """
-    if alpha_levels is None:
-        alpha_levels = [0.05, 0.01, 0.001, 0.0001]
-    
-    if p_val > alpha_levels[0]:
+    if p_val is None or (isinstance(p_val, float) and math.isnan(p_val)):
+        return "?"
+        
+    if p_val > alpha:
         return "ns"  # Not significant
-    elif p_val <= alpha_levels[3]:
-        return "****"  # p ≤ 0.0001
-    elif p_val <= alpha_levels[2]:
-        return "***"   # p ≤ 0.001
-    elif p_val <= alpha_levels[1]:
-        return "**"    # p ≤ 0.01
-    else:
-        return "*"     # p ≤ 0.05
+    elif p_val <= alpha/5000:  # 4 stars threshold
+        return "****"
+    elif p_val <= alpha/50:    # 3 stars threshold
+        return "***"
+    elif p_val <= alpha/5:     # 2 stars threshold
+        return "**"
+    elif p_val <= alpha:       # 1 star threshold
+        return "*"
 
 
 def format_pvalue_matrix(matrix):
@@ -176,7 +178,8 @@ def run_posthoc(df, value_col, category_col, posthoc_type="Tukey's HSD"):
             posthoc = pg.pairwise_tukey(data=df, dv=value_col, between=category_col)
             
             # Convert to matrix format for consistency
-            groups = sorted(df[category_col].unique())
+            # CRITICAL: Preserve the original order from the dataframe
+            groups = list(df[category_col].unique())
             posthoc_matrix = pd.DataFrame(index=groups, columns=groups)
             
             for i, row in posthoc.iterrows():
@@ -222,7 +225,7 @@ def run_posthoc(df, value_col, category_col, posthoc_type="Tukey's HSD"):
             return pd.DataFrame(1.0, index=groups, columns=groups)
 
 
-def run_ttest(df, value_col, group1, group2, category_col, test_type="Independent t-test", alternative="two-sided"):
+def run_ttest(df, value_col, group1, group2, category_col, test_type="Welch's t-test (unpaired, unequal variances)", alternative="two-sided"):
     """
     Run a t-test between two groups.
     
@@ -238,87 +241,138 @@ def run_ttest(df, value_col, group1, group2, category_col, test_type="Independen
     Returns:
         tuple: (p-value, test result object)
     """
+    debug(f"Requested t-test type: '{test_type}' for {group1} vs {group2} in column {category_col}")
+    actual_test_used = None
+    
     try:
-        g1 = df[df[category_col] == group1][value_col].dropna()
-        g2 = df[df[category_col] == group2][value_col].dropna()
+        # Get values for each group
+        g1 = df[df[category_col] == group1][value_col].dropna().values
+        g2 = df[df[category_col] == group2][value_col].dropna().values
         
+        # Print group stats for debugging
+        debug(f"Group {group1}: n={len(g1)}, mean={np.mean(g1):.4f}, std={np.std(g1):.4f}")
+        debug(f"Group {group2}: n={len(g2)}, mean={np.mean(g2):.4f}, std={np.std(g2):.4f}")
+        
+        # Skip if not enough data
         if len(g1) < 2 or len(g2) < 2:
-            return 1.0, None  # Not enough data
+            debug(f"Not enough data for t-test between {group1} and {group2}")
+            return 1.0, {"test_used": "Insufficient data", "p-val": 1.0}  # Return not significant if not enough data
+        
+        # Choose test based on test_type
+        if test_type == "Paired t-test":
+            if len(g1) != len(g2):
+                debug(f"Cannot run paired t-test: group sizes differ ({len(g1)} vs {len(g2)})")
+                actual_test_used = "Paired t-test (failed - unequal samples)"
+                return 1.0, {"test_used": actual_test_used, "p-val": 1.0}  # Return not significant on error
+                
+            # Use pingouin for paired t-test which provides more comprehensive results
+            debug("Executing Paired t-test using pingouin")
+            actual_test_used = "Paired t-test"
+            result_df = pg.ttest(g1, g2, paired=True, alternative=alternative)
+            p_val = result_df['p-val'].iloc[0]
+            result = result_df.to_dict('records')[0]
+            result["test_used"] = actual_test_used
             
-        if test_type == "Independent t-test":
-            equal_var = True
-            stat, p_val = stats.ttest_ind(g1, g2, equal_var=equal_var, alternative=alternative)
-            result = {"t": stat, "p-val": p_val, "df": len(g1) + len(g2) - 2}
-            
-        elif test_type == "Welch's t-test":
-            equal_var = False
-            stat, p_val = stats.ttest_ind(g1, g2, equal_var=equal_var, alternative=alternative)
-            result = {"t": stat, "p-val": p_val, "df": len(g1) + len(g2) - 2}
-            
-        elif test_type == "Paired t-test":
-            # For paired t-test, we need equal length samples
-            min_len = min(len(g1), len(g2))
-            stat, p_val = stats.ttest_rel(g1[:min_len], g2[:min_len], alternative=alternative)
-            result = {"t": stat, "p-val": p_val, "df": min_len - 1}
-            
-        elif test_type == "Mann-Whitney U test":
-            # Non-parametric test
-            stat, p_val = stats.mannwhitneyu(g1, g2, alternative=alternative)
-            result = {"U": stat, "p-val": p_val}
-            
-        else:  # Fall back to independent t-test
+        elif test_type == "Student's t-test (unpaired, equal variances)":
+            # Use scipy for Student's t-test
+            debug("Executing Student's t-test (equal variances) using scipy")
+            actual_test_used = "Student's t-test (equal variances)"
             stat, p_val = stats.ttest_ind(g1, g2, equal_var=True, alternative=alternative)
-            result = {"t": stat, "p-val": p_val, "df": len(g1) + len(g2) - 2}
+            result = {"t": stat, "p-val": p_val, "df": len(g1) + len(g2) - 2, "test_used": actual_test_used}
             
+        elif test_type == "Welch's t-test (unpaired, unequal variances)":
+            # Use scipy for Welch's t-test
+            debug("Executing Welch's t-test (unequal variances) using scipy")
+            actual_test_used = "Welch's t-test (unequal variances)"
+            stat, p_val = stats.ttest_ind(g1, g2, equal_var=False, alternative=alternative)
+            result = {"t": stat, "p-val": p_val, "df": len(g1) + len(g2) - 2, "test_used": actual_test_used}
+            
+        elif test_type == "Mann-Whitney U test (non-parametric)":
+            # Use pingouin for Mann-Whitney test
+            debug("Executing Mann-Whitney U test using pingouin")
+            actual_test_used = "Mann-Whitney U test"
+            result_df = pg.mwu(g1, g2, alternative=alternative)
+            p_val = result_df['p-val'].iloc[0]
+            result = result_df.to_dict('records')[0]
+            result["test_used"] = actual_test_used
+            
+        else:  # Fall back to Welch's t-test (most robust default)
+            debug(f"Unknown t-test type: '{test_type}', falling back to Welch's t-test")
+            actual_test_used = f"Welch's t-test (fallback, unknown type: {test_type})"
+            stat, p_val = stats.ttest_ind(g1, g2, equal_var=False, alternative=alternative)
+            result = {"t": stat, "p-val": p_val, "df": len(g1) + len(g2) - 2, "test_used": actual_test_used}
+            
+        debug(f"COMPLETED TEST: {actual_test_used} between {group1} and {group2}: p = {p_val:.4f}")
         return p_val, result
         
     except Exception as e:
         debug(f"Error running t-test: {e}")
-        return 1.0, None  # Return 1.0 (not significant) on error
+        traceback.print_exc()
+        return 1.0, {"test_used": f"Error: {str(e)}", "p-val": 1.0}  # Return 1.0 (not significant) on error
 
 
-def calculate_statistics(df_plot, x_col, value_col, hue_col=None, app_settings=None):
+def calculate_statistics(df_plot, x_col, value_col, hue_col=None, app_settings=None, comparison_type=None):
     """
     Master statistical calculation function for ExPlot.
     
+    This function implements the statistical test logic as follows:
+    
+    For ungrouped data (no hue column or only one hue group):
+    - With one category: No test performed
+    - With two categories: Perform the selected t-test
+    - With more than two categories: Perform ANOVA with post-hoc tests
+    
+    For grouped data (multiple hue groups):
+    - With one group: Same as ungrouped data
+    - With two groups: Perform t-test between the groups
+    - With more than two groups: Perform ANOVA with post-hoc tests
+    
     Args:
-        df_plot (DataFrame): The data
+        df_plot (DataFrame): The data used for plotting
         x_col (str): Column for x-axis categories
         value_col (str): Column for values to analyze
         hue_col (str, optional): Column for grouping
         app_settings (dict): Settings from the ExPlot app
+        comparison_type (str, optional): Type of comparison to perform. 
+            Can be 'within_groups', 'across_categories', or None to show dialog.
         
     Returns:
-        dict: Comprehensive results
+        dict: Comprehensive results dictionary containing all statistical results
     """
     # If no settings provided, use defaults
     if app_settings is None:
         app_settings = {
             'use_stats': True,
             'alpha_level': 0.05,
-            'test_type': "Independent t-test",
+            'test_type': "Welch's t-test (unpaired, unequal variances)",
             'alternative': "two-sided",
-            'anova_type': "One-way ANOVA",
-            'posthoc_type': "Tukey's HSD"
+            'anova_type': "Welch's ANOVA",
+            'posthoc_type': "Tamhane's T2"
         }
     
     # ==========================================================
     # 1. INITIALIZATION & EARLY EXITS
     # ==========================================================
     
-    # Initialize results dictionary
+    # Initialize storage for results
     results = {
-        # Basic information
+        'pvals': {},
+        'test_info': {},  # Store detailed test information
+        'test_type': None,
+        'posthoc_type': None,
+        'anova_type': None,
+        'anova_result': None,
         'x_col': x_col,
         'value_col': value_col,
         'hue_col': hue_col,
         'alpha_level': app_settings.get('alpha_level', 0.05),
-        
-        # Test settings
-        'test_type': app_settings.get('test_type', "Independent t-test"),
-        'alternative': app_settings.get('alternative', "two-sided"),
-        'anova_type': app_settings.get('anova_type', "One-way ANOVA"),
-        'posthoc_type': app_settings.get('posthoc_type', "Tukey's HSD"),
+        'test_settings': {
+            'test_type': app_settings.get('test_type', "Welch's t-test (unpaired, unequal variances)"),
+            'alternative': app_settings.get('alternative', "two-sided"),
+            'anova_type': app_settings.get('anova_type', "Welch's ANOVA"),
+            'posthoc_type': app_settings.get('posthoc_type', "Tamhane's T2"),
+        },
+        'posthoc_type': app_settings.get('posthoc_type', "Tamhane's T2"),
         
         # Results containers
         'pvals': {},                # P-values for annotations and display
@@ -364,12 +418,12 @@ def calculate_statistics(df_plot, x_col, value_col, hue_col=None, app_settings=N
     # 3. DATA STRUCTURE ANALYSIS
     # ==========================================================
     
-    # Get x categories
-    x_values = sorted([g for g in df_plot[x_col].dropna().unique()])
+    # Get x categories - preserve the order in the dataframe
+    x_values = [g for g in df_plot[x_col].dropna().unique()]
     results['x_values'] = x_values
     n_x_categories = len(x_values)
     results['n_x_categories'] = n_x_categories
-    debug(f"X categories: {x_values} (count: {n_x_categories})")
+    debug(f"X categories (preserving order): {x_values} (count: {n_x_categories})")
     
     # Get hue groups if present
     if hue_col and hue_col in df_plot.columns:
@@ -400,19 +454,65 @@ def calculate_statistics(df_plot, x_col, value_col, hue_col=None, app_settings=N
         results['comparison_type'] = 'x_categories'
         debug("Data structure: ungrouped (comparisons between x categories)")
         
-        # For ungrouped data, generate all pairwise combinations
+        # Generate all pairwise combinations for comparison
         pairs = list(itertools.combinations(x_values, 2))
         results['pairs'] = pairs
         debug(f"Generated {len(pairs)} pairwise comparisons")
         
-        # For >2 categories, determine if we use ANOVA or individual t-tests
-        use_anova = n_x_categories > 2 and app_settings.get('anova_type', "One-way ANOVA") != "None"
+        # Clear the p-values dictionary
+        results['pvals'] = {}
         
-        if use_anova:
-            # ANOVA with post-hoc tests for multiple categories
-            debug(f"Analysis: ANOVA for {n_x_categories} categories")
-            results['test_method'] = 'ANOVA'
+        # Determine test type based on number of categories
+        if n_x_categories == 1:
+            # With only one category, there's nothing to compare
+            debug("Only one category detected, no tests needed")
+            results['summary'] = "Only one X-axis category detected. No statistical test performed."
+            return results
             
+        elif n_x_categories == 2:
+            # With exactly two categories, perform t-test
+            debug("Two categories detected, performing t-test")
+            results['test_method'] = 'T-test'
+            
+            # Get the test type and alternative from settings
+            test_type = app_settings.get('test_type', "Welch's t-test (unpaired, unequal variances)")
+            alternative = app_settings.get('alternative', "two-sided")
+            
+            debug(f"Using {test_type} with {alternative} alternative")
+            
+            # Get the two categories
+            g1, g2 = x_values
+            
+            # Run t-test
+            p_val, test_result = run_ttest(df_plot, value_col, g1, g2, x_col, test_type, alternative)
+            
+            # Store p-value in multiple formats for flexibility
+            key = make_stat_key(g1, g2)
+            results['pvals'][key] = p_val
+            results['pvals'][(g1, g2)] = p_val
+            results['pvals'][(g2, g1)] = p_val
+            
+            # Store detailed test information
+            results['test_info'][key] = test_result
+            results['test_info'][(g1, g2)] = test_result
+            results['test_info'][(g2, g1)] = test_result
+            
+            debug(f"T-test result: p = {p_val:.4g}")
+            alpha = app_settings.get('alpha_level', 0.05) if app_settings else 0.05
+            results['summary'] = f"{test_type} result: p = {p_val:.4g} {pval_to_annotation(p_val, alpha=alpha)}"
+            
+        else:  # n_x_categories > 2
+            # With more than two categories, perform ANOVA with post-hoc tests
+            debug(f"Multiple categories ({n_x_categories}) detected, performing ANOVA")
+            results['test_method'] = 'ANOVA with post-hoc'
+            
+            # Get the ANOVA and post-hoc test types from settings
+            anova_type = app_settings.get('anova_type', "Welch's ANOVA")
+            posthoc_type = app_settings.get('posthoc_type', "Tamhane's T2")
+            
+            debug(f"Using {anova_type} with {posthoc_type} post-hoc test")
+        
+            # Run the ANOVA analysis for multiple categories
             try:
                 # Filter data if a single group is present
                 if n_hue_groups == 1:
@@ -421,10 +521,6 @@ def calculate_statistics(df_plot, x_col, value_col, hue_col=None, app_settings=N
                     df_analysis = df_plot[df_plot[hue_col] == single_group].copy()
                 else:
                     df_analysis = df_plot.copy()
-                
-                # Run ANOVA test
-                anova_type = app_settings.get('anova_type', "One-way ANOVA")
-                debug(f"Running {anova_type}")
                 
                 # Determine if we need a subject identifier for repeated measures
                 subject_col = None
@@ -447,121 +543,206 @@ def calculate_statistics(df_plot, x_col, value_col, hue_col=None, app_settings=N
                 results['anova_type'] = anova_type
                 
                 # Get the main p-value from ANOVA
-                main_p = anova_results['p-unc'].values[0] if len(anova_results) > 0 else 1.0
+                if 'p-unc' in anova_results.columns:
+                    main_p = anova_results['p-unc'].values[0] if len(anova_results) > 0 else 1.0
+                elif 'p' in anova_results.columns:
+                    main_p = anova_results['p'].values[0] if len(anova_results) > 0 else 1.0
+                else:
+                    main_p = 1.0
+                    
                 results['main_anova_p'] = main_p
                 debug(f"ANOVA p-value: {main_p:.4g}")
                 
-                # Run post-hoc tests if ANOVA is significant
+                # Calculate post-hoc tests regardless of ANOVA significance
+                # This is important because some fields prioritize pairwise comparisons
+                # even when the omnibus test is not significant
+                debug(f"Running post-hoc test: {posthoc_type}")
+                
+                # Get post-hoc p-values matrix
+                posthoc_matrix = run_posthoc(df_analysis, value_col, x_col, posthoc_type)
+                results['posthoc_matrix'] = posthoc_matrix
+                results['posthoc_type'] = posthoc_type
+                debug(f"Post-hoc test completed with {posthoc_matrix.shape[0]} groups")
+                
+                # Store all pairwise p-values to ensure annotations match bar order
+                debug(f"Storing p-values in exact dataframe order: {x_values}")
+                
+                # Generate a meaningful summary for the statistical details panel
                 if main_p <= alpha:
-                    # Run appropriate post-hoc test
-                    posthoc_type = app_settings.get('posthoc_type', "Tukey's HSD")
-                    debug(f"Running post-hoc test: {posthoc_type}")
-                    
-                    # Get post-hoc p-values matrix
-                    posthoc_matrix = run_posthoc(df_analysis, value_col, x_col, posthoc_type)
-                    results['posthoc_matrix'] = posthoc_matrix
-                    results['posthoc_type'] = posthoc_type
-                    debug(f"Post-hoc test completed with {posthoc_matrix.shape[0]} groups")
-                    
-                    # Store p-values for all pairwise comparisons in both formats
-                    for g1 in x_values:
-                        for g2 in x_values:
-                            if g1 != g2 and g1 in posthoc_matrix.index and g2 in posthoc_matrix.columns:
-                                # Get p-value from matrix
-                                p_val = posthoc_matrix.loc[g1, g2]
-                                
-                                # Store with multiple key formats for robustness
-                                key = make_stat_key(g1, g2)
-                                results['pvals'][key] = p_val
-                                results['pvals'][(g1, g2)] = p_val
-                                results['pvals'][(g2, g1)] = p_val
+                    alpha = app_settings.get('alpha_level', 0.05) if app_settings else 0.05
+                    results['summary'] = f"{anova_type} result: F = {anova_results['F'].iloc[0]:.3f}, p = {main_p:.4g} {pval_to_annotation(main_p, alpha=alpha)}\n" \
+                                        f"Post-hoc test: {posthoc_type}"
                 else:
-                    debug("ANOVA not significant, skipping post-hoc tests")
-                    results['summary'] = f"ANOVA not significant (p = {main_p:.4g}). No post-hoc tests performed."
-                    
+                    results['summary'] = f"{anova_type} result: F = {anova_results['F'].iloc[0]:.3f}, p = {main_p:.4g} (not significant)\n" \
+                                        f"Post-hoc tests performed but should be interpreted with caution."
+                
+                # Store all pairwise p-values from the post-hoc matrix
+                for i in range(len(x_values)):
+                    for j in range(i+1, len(x_values)):
+                        g1, g2 = x_values[i], x_values[j]
+                        
+                        if g1 in posthoc_matrix.index and g2 in posthoc_matrix.columns:
+                            # Get p-value from matrix
+                            p_val = posthoc_matrix.loc[g1, g2]
+                            
+                            # Store p-value with both ordered and sorted keys for compatibility
+                            ordered_key = (g1, g2)  # Original order (critical for bar positions)
+                            sorted_key = make_stat_key(g1, g2)  # Sorted key for flexible lookup
+                            
+                            results['pvals'][ordered_key] = p_val
+                            results['pvals'][sorted_key] = p_val
+                            results['pvals'][(g2, g1)] = p_val  # Also store reversed
+                            
+                            debug(f"Stored post-hoc p-value for {g1} vs {g2}: {p_val:.4g}")
+                            
             except Exception as e:
                 debug(f"Error in ANOVA analysis: {e}")
-                # Fall back to pairwise t-tests on error
-                use_anova = False
-                results['summary'] = f"Error in ANOVA: {str(e)}. Falling back to pairwise t-tests."
+                traceback.print_exc()
+                results['summary'] = f"Error in ANOVA: {str(e)}. Check your data structure."
         
-        # If not using ANOVA or ANOVA failed, use pairwise t-tests
-        if not use_anova:
-            debug("Analysis: Individual pairwise t-tests")
-            results['test_method'] = 'Pairwise t-tests'
-            
-            try:
-                # Get test type and alternative
-                test_type = app_settings.get('test_type', "Independent t-test")
-                alternative = app_settings.get('alternative', "two-sided")
-                debug(f"Using {test_type} with {alternative} alternative")
-                
-                # Filter data if a single group is present
-                if n_hue_groups == 1:
-                    single_group = hue_values[0]
-                    debug(f"Filtering for single group: {single_group}")
-                    df_analysis = df_plot[df_plot[hue_col] == single_group].copy()
-                else:
-                    df_analysis = df_plot.copy()
-                
-                # Run t-tests for all pairs
-                for g1, g2 in pairs:
-                    # Run t-test
-                    p_val, test_result = run_ttest(df_analysis, value_col, g1, g2, x_col, 
-                                                  test_type, alternative)
-                    
-                    # Store in both formats
-                    key = make_stat_key(g1, g2)
-                    results['pvals'][key] = p_val
-                    results['pvals'][(g1, g2)] = p_val
-                    results['pvals'][(g2, g1)] = p_val
-                    results['test_results'][key] = test_result
-                    
-                    debug(f"T-test: {g1} vs {g2}: p = {p_val:.4g}")
-            except Exception as e:
-                debug(f"Error in t-test analysis: {e}")
-                results['summary'] = f"Error performing t-tests: {str(e)}."
-    
-    # CASE B: Grouped data (multiple hue groups to compare within each x-value)
+    # CASE B: Grouped data (multiple hue groups)
     elif n_hue_groups > 1:
         results['data_structure'] = 'grouped'
-        results['comparison_type'] = 'within_groups'
         debug(f"Data structure: grouped ({n_hue_groups} groups within each x-category)")
         
-        # Generate pairs for each hue group combination
-        hue_pairs = list(itertools.combinations(hue_values, 2))
-        debug(f"Generated {len(hue_pairs)} group pairs for comparison")
+        # Clear p-values to ensure a fresh start
+        results['pvals'] = {}
         
-        # Store which test we're using
-        test_type = app_settings.get('test_type', "Independent t-test")
+        # Generate hue group pairs for comparison
+        hue_pairs = list(itertools.combinations(hue_values, 2))
+        debug(f"Generated {len(hue_pairs)} hue group pairs for comparison")
+        
+        # Get the test type and alternative from settings
+        test_type = app_settings.get('test_type', "Welch's t-test (unpaired, unequal variances)")
         alternative = app_settings.get('alternative', "two-sided")
         debug(f"Using {test_type} with {alternative} alternative for group comparisons")
         
-        # For each x-category, compare between hue groups
-        for x_val in x_values:
-            debug(f"Processing category: {x_val}")
+        # Determine comparison approach based on number of groups
+        if n_hue_groups == 1:
+            # With only one group, treat as ungrouped data (this should never happen here)
+            debug("Only one hue group detected, should be handled by ungrouped case")
+            results['comparison_type'] = 'x_categories'
+            results['summary'] = "Only one group detected. Treating as ungrouped data."
+            return results
             
-            # Get data for this x-value
-            df_category = df_plot[df_plot[x_col] == x_val].copy()
+        elif n_hue_groups == 2:
+            # With exactly two groups, perform t-test within each x-category
+            debug("Two groups detected, performing t-tests between groups within each category")
+            results['comparison_type'] = 'within_groups'
+            results['test_method'] = 'T-tests between groups'
             
-            # For each group pair within this x-value, run t-test
-            for g1, g2 in hue_pairs:
+            # For each x-category, compare the two groups
+            all_comparisons = []
+            
+            for x_val in x_values:
+                debug(f"Processing x-category: {x_val}")
+                g1, g2 = hue_values
+                
+                # Get data for this x-category
+                df_category = df_plot[df_plot[x_col] == x_val].copy()
+                
+                # Skip if either group has insufficient data
+                if len(df_category[df_category[hue_col] == g1]) < 2 or len(df_category[df_category[hue_col] == g2]) < 2:
+                    debug(f"Not enough data for {g1} vs {g2} in category {x_val}")
+                    continue
+                    
+                # Run t-test between the two groups for this x-category
+                p_val, test_result = run_ttest(df_category, value_col, g1, g2, hue_col, test_type, alternative)
+                
+                # Store p-value with keys that include the x-category
+                key = make_stat_key(x_val, g1, g2)  # Sorted key
+                results['pvals'][key] = p_val
+                results['pvals'][(x_val, g1, g2)] = p_val  # Original order
+                results['pvals'][(x_val, g2, g1)] = p_val  # Reversed order
+                
+                # Store test information consistently for all key formats
+                results['test_info'][key] = test_result
+                results['test_info'][(x_val, g1, g2)] = test_result  # Original order
+                results['test_info'][(x_val, g2, g1)] = test_result  # Reversed order
+                
+                all_comparisons.append((x_val, g1, g2, p_val))
+                debug(f"T-test for {x_val}: {g1} vs {g2}: p = {p_val:.4g}")
+            
+            # Generate a summary of the comparisons
+            if all_comparisons:
+                summary_parts = [f"Comparison type: {test_type} between groups within each category"]
+                for x_val, g1, g2, p_val in all_comparisons:
+                    alpha = app_settings.get('alpha_level', 0.05) if app_settings else 0.05
+                    summary_parts.append(f"{x_val}: {g1} vs {g2}: p = {p_val:.4g} {pval_to_annotation(p_val, alpha=alpha)}")
+                results['summary'] = "\n".join(summary_parts)
+            else:
+                results['summary'] = "No valid comparisons could be performed. Check your data."
+                
+        else:  # n_hue_groups > 2
+            # With more than two groups, perform ANOVA within each x-category
+            debug(f"Multiple groups ({n_hue_groups}) detected, performing ANOVA within each category")
+            results['comparison_type'] = 'within_groups'
+            results['test_method'] = 'ANOVA between groups'
+            
+            # Get the ANOVA and post-hoc test types from settings
+            anova_type = app_settings.get('anova_type', "Welch's ANOVA")
+            posthoc_type = app_settings.get('posthoc_type', "Tamhane's T2")
+            
+            # For each x-category, perform ANOVA and post-hoc tests on the groups
+            all_comparisons = []
+            
+            for x_val in x_values:
+                debug(f"Processing x-category: {x_val}")
+                
+                # Get data for this x-category
+                df_category = df_plot[df_plot[x_col] == x_val].copy()
+                
+                # Skip if not enough data
+                if len(df_category) < n_hue_groups + 1 or len(df_category[hue_col].unique()) < 2:
+                    debug(f"Not enough data for ANOVA in category {x_val}")
+                    continue
+                    
                 try:
-                    # Run t-test
-                    p_val, test_result = run_ttest(
-                        df_category, value_col, g1, g2, hue_col, test_type, alternative
-                    )
+                    # Run ANOVA for this category
+                    anova_results = run_anova(df_category, value_col, hue_col, anova_type)
                     
-                    # Store p-value with category-specific keys
-                    key = make_stat_key(x_val, g1, g2)
-                    results['pvals'][key] = p_val
-                    results['pvals'][(x_val, g1, g2)] = p_val
-                    results['pvals'][(x_val, g2, g1)] = p_val
-                    results['test_results'][key] = test_result
+                    # Get main p-value
+                    if 'p-unc' in anova_results.columns:
+                        main_p = anova_results['p-unc'].values[0] if len(anova_results) > 0 else 1.0
+                    elif 'p' in anova_results.columns:
+                        main_p = anova_results['p'].values[0] if len(anova_results) > 0 else 1.0
+                    else:
+                        main_p = 1.0
+                        
+                    all_comparisons.append((x_val, main_p))
+                    debug(f"ANOVA for {x_val}: p = {main_p:.4g}")
                     
-                    debug(f"T-test for {x_val}: {g1} vs {g2}: p = {p_val:.4g}")
+                    # Run post-hoc tests regardless of ANOVA significance
+                    posthoc_matrix = run_posthoc(df_category, value_col, hue_col, posthoc_type)
+                    
+                    # Store all pairwise p-values
+                    for i, g1 in enumerate(hue_values):
+                        for j, g2 in enumerate(hue_values):
+                            if i < j and g1 in posthoc_matrix.index and g2 in posthoc_matrix.columns:
+                                p_val = posthoc_matrix.loc[g1, g2]
+                                
+                                # Store with category-specific keys
+                                key = make_stat_key(x_val, g1, g2)  # Sorted key
+                                results['pvals'][key] = p_val
+                                results['pvals'][(x_val, g1, g2)] = p_val  # Original order
+                                results['pvals'][(x_val, g2, g1)] = p_val  # Reversed order
+                                
+                                debug(f"Post-hoc for {x_val}: {g1} vs {g2}: p = {p_val:.4g}")
+                                
                 except Exception as e:
-                    debug(f"Error in group t-test for {x_val}, {g1} vs {g2}: {e}")
-                    # Continue with other comparisons
+                    debug(f"Error in ANOVA for category {x_val}: {e}")
+                    traceback.print_exc()
+            
+            # Generate a summary of the comparisons
+            if all_comparisons:
+                summary_parts = [f"Analysis: {anova_type} with {posthoc_type} post-hoc tests within each category"]
+                for x_val, p_val in all_comparisons:
+                    alpha = app_settings.get('alpha_level', 0.05) if app_settings else 0.05
+                    summary_parts.append(f"{x_val}: ANOVA p = {p_val:.4g} {pval_to_annotation(p_val, alpha=alpha)}")
+                results['summary'] = "\n".join(summary_parts)
+            else:
+                results['summary'] = "No valid ANOVA comparisons could be performed. Check your data."
+    
+    return results
     
     return results
