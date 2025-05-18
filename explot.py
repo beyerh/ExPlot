@@ -1,9 +1,8 @@
 # ExPlot - Data visualization tool for Excel files
 
-VERSION = "0.6.1"
+VERSION = "0.6.2"
 # =====================================================================
 
-import numpy as np
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk, colorchooser
 import pandas as pd
@@ -30,6 +29,8 @@ import traceback  # For better error reporting
 from matplotlib.patches import Polygon
 from matplotlib.collections import PatchCollection
 from tkinter import font as tkfont
+from statannotations.Annotator import Annotator
+
 
 DEFAULT_COLORS = {
     "Black": "#000000",
@@ -47,7 +48,34 @@ DEFAULT_PALETTES = {
     "Set2": sns.color_palette("Set2").as_hex(),
     "Spring Pastels": sns.color_palette("pastel", as_cmap=False).as_hex(),
     "Blue-Black": sns.color_palette(["#2b2fff","#000000"], as_cmap=False).as_hex(),
-    "Black-Blue": sns.color_palette(["#000000","#2b2fff"], as_cmap=False).as_hex()
+    "Black-Blue": sns.color_palette(["#000000","#2b2fff"], as_cmap=False).as_hex(),
+    
+    # New palettes added
+    "Ocean": sns.color_palette("deep", as_cmap=False).as_hex(),
+    "Colorblind": sns.color_palette("colorblind", as_cmap=False).as_hex(),
+    "Muted": sns.color_palette("muted", as_cmap=False).as_hex(),
+    "Bright": sns.color_palette("bright", as_cmap=False).as_hex(),
+    "Dark": sns.color_palette("dark", as_cmap=False).as_hex(),
+    "Plasma": sns.color_palette("plasma", as_cmap=False).as_hex(),
+    "Inferno": sns.color_palette("inferno", as_cmap=False).as_hex(),
+    "Paired": sns.color_palette("Paired", as_cmap=False).as_hex(),
+    
+    # Custom scientific publication-friendly palettes
+    "Publication": ["#4878D0", "#EE854A", "#6ACC64", "#D65F5F", "#956CB4", "#8C613C", "#DC7EC0", "#797979"],
+    "Nature": ["#1F77B4", "#FF7F0E", "#2CA02C", "#D62728", "#9467BD", "#8C564B", "#E377C2", "#7F7F7F"],
+    "Scientific": ["#3182bd", "#e6550d", "#31a354", "#756bb1", "#636363", "#6baed6", "#fd8d3c", "#74c476"],
+    
+    # Earth/Natural tones for pleasing visualization
+    "Earth Tones": ["#5A8F29", "#8F5F2A", "#0F728F", "#8F2F0F", "#474A51", "#8F8F8F", "#291F19", "#598F8F"],
+    
+    # High contrast palette for maximum distinction
+    "High Contrast": ["#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7", "#000000"],
+    
+    # Blue-focused gradient for sequential data
+    "Blues": sns.color_palette("Blues_r", 8).as_hex(),
+    
+    # Red-focused gradient for sequential data
+    "Reds": sns.color_palette("Reds_r", 8).as_hex()
 }
 
 # --- in show_statistical_details, replace all key = ... assignments for latest_pvals with stat_key
@@ -116,22 +144,8 @@ class ExPlotApp:
             hue_col (str, optional): The column name for grouping data, if applicable
         
         Returns:
-            dict: A comprehensive dictionary of statistical results
+            dict: A dictionary with error information if the explot_stats module is not available
         """
-        # Skip calculations if statistics are disabled
-        if hasattr(self, 'use_stats_var') and not self.use_stats_var.get():
-            print("[DEBUG] Statistics disabled, skipping calculations")
-            results = {
-                'pvals': {},
-                'x_col': x_col,
-                'value_col': value_col,
-                'hue_col': hue_col,
-                'summary': "Statistical testing disabled."
-            }
-            self.latest_stats = results
-            self.latest_pvals = {}
-            return results
-        
         try:
             # Import the statistical module
             from explot_stats import calculate_statistics as stats_calc
@@ -148,34 +162,677 @@ class ExPlotApp:
             # Delegate to the statistics module
             results = stats_calc(df_plot, x_col, value_col, hue_col, app_settings)
             
+            # Store results for backward compatibility
+            self.latest_stats = results
+            self.latest_pvals = results.get('pvals', {})
+            self.latest_test_info = results.get('test_info', {})
+            
+            # Debug what tests were performed
+            if self.latest_test_info:
+                print(f"[DEBUG] Stored {len(self.latest_test_info)} test details")
+                for key, test_details in list(self.latest_test_info.items())[:3]:  # Show first 3 for debug
+                    test_used = test_details.get('test_used', 'Unknown test')
+                    print(f"[DEBUG] Test for {key}: {test_used}")
+            
+            return results
+            
         except ImportError as e:
-            print(f"[ERROR] Could not import explot_stats module: {e}")
-            print("Falling back to older statistical methods. Please ensure explot_stats.py is in the same directory.")
-            # Initialize an empty result with basic structure
-            results = {
+            error_msg = "Error: The explot_stats module is required for statistical calculations.\nPlease ensure explot_stats.py is in the same directory as explot.py."
+            print(f"[ERROR] {error_msg}")
+            
+            # Return error result
+            return {
                 'pvals': {},
                 'x_col': x_col,
                 'value_col': value_col,
                 'hue_col': hue_col,
-                'summary': "Error calculating statistics: Could not import statistical module."
-            }
-        except Exception as e:
-            print(f"[ERROR] Statistical calculation failed: {e}")
-            # Initialize an empty result with basic structure
-            results = {
-                'pvals': {},
-                'x_col': x_col,
-                'value_col': value_col,
-                'hue_col': hue_col,
-                'summary': f"Error in statistical calculation: {str(e)}"
+                'summary': error_msg,
+                'error': True
             }
             
         # Store results for backward compatibility
         self.latest_stats = results
         self.latest_pvals = results.get('pvals', {})
+        self.latest_test_info = results.get('test_info', {})
+        
+        # Debug what tests were performed
+        if self.latest_test_info:
+            print(f"[DEBUG] Stored {len(self.latest_test_info)} test details")
+            for key, test_details in list(self.latest_test_info.items())[:3]:  # Show first 3 for debug
+                test_used = test_details.get('test_used', 'Unknown test')
+                print(f"[DEBUG] Test for {key}: {test_used}")
         
         return results
 
+    def prepare_working_dataframe(self):
+        """Prepare a working dataframe that will be used for both plotting and statistics.
+        This ensures consistency between plot and statistics by using the same data source.
+        Returns the working dataframe and relevant column info.
+        """
+        if self.df is None:
+            return None, None, None, None
+            
+        # Get column selections
+        x_col = self.xaxis_var.get()
+        group_col = self.group_var.get()
+        if not group_col or group_col.strip() == '' or group_col == 'None':
+            group_col = None
+            
+        value_cols = [col for var, col in self.value_vars if var.get() and col != x_col]
+        
+        # Handle empty selections gracefully
+        if not x_col or not value_cols:
+            return None, None, None, None
+            
+        # Create a working copy of the dataframe
+        df_work = self.df.copy()
+        
+        # Filter out excluded X values if any exist
+        if hasattr(self, 'excluded_x_values') and self.excluded_x_values:
+            df_work = df_work[~df_work[x_col].isin(self.excluded_x_values)]
+            if df_work.empty:
+                return None, None, None, None
+        
+        # Apply renames to original values if any exist
+        if self.xaxis_renames:
+            renamed_series = df_work[x_col].map(lambda x: self.xaxis_renames.get(x, x))
+            df_work['_renamed_x'] = renamed_series
+            original_x_col = x_col
+            x_col = '_renamed_x'
+        else:
+            original_x_col = x_col
+            
+        # Store the working dataframe as an instance attribute for later use
+        self.df_work = df_work
+        
+        return df_work, x_col, value_cols, group_col
+        
+    def annotate_plot(self, ax, x_positions, y_positions, x_labels, ymax, fontsize, linewidth):
+        """Legacy method, kept for backward compatibility.
+        
+        This method is now replaced by _add_ungrouped_annotations and _add_grouped_annotations
+        
+        Args:
+            ax: The matplotlib axis to annotate
+            x_positions: List of x-axis positions (numeric indices)
+            y_positions: List of y-axis positions (heights) for each bar/box
+            x_labels: Labels corresponding to each x position
+            ymax: Maximum y-axis value
+            fontsize: Font size for annotations
+            linewidth: Line width for brackets
+        """
+        # This method is intentionally left empty as it's been replaced by the new implementation
+        pass
+                
+    def export_data(self):
+        """Export the current working dataframe to a CSV file."""
+        if self.df_work is None and self.df is not None:
+            # Prepare the working dataframe if it doesn't exist yet
+            self.prepare_working_dataframe()
+            
+        if self.df_work is None:
+            messagebox.showinfo("No Data", "There is no data to export.")
+            return
+            
+        # Ask user for save location
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+            title="Export Data As"
+        )
+        
+        if not file_path:
+            return  # User cancelled
+            
+        try:
+            # Export the dataframe to CSV
+            self.df_work.to_csv(file_path, index=False)
+            messagebox.showinfo("Export Successful", f"Data exported successfully to {file_path}")
+        except Exception as e:
+            messagebox.showerror("Export Failed", f"Failed to export data: {str(e)}")
+            
+    def _add_statannotations(self, ax, df, x_col, group_col=None):
+        """Add statistical annotations using the statannotations package.
+        
+        Args:
+            ax: Matplotlib axis to add annotations to
+            df: DataFrame containing the data
+            x_col: Column name for x-axis categories
+            group_col: Optional column name for grouping within x-categories
+        """
+        if not hasattr(self, 'latest_pvals') or not self.latest_pvals:
+            print("[DEBUG] No p-values available for annotations")
+            return
+            
+        # Get the value column to plot
+        if hasattr(self, 'current_plot_info'):
+            value_cols = self.current_plot_info.get('value_cols', [])
+            if value_cols:
+                value_col = value_cols[0]
+            else:
+                # Fallback to first numeric column
+                numeric_cols = df.select_dtypes(include=['number']).columns
+                if len(numeric_cols) > 0:
+                    value_col = numeric_cols[0]
+                else:
+                    print("[DEBUG] No numeric columns found for annotations")
+                    return
+        else:
+            print("[DEBUG] No current_plot_info available")
+            return
+        
+        print(f"[DEBUG] Using value column: {value_col}")
+        print(f"[DEBUG] X column: {x_col}")
+        print(f"[DEBUG] Group column: {group_col}")
+        
+        # Create pairs for annotation based on p-values
+        pairs = []
+        pvalues = []
+        
+        if group_col and group_col in df.columns:
+            # Grouped data - pairs are within each x-category
+            x_categories = df[x_col].dropna().unique()
+            groups = sorted(df[group_col].dropna().unique())  # Sort groups for consistency
+            print(f"[DEBUG] X categories: {x_categories}")
+            print(f"[DEBUG] Groups: {groups}")
+            
+            for x_cat in x_categories:
+                # Get all group pairs for this x-category
+                for i in range(len(groups)):
+                    for j in range(i+1, len(groups)):
+                        group1, group2 = groups[i], groups[j]
+                        
+                        # Try different key formats to find the p-value
+                        key_formats = [
+                            (x_cat, group1, group2),
+                            (x_cat, group2, group1),
+                            (str(x_cat), group1, group2),
+                            (str(x_cat), group2, group1)
+                        ]
+                        
+                        # Look for a p-value match
+                        p_val = None
+                        for key in key_formats:
+                            if key in self.latest_pvals:
+                                p_val = self.latest_pvals[key]
+                                break
+                        
+                        # If significant, add to pairs
+                        if p_val is not None and p_val <= float(self.alpha_level_var.get()):
+                            # Format for statannotations: (x_category, group1) vs (x_category, group2)
+                            pairs.append([(x_cat, group1), (x_cat, group2)])
+                            pvalues.append(p_val)
+                            print(f"[DEBUG] Added pair: {(x_cat, group1)} vs {(x_cat, group2)} with p={p_val}")
+        else:
+            # Ungrouped data - pairs are between x-categories
+            x_categories = df[x_col].dropna().unique()
+            
+            for i in range(len(x_categories)):
+                for j in range(i+1, len(x_categories)):
+                    cat1, cat2 = x_categories[i], x_categories[j]
+                    
+                    # Try different key formats to find the p-value
+                    key_formats = [
+                        (cat1, cat2),
+                        (cat2, cat1),
+                        (str(cat1), str(cat2)),
+                        (str(cat2), str(cat1))
+                    ]
+                    
+                    # Look for a p-value match
+                    p_val = None
+                    for key in key_formats:
+                        if key in self.latest_pvals:
+                            p_val = self.latest_pvals[key]
+                            break
+                    
+                    # If significant, add to pairs
+                    if p_val is not None and p_val <= float(self.alpha_level_var.get()):
+                        pairs.append([cat1, cat2])
+                        pvalues.append(p_val)
+                        print(f"[DEBUG] Added pair: {cat1} vs {cat2} with p={p_val}")
+        
+        if not pairs:
+            print("[DEBUG] No significant pairs to annotate")
+            return
+        
+        print(f"[DEBUG] Found {len(pairs)} significant pairs to annotate")
+        
+        try:
+            # Import statannotations here to avoid dependency if not used
+            from statannotations.Annotator import Annotator
+            
+            # Create annotator
+            annotator = Annotator(
+                ax=ax,
+                pairs=pairs,
+                data=df,
+                x=x_col,
+                y=value_col,
+                hue=group_col if group_col else None,
+                verbose=True
+            )
+            
+            # Get current alpha level for custom p-value thresholds
+            try:
+                alpha = float(self.alpha_level_var.get())
+            except (ValueError, AttributeError):
+                alpha = 0.05  # Default if not set or invalid
+                    
+            # Configure p-value thresholds directly in the format required by statannotations
+            pvalue_thresholds = [
+                [1e-4, "****"],  # p < 0.01%
+                [1e-3, "***"],   # p < 0.1%
+                [1e-2, "**"],    # p < 1%
+                [alpha, "*"]     # p < alpha (default 0.05 or user-specified)
+            ]
+                
+            print(f"[DEBUG] Setting annotator pvalue format: {pvalue_thresholds}")
+                
+            # Configure annotations with our custom pvalue thresholds
+            annotator.configure(test=None, text_format='star', 
+                                pvalue_format=pvalue_format,
+                                loc='inside',
+                                line_width=self.linewidth.get()
+                                )
+            # Set custom p-values and annotate using the current alpha level
+            # Get current alpha level from dropdown
+            try:
+                current_alpha = float(self.alpha_level_var.get())
+            except (ValueError, AttributeError):
+                current_alpha = 0.05  # Default if not set or invalid
+                
+            # Generate annotations with the current alpha setting
+            annotations = []
+            for p in pvalues:
+                annotation = self.pval_to_annotation(p)  # This already uses alpha_level_var internally
+                annotations.append(annotation)
+                
+            # Debug to check consistency
+            print(f"[DEBUG] Alpha level: {current_alpha}, creating annotations: {list(zip([f'{p:.4g}' for p in pvalues], annotations))}")
+                
+            annotator.set_custom_annotations(annotations)
+            annotator.annotate()
+            
+            print("[DEBUG] Successfully added statannotations")
+            
+        except Exception as e:
+            import traceback
+            print(f"[DEBUG] Error with statannotations: {e}")
+            print(traceback.format_exc())
+            raise  # Re-raise the exception to be handled by the caller
+    
+    def add_statistics_to_plot(self):
+        """Add statistical annotations to the current plot based on calculated p-values.
+        Uses the statannotations package for cleaner annotations.
+        """
+        print("\n[DEBUG] Starting add_statistics_to_plot...")
+        
+        # Check if we have a figure and p-values
+        if not hasattr(self, 'fig') or self.fig is None:
+            print("[DEBUG] No figure available for annotations")
+            return
+        
+        if not hasattr(self, 'latest_pvals') or not self.latest_pvals:
+            print("[DEBUG] No p-values available for annotations")
+            return
+        else:
+            print(f"[DEBUG] Found {len(self.latest_pvals)} p-values in latest_pvals")
+            print("[DEBUG] Latest p-values:", list(self.latest_pvals.items())[:5], "...")
+        
+        # Get current axes
+        ax = self.fig.axes[0] if self.fig.axes else None
+        if not ax:
+            print("[DEBUG] No axes available for annotations")
+            return
+        
+        # Get current plot info
+        if not hasattr(self, 'current_plot_info'):
+            print("[DEBUG] No current_plot_info available for annotations")
+            return
+        
+        # Get plot information
+        plot_kind = self.plot_kind_var.get()
+        x_col = self.current_plot_info.get('x_col')
+        group_col = self.current_plot_info.get('group_col')
+        
+        # Only implement for bar and box plots
+        if plot_kind not in ["bar", "box", "violin"]:
+            print(f"[DEBUG] Statistical annotations for {plot_kind} plot not implemented")
+            return
+        
+        # Get working dataframe
+        if not hasattr(self, 'df_work') or self.df_work is None:
+            print("[DEBUG] No working dataframe available for annotations")
+            return
+        
+        df_work = self.df_work.copy()
+        print(f"[DEBUG] Adding annotations with data shape: {df_work.shape}")
+        print(f"[DEBUG] Columns: {df_work.columns.tolist()}")
+        print(f"[DEBUG] X column: {x_col}, Group column: {group_col}")
+        
+        try:
+            # Clear existing annotations if any
+            for child in ax.get_children():
+                if isinstance(child, matplotlib.text.Annotation):
+                    child.remove()
+            
+            # Extend the y-axis limits to make room for annotations
+            ymin, ymax = ax.get_ylim()
+            y_range = ymax - ymin
+            ax.set_ylim(ymin, ymax + y_range * 0.3)  # Add 30% more space at the top
+            
+            # Use statannotations for annotations
+            self._add_statannotations(ax, df_work, x_col, group_col)
+            
+            # Update the canvas
+            if hasattr(self, 'canvas'):
+                self.canvas.draw()
+                
+        except Exception as e:
+            import traceback
+            print(f"[DEBUG] Error adding annotations: {e}")
+            print(traceback.format_exc())
+            messagebox.showerror("Annotation Error", 
+                               f"Error adding statistical annotations: {str(e)}")
+            
+    def _add_ungrouped_annotations(self, ax, df, x_col):
+        """Add statistical annotations for ungrouped data (comparing x-axis categories)"""
+        print("[DEBUG] Starting _add_ungrouped_annotations...")
+        # Get x-axis categories
+        x_categories = df[x_col].dropna().unique()
+        print(f"[DEBUG] Found {len(x_categories)} x-axis categories: {x_categories}")
+        
+        if len(x_categories) < 2:
+            return  # Need at least 2 categories for comparison
+            
+        # Create pairs for annotation
+        pairs = []
+        print(f"[DEBUG] Creating pairs from x_categories: {x_categories}")
+        for i in range(len(x_categories)):
+            for j in range(i+1, len(x_categories)):
+                cat1, cat2 = x_categories[i], x_categories[j]
+                print(f"[DEBUG] Checking pair: {cat1} vs {cat2}")
+                
+                # Check if we have a p-value for this pair
+                p_val = None
+                
+                # Try different key formats
+                key_formats = [
+                    self.stat_key(cat1, cat2),  # String-based key
+                    (cat1, cat2),              # Direct tuple
+                    (cat2, cat1),              # Reversed tuple
+                    (i, j),                    # Index-based
+                    (j, i),                    # Reversed index
+                    (float(i), float(j)),      # Float indices
+                    (float(j), float(i))       # Reversed float indices
+                ]
+                
+                # Look for a match in latest_pvals
+                for key in key_formats:
+                    if key in self.latest_pvals:
+                        p_val = self.latest_pvals[key]
+                        break
+                        
+                # If we found a significant p-value, add it to the pairs
+                if p_val is not None and p_val <= float(self.alpha_level_var.get()):
+                    # IMPORTANT: Use simple tuple format for statannotations
+                    pairs.append((cat1, cat2))
+                    
+        # If we have pairs to annotate, create the annotations
+        if pairs:
+            # Get formatting parameters
+            fontsize = int(self.fontsize_entry.get())
+            linewidth = float(self.linewidth.get())
+            
+            # Create annotator
+            # Choose the value column carefully
+            if value_col := self.current_plot_info.get('value_cols', [None])[0]:
+                y_col = value_col
+            else:
+                # Fallback to the last numeric column as a best guess
+                numeric_cols = df.select_dtypes(include=['number']).columns
+                y_col = numeric_cols[-1] if len(numeric_cols) > 0 else df.columns[-1]
+                
+            annotator = Annotator(ax, pairs, data=df, x=x_col, y=y_col)
+            
+            # Generate custom p-value text based on stored p-values
+            pvalues = []
+            for pair in pairs:
+                cat1, cat2 = pair[0][0], pair[1][0]
+                
+                # Find p-value for this pair
+                p_val = None
+                for key in self.latest_pvals:
+                    if (isinstance(key, tuple) and len(key) == 2 and 
+                        ((str(key[0]) == str(cat1) and str(key[1]) == str(cat2)) or
+                         (str(key[0]) == str(cat2) and str(key[1]) == str(cat1)))):
+                        p_val = self.latest_pvals[key]
+                        break
+                        
+                # If we couldn't find by string, try index
+                if p_val is None:
+                    i, j = np.where(x_categories == cat1)[0][0], np.where(x_categories == cat2)[0][0]
+                    index_keys = [(i, j), (j, i), (float(i), float(j)), (float(j), float(i))]
+                    
+                    for key in index_keys:
+                        if key in self.latest_pvals:
+                            p_val = self.latest_pvals[key]
+                            break
+                            
+                pvalues.append(p_val)
+                
+            # Add annotations with custom p-values
+            try:
+                # Configure the annotator with enhanced settings for better visibility
+                print(f"[DEBUG] Configuring annotator with {len(pairs)} pairs")
+                
+                # Get current alpha level for custom p-value thresholds
+                try:
+                    alpha = float(self.alpha_level_var.get())
+                except (ValueError, AttributeError):
+                    alpha = 0.05  # Default if not set or invalid
+                    
+                # Configure p-value thresholds directly in the format required by statannotations
+                pvalue_format = {
+                    'text_format': 'star',
+                    'pvalue_thresholds': [
+                        (alpha/5000, '****'),  # 4 stars threshold (e.g., 0.00001 at alpha=0.05)
+                        (alpha/50, '***'),    # 3 stars threshold (e.g., 0.001 at alpha=0.05)
+                        (alpha/5, '**'),      # 2 stars threshold (e.g., 0.01 at alpha=0.05)
+                        (alpha, '*'),         # 1 star threshold (alpha itself)
+                        (1, 'ns')             # Not significant
+                    ]
+                }
+                
+                print(f"[DEBUG] Setting annotator pvalue format: {pvalue_format_dict['pvalue_thresholds']}")
+                
+                # Configure the annotator with very aggressive settings for maximum visibility
+                annotator.configure(test=None, text_format='star', 
+                                    pvalue_format=pvalue_format,
+                                    loc='inside',
+                                    line_width=self.linewidth.get()
+                                    )
+                
+                # Set custom p-values and annotations
+                if pvalues:
+                    print(f"[DEBUG] Setting {len(pvalues)} custom annotations")
+                    annotations = [self.pval_to_annotation(p) for p in pvalues]
+                    print(f"[DEBUG] Annotation symbols: {annotations}")
+                    annotator.set_custom_annotations(annotations)
+                    print("[DEBUG] About to call annotator.annotate()")
+                    annotator.annotate()
+                    print(f"[DEBUG] Successfully added {len(pvalues)} annotation(s) for categories")
+                else:
+                    print("[DEBUG] No significant p-values to annotate")
+            except Exception as e:
+                import traceback
+                print(f"[DEBUG] Error with statannotations: {e}")
+                print(traceback.format_exc())
+                # Fallback to a simpler method if statannotations fails
+                self._fallback_add_annotations(ax, pairs, pvalues)
+            
+    def _add_grouped_annotations(self, ax, df, x_col, group_col):
+        """Add statistical annotations for grouped data (comparing groups within each x-axis category)"""
+        # Get x-axis categories and groups
+        x_categories = df[x_col].dropna().unique()
+        groups = df[group_col].dropna().unique()
+        
+        if len(groups) < 2:
+            return  # Need at least 2 groups for comparison
+        
+        # For each x-axis category, compare all groups
+        for x_cat in x_categories:
+            # Get the subset of data for this x-category
+            df_cat = df[df[x_col] == x_cat]
+            
+            # Create pairs for annotation within this category
+            pairs = []
+            pvalues = []
+            
+            for i in range(len(groups)):
+                for j in range(i+1, len(groups)):
+                    group1, group2 = groups[i], groups[j]
+                    
+                    # Check if we have a p-value for this triplet
+                    p_val = None
+                    
+                    # Try different key formats for triplets (x_cat, group1, group2)
+                    key_formats = [
+                        (x_cat, group1, group2),   # Direct triplet
+                        (x_cat, group2, group1),   # Reversed groups
+                        (str(x_cat), group1, group2),  # String version
+                        (str(x_cat), group2, group1)   # String reversed
+                    ]
+                    
+                    # Also try with index numbers
+                    x_idx = np.where(x_categories == x_cat)[0][0] if len(np.where(x_categories == x_cat)[0]) > 0 else -1
+                    if x_idx >= 0:
+                        key_formats.extend([
+                            (x_idx, group1, group2),
+                            (x_idx, group2, group1),
+                            (float(x_idx), group1, group2),
+                            (float(x_idx), group2, group1)
+                        ])
+                    
+                    # Look for a match in latest_pvals
+                    for key in key_formats:
+                        if key in self.latest_pvals:
+                            p_val = self.latest_pvals[key]
+                            break
+                    
+                    # If we found a significant p-value, add it to the pairs
+                    if p_val is not None and p_val <= float(self.alpha_level_var.get()):
+                        # Modify x_cat to include the group for statannotations format
+                        # This creates labels like 'CategoryA_Group1' that statannotations can work with
+                        formatted_group1 = f"{x_cat}_{group1}"
+                        formatted_group2 = f"{x_cat}_{group2}"
+                        pairs.append((formatted_group1, formatted_group2))
+                        pvalues.append(p_val)
+            
+            # If we have pairs to annotate for this category, create the annotations
+            if pairs:
+                # For grouped data, we need to create a modified dataframe with combined x_cat and group columns
+                # This creates a new column with values like 'CategoryA_Group1' that statannotations can use
+                df_modified = df.copy()
+                df_modified['x_group'] = df_modified[x_col].astype(str) + '_' + df_modified[group_col].astype(str)
+                
+                # Choose the value column carefully
+                if value_col := self.current_plot_info.get('value_cols', [None])[0]:
+                    y_col = value_col
+                else:
+                    # Fallback to the last numeric column as a best guess
+                    numeric_cols = df_modified.select_dtypes(include=['number']).columns
+                    y_col = numeric_cols[-1] if len(numeric_cols) > 0 else df_modified.columns[-1]
+                
+                # Now we use the modified dataframe with the 'x_group' column instead of separate x and hue
+                print(f"[DEBUG] Creating grouped annotator with pairs: {pairs}")
+                annotator = Annotator(ax, pairs, data=df_modified, x='x_group', y=y_col)
+                
+                # Add annotations with custom p-values
+                try:
+                    # Configure the annotator with enhanced settings for better visibility
+                    # Get plot limits for positioning
+                    ymin, ymax = ax.get_ylim()
+                    y_range = ymax - ymin
+                    
+                    # Calculate a good position above the data
+                    # Adjust these values as needed for your specific plots
+                    line_pos = ymax + y_range * 0.1  # Start 10% above the top of the plot
+                    
+                    # Get current alpha level for custom p-value thresholds
+                    try:
+                        alpha = float(self.alpha_level_var.get())
+                    except (ValueError, AttributeError):
+                        alpha = 0.05  # Default if not set or invalid
+                    
+                    # Get the current alpha level for custom p-value thresholds
+                    try:
+                        alpha = float(self.alpha_level_var.get())
+                    except (ValueError, AttributeError):
+                        alpha = 0.05  # Default if not set or invalid
+                    
+                        # Configure p-value thresholds directly in the format required by statannotations
+                    pvalue_format = {
+                        'text_format': 'star',
+                        'pvalue_thresholds': [
+                            (alpha/5000, '****'),  # 4 stars threshold (e.g., 0.00001 at alpha=0.05)
+                            (alpha/50, '***'),    # 3 stars threshold (e.g., 0.001 at alpha=0.05)
+                            (alpha/5, '**'),      # 2 stars threshold (e.g., 0.01 at alpha=0.05)
+                            (alpha, '*'),         # 1 star threshold (alpha itself)
+                            (1, 'ns')             # Not significant
+                        ]
+                    }
+                    
+                    # Configure the annotator with the same settings as _add_ungrouped_annotations
+                    annotator.configure(test=None, text_format='star', 
+                                        pvalue_format=pvalue_format,
+                                        loc='inside',
+                                        line_width=self.linewidth.get()
+                                        )
+                    
+                    # Generate annotations with the current alpha setting using the same method as _add_ungrouped_annotations
+                    annotations = [self.pval_to_annotation(p) for p in pvalues]
+                    
+                    # Debug to check consistency
+                    print(f"[DEBUG] Alpha level: {alpha}, creating grouped annotations: {list(zip([f'{p:.4g}' for p in pvalues], annotations))}")
+                    
+                    # Set the custom annotations
+                    annotator.set_custom_annotations(annotations)
+                    
+                    # Increase the y-limit to make room for annotations
+                    ax.set_ylim(ymin, ymax + y_range * 0.3)
+                    
+                    # Set custom p-values and annotations using the current alpha level
+                    if pvalues:
+                        # Get current alpha level from dropdown
+                        try:
+                            current_alpha = float(self.alpha_level_var.get())
+                        except (ValueError, AttributeError):
+                            current_alpha = 0.05  # Default if not set or invalid
+                        
+                        # Generate annotations with the current alpha setting
+                        annotations = []
+                        for p in pvalues:
+                            annotation = self.pval_to_annotation(p)  # This already uses alpha_level_var internally
+                            annotations.append(annotation)
+                        
+                        # Debug to check consistency
+                        print(f"[DEBUG] Alpha level: {current_alpha}, creating annotations for {x_cat}: {list(zip([f'{p:.4g}' for p in pvalues], annotations))}")
+                            
+                        annotator.set_custom_annotations(annotations)
+                        annotator.annotate()
+                        print(f"[DEBUG] Added {len(pvalues)} annotation(s) for groups in category {x_cat}")
+                    else:
+                        print(f"[DEBUG] No significant p-values to annotate for category {x_cat}")
+                except Exception as e:
+                    print(f"[DEBUG] Error with statannotations for groups: {e}")
+                    # Fallback to a simpler method if statannotations fails
+                    self._fallback_add_annotations(ax, pairs, pvalues)
+                
+    # The generate_statistics method has been removed as its functionality is now integrated
+    # directly into the plot_graph method for a streamlined workflow.
+    
     def calculate_and_store_pvals(self, df_plot, x_col, value_col, hue_col=None):
         """Backward-compatible wrapper for calculate_statistics"""
         stats_result = self.calculate_statistics(df_plot, x_col, value_col, hue_col)
@@ -183,11 +840,13 @@ class ExPlotApp:
         return stats_result
     def __init__(self, root):
         self.latest_pvals = {}  # {(group, h1, h2): pval or (h1, h2): pval}
+        self.latest_test_info = {}  # Stores detailed test information for each p-value key
 
         self.root = root
         self.version = VERSION  # Use the global VERSION constant
         self.root.title(f'Excel Plotter v{VERSION}')
-        self.df = None
+        self.df = None           # Original raw dataframe
+        self.df_work = None      # Working dataframe for plotting and statistics
         self.excel_file = None
         self.preview_label = None
         self.config_dir = self.get_config_dir()
@@ -207,7 +866,10 @@ class ExPlotApp:
         self.strip_black_var = tk.BooleanVar(value=True)
         self.show_stripplot_var = tk.BooleanVar(value=True)
         self.bar_outline_var = tk.BooleanVar(value=False)
-        self.plot_kind_var = tk.StringVar(value="bar")  # "bar", "box", or "xy"
+        self.violin_inner_box_var = tk.BooleanVar(value=True)  # Show box inside violin plots
+        self.plot_kind_var = tk.StringVar(value="bar")  # "bar", "box", "violin", or "xy"
+        # Outline color setting ("as_set", "black", "gray", "white")
+        self.outline_color_var = tk.StringVar(value="as_set")
         # Error bar settings
         self.errorbar_type_var = tk.StringVar(value="SD")
         # Statistics settings
@@ -469,29 +1131,35 @@ class ExPlotApp:
         self.setup_ui()
         self.setup_statistics_settings_tab()
 
-    def pval_to_annotation(self, pval):
-        """Return annotation string for a given p-value based on the selected alpha level.
-        Returns '?' if pval is None or NaN."""
+    def pval_to_annotation(self, pval, alpha=None):
+        """Return annotation string for a given p-value using the same thresholds as statannotations.
+        Returns '?' if pval is None or NaN, or the appropriate number of stars."""
         if pval is None or (isinstance(pval, float) and math.isnan(pval)):
             return "?"
             
-        # Get the current alpha level
-        try:
-            alpha = float(self.alpha_level_var.get())
-        except (ValueError, AttributeError):
-            alpha = 0.05  # Default if not set or invalid
+        # Get the current alpha level for dynamic thresholds if not provided
+        if alpha is None:
+            try:
+                alpha = float(self.alpha_level_var.get())
+            except (ValueError, AttributeError):
+                alpha = 0.05  # Default if not set or invalid
             
-        if pval > alpha:
-            return "ns"
-        elif pval <= alpha/5000:  # 4 stars threshold
-            return "****"
-        elif pval <= alpha/50:    # 3 stars threshold
-            return "***"
-        elif pval <= alpha/5:     # 2 stars threshold
-            return "**"
-        elif pval <= alpha:       # 1 star threshold
-            return "*"
-
+        # Define the same thresholds as in the statannotations configuration
+        # Note: The order is important - we check from most to least significant
+        thresholds = [
+            (1e-10, '****'),  # Special case for very small p-values
+            (alpha/5000, '****'),  # 4 stars threshold (e.g., 0.00001 at alpha=0.05)
+            (alpha/50, '***'),    # 3 stars threshold (e.g., 0.001 at alpha=0.05)
+            (alpha/5, '**'),      # 2 stars threshold (e.g., 0.01 at alpha=0.05)
+            (alpha, '*'),         # 1 star threshold (alpha itself)
+            (1.1, 'ns')           # Not significant (using 1.1 to catch all p > 1.0 as ns)
+        ]
+        
+        # Find the appropriate symbol for the given p-value
+        for threshold, symbol in sorted(thresholds, key=lambda x: x[0]):
+            if pval <= threshold:
+                return symbol
+        return 'ns'
     def format_pvalue_matrix(self, matrix):
         """Format a p-value matrix as a readable ASCII table with aligned columns and dashes on the diagonal."""
         import pandas as pd
@@ -544,7 +1212,7 @@ class ExPlotApp:
         ttk.Label(frame, text="t-test type:").grid(row=1, column=0, sticky="w", padx=8, pady=8)
         # Use the existing ttest_type_var variable initialized in __init__
         ttest_options = [
-            "Student's t-test (unpaired)",
+            "Student's t-test (unpaired, equal variances)",
             "Welch's t-test (unpaired, unequal variances)",
             "Paired t-test"
         ]
@@ -613,7 +1281,9 @@ class ExPlotApp:
         file_menu.add_command(label="Open Excel File", command=self.open_file)
         file_menu.add_command(label="Load Example Data", command=self.load_example_data)
         file_menu.add_command(label="Export to Excel", command=self.export_to_excel)
-        file_menu.add_command(label="Save Graph", command=self.save_graph)
+        file_menu.add_separator()
+        file_menu.add_command(label="Save PNG", command=lambda: self.save_graph('png'))
+        file_menu.add_command(label="Save PDF", command=lambda: self.save_graph('pdf'))
         file_menu.add_separator()
         file_menu.add_command(label="Save Project", command=self.save_project)
         file_menu.add_command(label="Load Project", command=self.load_project)
@@ -1143,40 +1813,49 @@ class ExPlotApp:
         except Exception as e:
             messagebox.showerror("Error", f"Failed to export data: {str(e)}")
     
-    def save_graph(self):
-        """Save the current graph as an image file."""
+    def save_graph(self, file_format='png'):
+        """Save the current graph as an image file.
+        
+        Args:
+            file_format (str): The format to save the graph in ('png' or 'pdf')
+        """
         if not hasattr(self, 'fig') or self.fig is None:
             messagebox.showerror("Error", "No graph to save. Please generate a graph first.")
             return
             
+        # Set up file dialog options based on format
+        if file_format == 'pdf':
+            defaultextension = ".pdf"
+            filetypes = [("PDF files", "*.pdf"), ("All files", "*.*")]
+            title = "Save as PDF"
+        else:  # Default to PNG
+            defaultextension = ".png"
+            filetypes = [("PNG files", "*.png"), ("All files", "*.*")]
+            title = "Save as PNG"
+            
         file_path = filedialog.asksaveasfilename(
-            defaultextension=".png",
-            filetypes=[
-                ("PNG files", "*.png"),
-                ("PDF files", "*.pdf"),
-                ("SVG files", "*.svg"),
-                ("JPEG files", "*.jpg"),
-                ("All files", "*.*")
-            ],
-            title="Save Graph"
+            defaultextension=defaultextension,
+            filetypes=filetypes,
+            title=title
         )
         
         if not file_path:
             return  # User cancelled
             
         try:
-            # Get the file extension
-            extension = os.path.splitext(file_path)[1].lower()
+            # Ensure the file has the correct extension
+            if not file_path.lower().endswith(f".{file_format}"):
+                file_path = f"{os.path.splitext(file_path)[0]}.{file_format}"
             
-            # Save with appropriate DPI based on format
-            if extension == '.pdf' or extension == '.svg':
-                # Vector formats - save at high quality
-                self.fig.savefig(file_path, bbox_inches='tight')
-            else:
-                # Raster formats - use appropriate DPI
-                self.fig.savefig(file_path, dpi=300, bbox_inches='tight')
+            # Save with appropriate settings based on format
+            if file_format == 'pdf':
+                self.fig.savefig(file_path, format='pdf', bbox_inches='tight')
+                message = f"PDF saved to {file_path}"
+            else:  # PNG
+                self.fig.savefig(file_path, format='png', dpi=300, bbox_inches='tight')
+                message = f"PNG image saved to {file_path}"
                 
-            messagebox.showinfo("Success", f"Graph saved to {file_path}")
+            messagebox.showinfo("Success", message)
             
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save graph: {str(e)}")
@@ -1246,7 +1925,7 @@ class ExPlotApp:
         
         # General Tab Content
         tk.Label(general_tab, text="Default Plot Type:", anchor="w").grid(row=0, column=0, sticky="w", padx=10, pady=10)
-        ttk.Combobox(general_tab, textvariable=self.settings_plot_kind_var, values=["bar", "box", "xy"], width=15, state="readonly").grid(row=0, column=1, sticky="w", padx=10, pady=10)
+        ttk.Combobox(general_tab, textvariable=self.settings_plot_kind_var, values=["bar", "box", "violin", "xy"], width=15, state="readonly").grid(row=0, column=1, sticky="w", padx=10, pady=10)
         
         # Plot Settings Tab Content
         tk.Checkbutton(plot_settings_tab, text="Show stripplot", variable=self.settings_show_stripplot_var).grid(row=0, column=0, sticky="w", padx=10, pady=5)
@@ -1265,7 +1944,7 @@ class ExPlotApp:
         tk.Checkbutton(stats_tab, text="Use statistics by default", variable=self.settings_use_stats_var).grid(row=0, column=0, columnspan=2, sticky="w", padx=10, pady=5)
         
         tk.Label(stats_tab, text="t-test type:", anchor="w").grid(row=1, column=0, sticky="w", padx=10, pady=10)
-        ttest_options = ["Student's t-test (unpaired)", "Welch's t-test (unpaired, unequal variances)", "Paired t-test"]
+        ttest_options = ["Student's t-test (unpaired, equal variances)", "Welch's t-test (unpaired, unequal variances)", "Paired t-test"]
         ttk.Combobox(stats_tab, textvariable=self.settings_ttest_type_var, values=ttest_options, width=35, state="readonly").grid(row=1, column=1, sticky="w", padx=10, pady=10)
         
         tk.Label(stats_tab, text="T-test Alternative:", anchor="w").grid(row=2, column=0, sticky="w", padx=10, pady=10)
@@ -1770,11 +2449,31 @@ class ExPlotApp:
         ttk.Button(window, text="Close", command=window.destroy).pack(pady=10)
 
     def show_statistical_details(self):
+        """Show a window with detailed statistical results.
+        Now checks if statistics have been generated before displaying results.
+        """
+        # Check if statistics have been generated yet
+        if not hasattr(self, 'latest_pvals') or not self.latest_pvals:
+            messagebox.showinfo("No Statistics", "No statistics have been generated yet. Please use the 'Generate Statistics' button first.")
+            return
+            
+        # Create the statistical details window with a wider default size
         window = tk.Toplevel(self.root)
         window.title("Statistical Details")
-        window.geometry("500x600")
-        details_text = tk.Text(window, wrap='word', height=30, width=100)
-        details_text.pack(fill='both', expand=True, padx=10, pady=10)
+        window.geometry("700x700")  # Increased width from 500 to 700
+        
+        # Create a frame to hold the text widget and scrollbar
+        frame = ttk.Frame(window)
+        frame.pack(fill='both', expand=True, padx=10, pady=10)
+        
+        # Add a scrollbar
+        scrollbar = ttk.Scrollbar(frame)
+        scrollbar.pack(side='right', fill='y')
+        
+        # Create the text widget with the scrollbar
+        details_text = tk.Text(frame, wrap='word', height=30, width=100, yscrollcommand=scrollbar.set)
+        details_text.pack(side='left', fill='both', expand=True)
+        scrollbar.config(command=details_text.yview)
         # Set a monospaced font for table alignment
         import tkinter.font as tkfont
         monospace_font = None
@@ -1790,12 +2489,40 @@ class ExPlotApp:
             print(f"[DEBUG] Failed to set monospace font: {e}")
         details_text.insert(tk.END, "Statistical Details\n\n")
         # Legend
-        details_text.insert(tk.END, "Significance Levels:\n")
-        details_text.insert(tk.END, "  ns      p > 0.05\n")
-        details_text.insert(tk.END, "   *      p ≤ 0.05\n")
-        details_text.insert(tk.END, "  **      p ≤ 0.01\n")
-        details_text.insert(tk.END, " ***      p ≤ 0.001\n")
-        details_text.insert(tk.END, "****      p ≤ 0.0001\n\n")
+        # Get the current alpha level from dropdown to show correct significance thresholds
+        try:
+            alpha = float(self.alpha_level_var.get())
+        except (ValueError, AttributeError):
+            alpha = 0.05  # Default if not set or invalid
+        
+        # Get the current alpha level for dynamic thresholds
+        try:
+            alpha = float(self.alpha_level_var.get())
+        except (ValueError, AttributeError):
+            alpha = 0.05  # Default if not set or invalid
+            
+        # Define the same thresholds as in the statannotations configuration
+        thresholds = [
+            (alpha/5000, '****'),  # 4 stars threshold (e.g., 0.00001 at alpha=0.05)
+            (alpha/50, '***'),    # 3 stars threshold (e.g., 0.001 at alpha=0.05)
+            (alpha/5, '**'),      # 2 stars threshold (e.g., 0.01 at alpha=0.05)
+            (alpha, '*'),         # 1 star threshold (alpha itself)
+            (1, 'ns')             # Not significant
+        ]
+        
+        # Display the significance levels with the actual threshold values
+        details_text.insert(tk.END, "Significance levels:\n")
+        prev_threshold = 1.0
+        for threshold, symbol in sorted(thresholds, reverse=True):
+            if symbol == 'ns':
+                details_text.insert(tk.END, f"     {symbol} p > {alpha:.5g}\n")
+            else:
+                details_text.insert(tk.END, f"{symbol:>5} p ≤ {threshold:.5g}\n")
+                prev_threshold = threshold
+        details_text.insert(tk.END, "\n")
+        
+        # Show which alpha level is currently being used
+        details_text.insert(tk.END, f"Current alpha level: {alpha}\n\n")
         # Try to reconstruct the most recent statistical tests
         # We'll use the existing p-values that were calculated for annotations
         # DO NOT clear the p-values dictionary here
@@ -1803,28 +2530,39 @@ class ExPlotApp:
             details_text.insert(tk.END, "No data loaded.\n")
             return
         try:
+            # Import required libraries at the beginning of the function
+            import pandas as pd
+            import numpy as np
+            import itertools
+            from scipy import stats
+            
             x_col = self.xaxis_var.get()
             group_col = self.group_var.get()
             value_cols = [col for var, col in self.value_vars if var.get() and col != x_col]
             if not x_col or not value_cols:
                 details_text.insert(tk.END, "No plot or insufficient columns selected.\n")
                 return
-            # Use self.df which has the _renamed_x column if it exists
-            df_plot = self.df.copy()
+                
+            # Check if we have a working dataframe
+            if not hasattr(self, 'df_work') or self.df_work is None:
+                details_text.insert(tk.END, "Error calculating statistics: Working dataframe is not available.\n")
+                details_text.insert(tk.END, "Please regenerate the plot and then use Generate Statistics.")
+                return
+                
+            # Use self.df_work which has the processed data
+            df_plot = self.df_work.copy()
+            
             if self.xaxis_renames:
                 df_plot[x_col] = df_plot[x_col].map(self.xaxis_renames).fillna(df_plot[x_col])
             if self.xaxis_order:
                 df_plot[x_col] = pd.Categorical(df_plot[x_col], categories=self.xaxis_order, ordered=True)
             plot_kind = self.plot_kind_var.get()
             swap_axes = self.swap_axes_var.get()
-            # Only show for bar/box plots with stats
-            # Only show statistical details if grouped data was used for last plot
-            if not self.use_stats_var.get() or not getattr(self, 'stats_enabled_for_this_plot', False):
-                details_text.insert(tk.END, "Statistical tests were not enabled for the last plot or data was not grouped.\n")
+            # Check if we have any statistics calculated
+            if not hasattr(self, 'latest_pvals') or not self.latest_pvals:
+                details_text.insert(tk.END, "No statistics have been calculated for this plot.\n")
+                details_text.insert(tk.END, "\nUse the 'Generate Statistics' button to calculate statistics and see detailed results.")
                 return
-            import itertools
-            from scipy import stats
-            import pandas as pd
             try:
                 import pingouin as pg
             except ImportError:
@@ -1848,6 +2586,7 @@ class ExPlotApp:
                         # Ungrouped Data: show statistical tests based on x-axis categories
                         # Import pandas for DataFrame operations
                         import pandas as pd
+                        import numpy as np
                         
                         # Get x categories (these are the values we're comparing)
                         x_categories = df_plot[x_col].dropna().unique() if x_col in df_plot else []
@@ -1941,7 +2680,7 @@ class ExPlotApp:
                                         anova_p = None
                                         
                                     if anova_p is not None:
-                                        details_text.insert(tk.END, f"Main ANOVA result: p = {anova_p:.4g} {self.pval_to_annotation(anova_p)}\n")
+                                        details_text.insert(tk.END, f"Main ANOVA result: p = {anova_p:.4g} {self.pval_to_annotation(anova_p, alpha=alpha)}\n")
                                         details_text.insert(tk.END, "")
                                         
                                         # Add guidance for non-significant ANOVA results
@@ -2220,6 +2959,15 @@ class ExPlotApp:
                                                             key1_matches_j = (float(key[1]) == float(j))
                                                             
                                                             if (key0_matches_i and key1_matches_j) or (key0_matches_j and key1_matches_i):
+                                                                if plot_kind == "bar":
+                                                                    loc = "inside"
+                                                                    text_offset = 0
+                                                                elif plot_kind == "box":
+                                                                    loc = "outside"
+                                                                    text_offset = 10
+                                                                elif plot_kind == "violin":
+                                                                    loc = "outside"
+                                                                    text_offset = 10
                                                                 p_val = val
                                                                 break
                                                         except ValueError:
@@ -2237,11 +2985,121 @@ class ExPlotApp:
                                 details_text.insert(tk.END, "No matching p-values found in latest_pvals dictionary.\n")
                                 details_text.insert(tk.END, f"Keys available: {list(self.latest_pvals.keys())[:5]}\n")
                     else:
-                        # Grouped Data: 1 group, N categories
+                        # Grouped Data: multiple groups in a dataframe
                         unique_groups = df_plot[group_col].dropna().unique() if group_col in df_plot else []
                         x_categories = df_plot[x_col].dropna().unique() if x_col in df_plot else []
                         n_groups = len(unique_groups)
                         n_x_categories = len(x_categories)
+                        
+                        # First display information about which groups we're comparing
+                        details_text.insert(tk.END, f"Statistical comparison for groups: {', '.join(unique_groups)}\n")
+                        details_text.insert(tk.END, f"Across x-axis categories: {', '.join(x_categories)}\n\n")
+                        
+                        # Two types of keys might be used for storing p-values for grouped data:
+                        # 1. (x_category, group1, group2) - for group comparisons within an x category
+                        # 2. (group1, group2) - for direct group comparisons without x category
+                        
+                        # Check if we have triplet keys (x_category, group1, group2) format
+                        has_triplet_keys = any(isinstance(k, tuple) and len(k) == 3 for k in self.latest_pvals.keys())
+                        
+                        if has_triplet_keys:
+                            # Display results for each x-category separately
+                            has_results = False
+                            
+                            for x_cat in x_categories:
+                                # Print header for this x-category
+                                details_text.insert(tk.END, f"\nResults for category: {x_cat}\n")                                
+                                details_text.insert(tk.END, "-" * 40 + "\n")
+                                
+                                # Generate all possible group pairs for comparison
+                                for i in range(len(unique_groups)):
+                                    for j in range(i+1, len(unique_groups)):
+                                        group1, group2 = unique_groups[i], unique_groups[j]
+                                        
+                                        # Try different key formats for looking up p-values
+                                        keys_to_try = [
+                                            (x_cat, group1, group2),  # Standard triplet key
+                                            (x_cat, group2, group1),  # Reversed groups
+                                            (str(x_cat), group1, group2),  # String version
+                                            (str(x_cat), group2, group1)   # String reversed
+                                        ]
+                                        
+                                        # Also try with index numbers if available
+                                        x_idx = np.where(x_categories == x_cat)[0]
+                                        if len(x_idx) > 0:
+                                            x_idx = x_idx[0]
+                                            keys_to_try.extend([
+                                                (x_idx, group1, group2),
+                                                (x_idx, group2, group1),
+                                                (np.int64(x_idx), group1, group2),
+                                                (np.int64(x_idx), group2, group1)
+                                            ])
+                                        
+                                        # Look for p-value with any of the possible keys
+                                        p_val = None
+                                        key_found = None
+                                        
+                                        for key in keys_to_try:
+                                            if key in self.latest_pvals:
+                                                p_val = self.latest_pvals[key]
+                                                key_found = key
+                                                has_results = True
+                                                break
+                                        
+                                        # Display the result if found
+                                        if p_val is not None:
+                                            sig = self.pval_to_annotation(p_val, alpha=alpha)
+                                            
+                                            # Check if we have detailed test information
+                                            if key_found in self.latest_test_info:
+                                                test_info = self.latest_test_info[key_found]
+                                                test_name = test_info.get('test_used', 't-test')
+                                                
+                                                # Show test results in one line
+                                                details_text.insert(tk.END, f"{x_cat}: {group1} vs {group2} - {test_name}: ")
+                                                details_text.insert(tk.END, f"p = {p_val:.2g} {sig}")
+                                                
+                                                # Add test statistics if available
+                                                t_val = test_info.get('t', None)
+                                                df_val = test_info.get('df', None)
+                                                if t_val is not None:
+                                                    details_text.insert(tk.END, f", t = {t_val:.2f}")
+                                                    if df_val is not None:
+                                                        details_text.insert(tk.END, f", df = {df_val:.1f}")
+                                                details_text.insert(tk.END, "\n")
+                                                
+                                                # Add means and SEMs in a compact table
+                                                details_text.insert(tk.END, f"{'Group':<8} {'Mean':<10} {'SD ±':<10} {'n':<4}\n")
+                                                details_text.insert(tk.END, f"{'-' * 35}\n")
+                                                for group in [group1, group2]:
+                                                    group_data = df_plot[(df_plot[x_col] == x_cat) & (df_plot[group_col] == group)][value_cols[0]].dropna()
+                                                    if len(group_data) > 0:
+                                                        mean = group_data.mean()
+                                                        std = group_data.std(ddof=1)
+                                                        n = len(group_data)
+                                                        details_text.insert(tk.END, f"{group:<8} {mean:<10.4g} {std:<10.4g} {n:<4}\n")
+                                                details_text.insert(tk.END, "\n")
+                                            else:
+                                                # Fallback to basic display if detailed info not available
+                                                details_text.insert(tk.END, f"{x_cat}: {group1} vs {group2}: p = {p_val:.2g} {sig}\n")
+                                        else:
+                                            details_text.insert(tk.END, f"{group1} vs {group2}: No p-value found\n")
+                            
+                            if not has_results:
+                                details_text.insert(tk.END, "\nNo statistical results found for groupings.\n")
+                                details_text.insert(tk.END, "Try regenerating statistics with the 'Generate Statistics' button.\n")
+                            else:
+                                details_text.insert(tk.END, "\nNote: These statistics are the same as those used for plot annotations.\n")
+                        else:
+                            # Try standard pair keys (group1, group2) format
+                            details_text.insert(tk.END, "Checking for direct group comparisons...\n")
+                            
+                            # Display available keys for debugging
+                            if self.latest_pvals:
+                                details_text.insert(tk.END, f"Available p-value keys: {list(self.latest_pvals.keys())[:5]}\n\n")
+                            else:
+                                details_text.insert(tk.END, "No p-values stored. Please regenerate statistics.\n")
+                        
 
                         if n_groups == 1:
                             if n_x_categories == 1:
@@ -2281,12 +3139,30 @@ class ExPlotApp:
                                     })
                                     
                                     # Use run_ttest from explot_stats module
-                                    p_val, ttest_cats = run_ttest(
+                                    p_val, ttest_results = run_ttest(
                                         temp_df, 'value', cat1, cat2, 'group', 
                                         test_type=ttest_type, alternative=alternative
                                     )
-                                    p_annotation = self.pval_to_annotation(ttest_cats.pvalue)
-                                    details_text.insert(tk.END, f"t = {ttest_cats.statistic:.4g}, p = {ttest_cats.pvalue:.4g} {p_annotation}\n")
+                                    
+                                    # Display detailed test information
+                                    if isinstance(ttest_results, dict):
+                                        # Use the actual test that was performed
+                                        if 'test_used' in ttest_results:
+                                            actual_test = ttest_results['test_used']
+                                            details_text.insert(tk.END, f"Actual test performed: {actual_test}\n")
+                                        
+                                        # Show test statistics
+                                        p_val = ttest_results.get('p-val', 1.0)
+                                        t_val = ttest_results.get('t', 'N/A')
+                                        df_val = ttest_results.get('df', 'N/A')
+                                        p_annotation = self.pval_to_annotation(p_val)
+                                        details_text.insert(tk.END, f"t = {t_val if t_val == 'N/A' else f'{t_val:.4g}'}, ")
+                                        details_text.insert(tk.END, f"df = {df_val if df_val == 'N/A' else f'{df_val:.4g}'}, ")
+                                        details_text.insert(tk.END, f"p = {p_val:.4g} {p_annotation}\n")
+                                    else:
+                                        # Fallback for backward compatibility
+                                        p_annotation = self.pval_to_annotation(p_val)
+                                        details_text.insert(tk.END, f"p = {p_val:.4g} {p_annotation}\n")
                                 except Exception as e:
                                     details_text.insert(tk.END, f"T-test failed: {e}\n")
                             elif n_x_categories > 2 and pg is not None:
@@ -2394,7 +3270,7 @@ class ExPlotApp:
                                             for idx2, group2 in enumerate(posthoc.columns):
                                                 if idx1 < idx2:  # Only show each comparison once
                                                     pval = posthoc.loc[group1, group2]
-                                                    sig = self.pval_to_annotation(pval)
+                                                    sig = self.pval_to_annotation(pval, alpha=alpha)
                                                     details_text.insert(tk.END, f"{group1} vs {group2}: p = {pval:.4g} {sig}\n")
                                     except Exception as e:
                                         details_text.insert(tk.END, f"Posthoc {stored_posthoc_type} failed: {e}\n")
@@ -2427,39 +3303,10 @@ class ExPlotApp:
                             ttest_type = self.ttest_type_var.get()
                             alternative = self.ttest_alternative_var.get()
                             details_text.insert(tk.END, f"Test Used: {ttest_type} ({alternative}) for multiple groups\n")
-                            
-                            # Prepare for storing p-values for two groups
-                            for i, g in enumerate(base_groups):
-                                df_sub = df_plot[df_plot[x_col] == g]
-                                h1, h2 = hue_groups
-                                
-                                # Get data for each group
-                                vals1 = df_sub[df_sub[group_col] == h1][val_col].dropna().astype(float)
-                                vals2 = df_sub[df_sub[group_col] == h2][val_col].dropna().astype(float)
-                                
-                                if len(vals1) >= 2 and len(vals2) >= 2:
-                                    # Perform t-test based on selected type
-                                    if ttest_type == "Welch's t-test":
-                                        t_stat, p_val = stats.ttest_ind(vals1, vals2, equal_var=False, alternative=alternative)
-                                    elif ttest_type == "Student's t-test":
-                                        t_stat, p_val = stats.ttest_ind(vals1, vals2, equal_var=True, alternative=alternative)
-                                    elif ttest_type == "Paired t-test":
-                                        # Ensure equal length for paired test
-                                        min_len = min(len(vals1), len(vals2))
-                                        t_stat, p_val = stats.ttest_rel(vals1[:min_len], vals2[:min_len], alternative=alternative)
-                                    else:
-                                        t_stat, p_val = stats.ttest_ind(vals1, vals2, equal_var=False, alternative=alternative)
-                                    
-                                    # Store p-value for this category and group pair
-                                    key = (g, h1, h2)
-                                    self.latest_pvals[key] = p_val
-                                    
-                                    # Display p-value details
-                                    p_annotation = self.pval_to_annotation(p_val)
-                                    details_text.insert(tk.END, f"{g}: {h1} vs {h2}: p = {p_val:.4g} {p_annotation}\n")
                         else:
                             details_text.insert(tk.END, "Multiple groups present, but no suitable test could be performed.\n")
                             continue
+                        details_text.insert(tk.END, "\n" + "="*80 + "\n\n")
                         
                         # Process each x-axis category
                         for i, g in enumerate(base_groups):
@@ -2612,9 +3459,14 @@ class ExPlotApp:
                                                 # Try to use explot_stats module for consistent p-value formatting
                                                 try:
                                                     from explot_stats import pval_to_annotation
-                                                    # Use the standardized p-value formatting from explot_stats
+                                                    # Use the standardized p-value formatting from explot_stats with current alpha
                                                     if not np.isnan(pval_val):
-                                                        annotation = pval_to_annotation(pval_val, alpha=0.05)
+                                                        try:
+                                                            current_alpha = float(self.alpha_level_var.get())
+                                                        except (ValueError, AttributeError):
+                                                            current_alpha = 0.05  # Default if not set or invalid
+                                                            
+                                                        annotation = pval_to_annotation(pval_val, alpha=current_alpha)
                                                         
                                                         # Format p-value based on magnitude using the same approach as annotations
                                                         if pval_val < 0.001:
@@ -2708,7 +3560,7 @@ class ExPlotApp:
                                                     t_stat, p_val = stats.ttest_ind(vals1, vals2, equal_var=False)
                                                 
                                                 # Format the p-value for display
-                                                p_annotation = self.pval_to_annotation(p_val)
+                                                p_annotation = self.pval_to_annotation(p_val, alpha=alpha)
                                                 details_text.insert(tk.END, f"{g}: {h1} vs {h2}: p = {p_val:.4g} {p_annotation} (calculated)\n")
                                                 
                                                 # Also update the matrix for display
@@ -2750,34 +3602,74 @@ class ExPlotApp:
                                     alternative = self.ttest_alternative_var.get()
                                     
                                     try:
-                                        # Use explot_stats module for consistent calculations
+                                        # Create a temporary DataFrame for the t-test
+                                        temp_df = pd.DataFrame({
+                                            'group': [h1] * len(vals1) + [h2] * len(vals2),
+                                            'value': np.concatenate([vals1, vals2])
+                                        })
+                                        
+                                        # Calculate statistics
+                                        means = [vals1.mean(), vals2.mean()]
+                                        stds = [vals1.std(ddof=1), vals2.std(ddof=1)]
+                                        ns = [len(vals1), len(vals2)]
+                                        sems = [std / np.sqrt(n) for std, n in zip(stds, ns)]
+                                        
+                                        # Get error type from settings (SD or SEM)
+                                        error_type = self.errorbar_type_var.get()
+                                        errors = stds if error_type == 'SD' else sems
+                                        error_label = 'SD' if error_type == 'SD' else 'SEM'
+                                        
+                                        # Perform the appropriate t-test
                                         try:
-                                            # Import directly here to avoid circular imports
                                             from explot_stats import run_ttest
-                                            
-                                            # Create a temporary DataFrame for the t-test
-                                            temp_df = pd.DataFrame({
-                                                'group': [h1] * len(vals1) + [h2] * len(vals2),
-                                                'value': np.concatenate([vals1, vals2])
-                                            })
-                                            
-                                            # Use run_ttest from explot_stats module
-                                            p_val, ttest_cats = run_ttest(
+                                            p_val, ttest_result = run_ttest(
                                                 temp_df, 'value', h1, h2, 'group', 
                                                 test_type=ttest_type, alternative=alternative
                                             )
                                         except ImportError:
                                             # Fall back to direct calculations if module not available
                                             if ttest_type == "Paired t-test" and len(vals1) == len(vals2):
-                                                ttest_cats = stats.ttest_rel(vals1, vals2, alternative=alternative)
-                                            elif ttest_type == "Student's t-test (unpaired)":
-                                                ttest_cats = stats.ttest_ind(vals1, vals2, alternative=alternative, equal_var=True)
+                                                ttest_result = stats.ttest_rel(vals1, vals2, alternative=alternative)
+                                                test_stat = ttest_result.statistic
+                                                df = len(vals1) - 1  # n-1 for paired t-test
+                                            elif ttest_type == "Student's t-test (unpaired, equal variances)":
+                                                ttest_result = stats.ttest_ind(vals1, vals2, alternative=alternative, equal_var=True)
+                                                test_stat = ttest_result.statistic
+                                                df = len(vals1) + len(vals2) - 2  # n1 + n2 - 2 for Student's t-test
                                             else:  # Welch's t-test (default)
-                                                ttest_cats = stats.ttest_ind(vals1, vals2, alternative=alternative, equal_var=False)
-                                            p_annotation = self.pval_to_annotation(ttest_cats.pvalue)
-                                            details_text.insert(tk.END, f"{g}: {h1} vs {h2}: t = {ttest_cats.statistic:.4g}, p = {ttest_cats.pvalue:.4g} {p_annotation}\n")
-                                            key = (g, h1, h2) if (g, h1, h2) not in self.latest_pvals else (g, h2, h1)
-                                            self.latest_pvals[key] = ttest_cats.pvalue
+                                                ttest_result = stats.ttest_ind(vals1, vals2, alternative=alternative, equal_var=False)
+                                                test_stat = ttest_result.statistic
+                                                # Welch-Satterthwaite equation for degrees of freedom
+                                                var1, var2 = np.var(vals1, ddof=1), np.var(vals2, ddof=1)
+                                                n1, n2 = len(vals1), len(vals2)
+                                                df = ((var1/n1 + var2/n2)**2) / ((var1/n1)**2/(n1-1) + (var2/n2)**2/(n2-1))
+                                            p_val = ttest_result.pvalue
+                                        
+                                        # Store the p-value for this comparison
+                                        key = (g, h1, h2) if (g, h1, h2) not in self.latest_pvals else (g, h2, h1)
+                                        self.latest_pvals[key] = p_val
+                                        
+                                        # Format test statistics
+                                        test_name = ttest_type.split('(')[0].strip()
+                                        p_annotation = self.pval_to_annotation(p_val)
+                                        
+                                        # First line: Test statistics (compact format)
+                                        if 'test_stat' in locals() and 'df' in locals():
+                                            test_name = "Welch's t-test" if 'Welch' in ttest_type else 't-test'
+                                            details_text.insert(tk.END, 
+                                                f"{g}: {h1} vs {h2} - {test_name}: "
+                                                f"p = {p_val:.2g} {p_annotation}, "
+                                                f"t = {test_stat:.2f}, "
+                                                f"df = {df:.1f}\n"
+                                            )
+                                        
+                                        # Second table: Means and errors (compact format)
+                                        details_text.insert(tk.END, f"{'Group':<8} {'Mean':<10} {error_label+' ±':<10} {'n':<4}\n")
+                                        details_text.insert(tk.END, f"{'-' * 35}\n")
+                                        for group, mean, error, n in zip([h1, h2], means, errors, ns):
+                                            details_text.insert(tk.END, f"{group:<8} {mean:<10.4g} {error:<10.4g} {n:<4}\n")
+                                        details_text.insert(tk.END, "\n")
+                                        
                                     except Exception as e:
                                         details_text.insert(tk.END, f"T-test failed for {g}: {h1} vs {h2}: {e}\n")
 
@@ -2831,6 +3723,7 @@ class ExPlotApp:
             'errorbar_black': True,
             'errorbar_capsize': 'Default',
             'bar_outline': False,
+            'outline_color': 'as_set',  # Default outline color setting
             'upward_errorbar': True,  # Use upward-only error bars by default
             'use_stats': False,  # Default 'Use statistics' setting
             'ttest_type': "Welch's t-test (unpaired, unequal variances)",
@@ -2884,6 +3777,8 @@ class ExPlotApp:
             self.errorbar_capsize_var.set(preferences['errorbar_capsize'])
         if hasattr(self, 'bar_outline_var') and 'bar_outline' in preferences:
             self.bar_outline_var.set(preferences['bar_outline'])
+        if hasattr(self, 'outline_color_var') and 'outline_color' in preferences:
+            self.outline_color_var.set(preferences['outline_color'])
         if hasattr(self, 'upward_errorbar_var') and 'upward_errorbar' in preferences:
             self.upward_errorbar_var.set(preferences['upward_errorbar'])
             
@@ -3069,26 +3964,37 @@ class ExPlotApp:
 
         right_frame = tk.Frame(main_frame)
         right_frame.pack(side='right', fill='both', expand=True)
-
+        
+        # Create a top frame for action buttons
+        top_button_frame = tk.Frame(right_frame, pady=10)
+        top_button_frame.pack(fill='x', padx=10, pady=(5, 10))
+        
+        # Plot and Stats buttons side by side in the top frame
+        plot_button = tk.Button(
+            top_button_frame, 
+            text="Generate Plot", 
+            command=self.plot_graph, 
+            width=15, 
+            height=2
+        )
+        plot_button.pack(side="left", padx=5)
+        
+        self.stats_details_btn = tk.Button(
+            top_button_frame, 
+            text="Statistical Details", 
+            command=self.show_statistical_details,
+            width=15, 
+            height=2
+        )
+        self.stats_details_btn.pack(side="left", padx=5)
+        
+        # Canvas frame for the plot
         self.canvas_frame = tk.Frame(right_frame)
-        self.canvas_frame.pack(fill='both', expand=True)
-
-        tk.Button(right_frame, text='Generate Plot', command=self.plot_graph).pack(pady=5)
-        tk.Button(right_frame, text='Save as PDF', command=self.save_pdf).pack(pady=5)
-        # Statistical Details button with dynamic visibility
-        self.stats_details_btn = tk.Button(right_frame, text="Statistical Details", command=self.show_statistical_details)
-        self.stats_details_btn.pack_forget()  # Initially hidden
-
-        # Update visibility when the checkbox changes
-        def _toggle_stats_details_btn(*args):
-            try:
-                if self.use_stats_var.get():
-                    self.stats_details_btn.pack(pady=5)
-                else:
-                    self.stats_details_btn.pack_forget()
-            except Exception as e:
-                print(f"Error toggling stats details button: {e}")
-        self.use_stats_var.trace_add('write', _toggle_stats_details_btn)
+        self.canvas_frame.pack(fill='both', expand=True, padx=10, pady=(0, 10))
+        
+        # Bottom frame (kept for potential future use)
+        self.bottom_frame = tk.Frame(self.root)
+        self.bottom_frame.pack(side="bottom", fill="x")
 
 
         self.setup_basic_tab()
@@ -3142,11 +4048,16 @@ class ExPlotApp:
 
 
         
-        # We use the use_stats_var that was initialized in __init__
-        # No need to create it again here
+        # Statistics settings
         stats_frame = tk.Frame(opt_grp)
-        stats_frame.pack(anchor="w", pady=1)
+        stats_frame.pack(anchor="w", pady=2)
+        tk.Label(stats_frame, text="Statistics:").pack(side="left")
         tk.Checkbutton(stats_frame, text="Use statistics", variable=self.use_stats_var).pack(side="left")
+        
+        # Add checkbox for showing statistical annotations
+        self.show_statistics_annotations_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(opt_grp, text="Show statistical annotations on plot", variable=self.show_statistics_annotations_var).pack(anchor="w", pady=1)
+        
         # --- Error bar type (SD/SEM) ---
         # We use the errorbar_type_var that was initialized in __init__
         # No need to create it again here
@@ -3171,9 +4082,11 @@ class ExPlotApp:
         tk.Label(plot_type_radio_frame, text="Plot Type:").pack(anchor="w")
         bar_radio = tk.Radiobutton(plot_type_radio_frame, text="Bar Graph", variable=self.plot_kind_var, value="bar")
         box_radio = tk.Radiobutton(plot_type_radio_frame, text="Box Plot", variable=self.plot_kind_var, value="box")
+        violin_radio = tk.Radiobutton(plot_type_radio_frame, text="Violin Plot", variable=self.plot_kind_var, value="violin")
         xy_radio = tk.Radiobutton(plot_type_radio_frame, text="XY Plot", variable=self.plot_kind_var, value="xy")
         bar_radio.pack(anchor="w")
         box_radio.pack(anchor="w")
+        violin_radio.pack(anchor="w")
         xy_radio.pack(anchor="w")
         # XY options frame (right)
         self.xy_options_frame = tk.Frame(type_grp)
@@ -3253,6 +4166,11 @@ class ExPlotApp:
         bar_grp.pack(fill='x', padx=6, pady=4)
         tk.Checkbutton(bar_grp, text="Draw bar outlines", variable=self.bar_outline_var).pack(anchor="w", pady=1)
         tk.Checkbutton(bar_grp, text="Upward-only error bars", variable=self.upward_errorbar_var).pack(anchor="w", pady=1)
+        
+        # --- Violin Plot group ---
+        violin_grp = tk.LabelFrame(frame, text="Violin Plot", padx=6, pady=6)
+        violin_grp.pack(fill='x', padx=6, pady=4)
+        tk.Checkbutton(violin_grp, text="Show box inside violin", variable=self.violin_inner_box_var).pack(anchor="w", pady=1)
         
         # --- XY Plot group ---
         xy_grp = tk.LabelFrame(frame, text="XY Plot", padx=6, pady=6)
@@ -3601,6 +4519,29 @@ class ExPlotApp:
         except Exception as e:
             messagebox.showerror("Error Saving Project", f"An error occurred: {str(e)}")
             
+    def get_outline_color(self, color=None):
+        """Get the outline color based on the outline_color_var setting.
+        
+        Parameters:
+        color: Optional default color (used for as_set mode)
+        
+        Returns:
+        The outline color to use
+        """
+        outline_color_setting = self.outline_color_var.get()
+        
+        if outline_color_setting == "as_set" and color:
+            return color
+        elif outline_color_setting == "black":
+            return "black"
+        elif outline_color_setting == "gray":
+            return "gray"
+        elif outline_color_setting == "white":
+            return "white"
+        else:
+            # Default if no valid selection or no color provided for as_set
+            return "black"
+    
     def get_current_settings(self):
         """Gather current application settings for saving"""
         settings = {
@@ -3671,6 +4612,7 @@ class ExPlotApp:
                 'single_color': self.single_color_var.get() if hasattr(self, 'single_color_var') else list(self.custom_colors.keys())[0],
                 'palette': self.palette_var.get() if hasattr(self, 'palette_var') else list(self.custom_palettes.keys())[0],
                 'bar_outline': self.bar_outline_var.get() if hasattr(self, 'bar_outline_var') else False,
+                'outline_color': self.outline_color_var.get() if hasattr(self, 'outline_color_var') else 'as_set',
                 'strip_black': self.strip_black_var.get() if hasattr(self, 'strip_black_var') else True
             },
             'x_axis_renames': self.xaxis_renames,
@@ -3868,6 +4810,8 @@ class ExPlotApp:
                         self.palette_var.set(colors['palette'])
                 if 'bar_outline' in colors and hasattr(self, 'bar_outline_var'):
                     self.bar_outline_var.set(colors['bar_outline'])
+                if 'outline_color' in colors and hasattr(self, 'outline_color_var'):
+                    self.outline_color_var.set(colors['outline_color'])
                 if 'strip_black' in colors and hasattr(self, 'strip_black_var'):
                     self.strip_black_var.set(colors['strip_black'])
             
@@ -4338,6 +5282,20 @@ class ExPlotApp:
                 self.palette_preview.create_rectangle(x0, 2, x1, 18, fill=hexcode, outline='black')
         self.palette_dropdown.bind('<<ComboboxSelected>>', update_palette_preview)
         update_palette_preview()
+        
+        # --- Outline color group ---
+        outline_grp = tk.LabelFrame(frame, text="Outline Color", padx=6, pady=6)
+        outline_grp.pack(fill='x', padx=6, pady=4)
+        tk.Label(outline_grp, text="Set the outline color for bar, box, and violin plots:").pack(anchor="w")
+        
+        # Radio buttons for outline color options
+        outline_colors_frame = tk.Frame(outline_grp)
+        outline_colors_frame.pack(fill='x', pady=4)
+        
+        tk.Radiobutton(outline_colors_frame, text="Black", variable=self.outline_color_var, value="black").pack(anchor="w")
+        tk.Radiobutton(outline_colors_frame, text="Gray", variable=self.outline_color_var, value="gray").pack(anchor="w")
+        tk.Radiobutton(outline_colors_frame, text="As set", variable=self.outline_color_var, value="as_set").pack(anchor="w")
+        tk.Radiobutton(outline_colors_frame, text="White", variable=self.outline_color_var, value="white").pack(anchor="w")
 
     def update_color_palette_dropdowns(self):
         self.single_color_dropdown['values'] = list(self.custom_colors.keys())
@@ -4713,7 +5671,6 @@ class ExPlotApp:
         tk.Label(button_frame, text="Reorder:").pack(anchor="w")
         tk.Button(button_frame, text="Move Up", command=lambda: move_up()).pack(fill="x", pady=2)
         tk.Button(button_frame, text="Move Down", command=lambda: move_down()).pack(fill="x", pady=2)
-        tk.Button(button_frame, text="Delete", command=lambda: delete_item()).pack(fill="x", pady=2)
         
         # Function to move an item up in the list
         def move_up():
@@ -4762,27 +5719,6 @@ class ExPlotApp:
             listbox.selection_clear(0, tk.END)
             listbox.selection_set(new_idx)
             listbox.see(new_idx)
-        
-        # Function to delete an item from the list
-        def delete_item():
-            selected_idx = listbox.curselection()
-            if not selected_idx:
-                return
-                
-            idx = selected_idx[0]
-            item_text = listbox.get(idx)
-            
-            # Ask for confirmation
-            if messagebox.askyesno("Confirm Delete", f"Are you sure you want to delete '{item_text}'?"):
-                # Remove from listbox and original_values
-                listbox.delete(idx)
-                original_values.pop(idx)
-                
-                # Select the next item if available
-                if listbox.size() > 0:
-                    next_idx = min(idx, listbox.size() - 1)
-                    listbox.selection_set(next_idx)
-                    listbox.see(next_idx)
         
         # Add control buttons at the bottom
         control_frame = tk.Frame(main_frame)
@@ -5313,7 +6249,11 @@ class ExPlotApp:
     # The modify_dataframe method has been replaced by rename_x_labels and reorder_x_categories methods
 
     def plot_graph(self):
-        # This version includes better annotation handling for multiple x-axis categories
+        """Generate a plot using the current data and settings.
+        This method now integrates statistics calculation directly with plotting.
+        If 'Use statistics' is enabled, statistics will be calculated and annotated on the plot
+        based on the 'Show statistical annotations on plot' setting.
+        """
         # Robustly initialize show_errorbars at the very top
         show_errorbars = getattr(self, 'show_errorbars_var', None)
         if show_errorbars is not None:
@@ -5328,34 +6268,26 @@ class ExPlotApp:
                 print(f"[DEBUG] Forcing plot type to XY since fitting is enabled (was {current_plot_kind})")
                 self.plot_kind_var.set("xy")
 
-        if self.df is None:
+        # Clear any existing statistics when generating a new plot
+        self.latest_pvals = {}
+        
+        # Prepare the working dataframe
+        df_work, x_col, value_cols, group_col = self.prepare_working_dataframe()
+        
+        if df_work is None:
             return
+            
+        # Store current plot information for statistics generation
+        self.current_plot_info = {
+            'x_col': x_col,
+            'value_cols': value_cols,
+            'group_col': group_col
+        }
 
         try:
             linewidth = float(self.linewidth.get())
         except Exception:
             linewidth = 1.0
-            
-        # Get column selections
-        x_col = self.xaxis_var.get()
-        group_col = self.group_var.get()
-        if not group_col or group_col.strip() == '' or group_col == 'None':
-            group_col = None
-            
-        # Enable statistics for both grouped and ungrouped data
-        # Statistics will work for both group_col and pure x_col comparisons
-        self.stats_enabled_for_this_plot = True
-        
-        value_cols = [col for var, col in self.value_vars if var.get() and col != x_col]
-        
-        # Handle empty selections gracefully
-        if not x_col:
-            messagebox.showinfo("Missing X-axis", "Please select an X-axis column.")
-            return
-        
-        if not value_cols:
-            messagebox.showinfo("Missing Y-axis", "Please select at least one Y-axis column.")
-            return
             
         plot_mode = 'single' if len(value_cols) == 1 else 'overlay'
         plot_width = self.plot_width_var.get()
@@ -5366,28 +6298,14 @@ class ExPlotApp:
         # Get plot type early for margin calculations
         plot_kind = self.plot_kind_var.get()  # "bar", "box", or "xy"
         
-        # Create a working copy of the dataframe
-        df_work = self.df.copy()
-        
-        # Filter out excluded X values if any exist
-        if hasattr(self, 'excluded_x_values') and self.excluded_x_values:
-            df_work = df_work[~df_work[x_col].isin(self.excluded_x_values)]
-            if df_work.empty:
-                messagebox.showerror("Error", "All X values are excluded. Cannot generate plot.")
-                return
-        
-        # Apply renames to original values if any exist
-        if self.xaxis_renames:
-            renamed_series = df_work[x_col].map(lambda x: self.xaxis_renames.get(x, x))
-            df_work['_renamed_x'] = renamed_series
-            original_x_col = x_col
-            x_col = '_renamed_x'
-        else:
-            original_x_col = x_col
+        # Store the original X column for reference
+        original_x_col = x_col
+        if '_renamed_x' in df_work.columns:
+            original_x_col = self.xaxis_var.get()
             
         # Handle categorical vs numeric X values
         # Always treat X as categories for bar and box plots, numerical for xy plots
-        if plot_kind in ["bar", "box"]:
+        if plot_kind in ["bar", "box", "violin"]:
             # For bar and box plots with categorical X, create a mapping of values to categories
             # Get unique values and filter out NaN/None values
             unique_vals = df_work[x_col].unique()
@@ -5437,8 +6355,8 @@ class ExPlotApp:
             else:
                 top_margin += 0.5  # Standard XY plots need some extra room too
         
-        # Use larger top margin for plots with a group column that might need statistics
-        if group_col and self.use_stats_var.get():
+        # Add a little extra top margin for plots with a group column that might later get statistics
+        if group_col:
             # Scale based on plot size - smaller plots need relatively more space for annotations
             stat_margin = 0.5
             if plot_height_val < 2.0:
@@ -5593,7 +6511,17 @@ class ExPlotApp:
                     plot_dict = dict(ci=ci_val, capsize=0.2, palette=palette, errcolor='black', errwidth=linewidth, estimator=estimator)
                     # Add edge color if bar outline is enabled
                     if self.bar_outline_var.get():
-                        plot_dict.update(dict(edgecolor='black', linewidth=linewidth))
+                        # Get the appropriate outline color based on setting
+                        if hue_col and hue_col in df_plot.columns:  # Use palette colors for grouped data
+                            outline_color = self.get_outline_color(None)  # We'll handle colors per group
+                        else:  # Use single color for ungrouped data
+                            single_color_name = self.single_color_var.get()
+                            single_color = self.custom_colors.get(single_color_name, 'black')
+                            outline_color = self.get_outline_color(single_color)
+                        
+                        # Ensure linewidth is at least 0.5 for visibility
+                        effective_linewidth = max(linewidth, 0.5)
+                        plot_dict.update(dict(edgecolor=outline_color, linewidth=effective_linewidth))
                     plot_args.update(plot_dict)
                 elif plot_kind == "box":
                     plot_args.update(dict(palette=palette, linewidth=linewidth, showcaps=True, boxprops=dict(linewidth=linewidth), medianprops=dict(linewidth=linewidth), dodge=True, width=0.7))
@@ -5797,7 +6725,17 @@ class ExPlotApp:
                     
                     # Add edge color if bar outline is enabled
                     if self.bar_outline_var.get():
-                        base_args.update({'edgecolor': 'black', 'linewidth': linewidth})
+                        # Get the appropriate outline color based on setting
+                        if hue_col and hue_col in df_plot.columns:  # Use palette colors for grouped data
+                            outline_color = self.get_outline_color(None)  # We'll handle colors per group
+                        else:  # Use single color for ungrouped data
+                            single_color_name = self.single_color_var.get()
+                            single_color = self.custom_colors.get(single_color_name, 'black')
+                            outline_color = self.get_outline_color(single_color)
+                        
+                        # Ensure linewidth is at least 0.5 for visibility
+                        effective_linewidth = max(linewidth, 0.5)
+                        base_args.update({'edgecolor': outline_color, 'linewidth': effective_linewidth})
                     
                     if swap_axes:
                         plot_args = dict(
@@ -5811,6 +6749,22 @@ class ExPlotApp:
                         )
                 elif plot_kind == "box":
                     plot_args.update(dict(palette=palette, linewidth=linewidth, showcaps=True, boxprops=dict(linewidth=linewidth), medianprops=dict(linewidth=linewidth), dodge=True, width=0.7))
+                elif plot_kind == "violin":
+                    # Create a fresh set of arguments specifically for violin plots
+                    # Don't modify plot_args which might be used by other plot types
+                    violin_specific_args = dict(
+                        inner="box",  # Show box plot inside violin
+                        scale="width",  # Scale violins to have the same width
+                    )
+                    
+                    # Set up violin plot specific arguments without affecting other plot types
+                    plot_args.update(dict(
+                        palette=palette, 
+                        linewidth=linewidth, 
+                        dodge=True, 
+                        width=0.8,
+                        **violin_specific_args  # Add violin-specific arguments separately
+                    ))
                 elif plot_kind == "xy":
                     marker_size = self.xy_marker_size_var.get()
                     marker_symbol = self.xy_marker_symbol_var.get()
@@ -6282,17 +7236,34 @@ class ExPlotApp:
                 )
 
             # --- Plotting ---
+            # First prepare the palette (common to all plot types)
+            if hue_col and hue_col in df_plot.columns:
+                hue_groups = df_plot[hue_col].dropna().unique()
+                palette_name = self.palette_var.get()
+                palette_full = self.custom_palettes.get(palette_name, ["#333333"])
+                if len(palette_full) < len(hue_groups):
+                    palette_full = (palette_full * ((len(hue_groups) // len(palette_full)) + 1))
+                palette = palette_full[:len(hue_groups)]
+            else:
+                # Use single color for non-grouped data
+                single_color_name = self.single_color_var.get()
+                palette = [self.custom_colors.get(single_color_name, 'black')]
+            
+            # Create a separate section for each plot type with its own parameters
+            # This prevents parameter leakage between plot types
             if plot_kind == "bar":
-                # Ensure palette matches exact number of hue groups if hue_col exists
-                if hue_col and hue_col in df_plot.columns:
-                    hue_groups = df_plot[hue_col].dropna().unique()
-                    palette_name = self.palette_var.get()
-                    palette_full = self.custom_palettes.get(palette_name, ["#333333"])
-                    if len(palette_full) < len(hue_groups):
-                        palette_full = (palette_full * ((len(hue_groups) // len(palette_full)) + 1))
-                    plot_args["palette"] = palette_full[:len(hue_groups)]
+                # Start with fresh parameters for bar plots
+                bar_args = {}
                 
-                # Use only Seaborn's built-in error bars for bar plots
+                # Data parameters
+                bar_args['data'] = df_plot
+                bar_args['x'] = x_col if not swap_axes else value_col
+                bar_args['y'] = value_col if not swap_axes else x_col
+                bar_args['hue'] = hue_col
+                bar_args['ax'] = ax
+                bar_args['palette'] = palette
+                
+                # Bar plot specific settings
                 errorbar_type = self.errorbar_type_var.get()
                 capsize_option = self.errorbar_capsize_var.get()
                 
@@ -6309,9 +7280,9 @@ class ExPlotApp:
                 capsize = capsize_values.get(capsize_option, 0.4)  # Default to 0.4 if option not found
                 
                 if errorbar_type == 'SD':
-                    plot_args['errorbar'] = 'sd'  # or ci='sd' for older Seaborn
+                    bar_args['errorbar'] = 'sd'  # or ci='sd' for older Seaborn
                 else:
-                    plot_args['errorbar'] = 'se'  # Using native standard error parameter
+                    bar_args['errorbar'] = 'se'  # Using native standard error parameter
                 
                 # Set errorbar styling - capsize needs to be passed directly to barplot
                 # and line width needs to be in err_kws
@@ -6322,9 +7293,10 @@ class ExPlotApp:
                 # Prepare error bar styling
                 err_kws = {}
                 
-                # Remove any pre-existing color in err_kws
-                if 'err_kws' in plot_args:
-                    plot_args['err_kws'].pop('color', None)
+                # Set up error bar styling specifically for bar plots
+                err_kws = {}
+                
+                # We're using isolated parameters, so no need to clean up old values
 
                 # Get the linewidth setting
                 linewidth = self.linewidth.get()
@@ -6347,21 +7319,21 @@ class ExPlotApp:
                 # Map to Seaborn errorbar parameter
                 if errorbar_type == 'sem':
                     # Standard error of the mean
-                    plot_args['errorbar'] = 'se'
+                    bar_args['errorbar'] = 'se'
                     print(f"Using Standard Error of Mean (SEM) for error bars")
                 else:
                     # Standard deviation
-                    plot_args['errorbar'] = 'sd'
+                    bar_args['errorbar'] = 'sd'
                     print(f"Using Standard Deviation (SD) for error bars")
                 
                 # Ensure errorbar parameter is correctly set
-                print(f"Plot args for errorbar: {plot_args.get('errorbar')}")
+                print(f"Bar args for errorbar: {bar_args.get('errorbar')}")
                 
                 # Make sure it's not being overridden elsewhere
-                if 'err_style' in plot_args:
-                    print(f"Warning: err_style is already set to {plot_args['err_style']}")
-                if 'ci' in plot_args:
-                    print(f"Warning: ci is already set to {plot_args['ci']}")
+                if 'err_style' in bar_args:
+                    print(f"Warning: err_style is already set to {bar_args['err_style']}")
+                if 'ci' in bar_args:
+                    print(f"Warning: ci is already set to {bar_args['ci']}")
 
                 # Get error bar styling preferences
                 try:
@@ -6381,12 +7353,12 @@ class ExPlotApp:
                     err_kws['color'] = 'black'
                 else:
                     # Use plot's original color
-                    if 'palette' in plot_args and plot_args['palette']:
+                    if palette:
                         # Use first color from palette
-                        err_kws['color'] = plot_args['palette'][0]
-                    elif 'color' in plot_args:
-                        # Explicit color specified in plot args
-                        err_kws['color'] = plot_args['color']
+                        err_kws['color'] = palette[0]
+                    elif 'color' in bar_args:
+                        # Explicit color specified in bar args
+                        err_kws['color'] = bar_args['color']
                     else:
                         # Use single color from custom colors
                         color = self.custom_colors.get(self.single_color_var.get(), 'black')
@@ -6395,9 +7367,7 @@ class ExPlotApp:
                 # Always set linewidth
                 err_kws['linewidth'] = linewidth
 
-                # Remove any existing color specification
-                if 'err_kws' in plot_args:
-                    plot_args['err_kws'].pop('color', None)
+                # Since we're using isolated parameters, we don't need to clean up old values
                 
                 # Handle capsize based on errorbar_capsize_var
                 capsize_val = 0  # Default to no caps
@@ -6405,7 +7375,7 @@ class ExPlotApp:
                     capsize_setting = self.errorbar_capsize_var.get()
                     
                     # Determine bar width (default to 0.8 if not specified)
-                    bar_width = plot_args.get('width', 0.8)
+                    bar_width = bar_args.get('width', 0.8)
                     
                     # Calculate capsize proportional to bar width
                     if capsize_setting == 'Default':
@@ -6419,24 +7389,24 @@ class ExPlotApp:
                     elif capsize_setting == 'None':
                         capsize_val = 0  # No caps
                 
-                # Add capsize to plot_args
-                plot_args['capsize'] = capsize_val
+                # Add capsize to bar_args
+                bar_args['capsize'] = capsize_val
                 
                 # Add error bar styling if we have color settings
                 if err_kws:
-                    plot_args['err_kws'] = err_kws
+                    bar_args['err_kws'] = err_kws
                 
-                # Add yerr to plot_args if provided
-                if 'yerr' in plot_args:
+                # Add yerr to bar_args if provided
+                if 'yerr' in bar_args:
                     # Ensure only upward error bars
-                    yerr_data = plot_args['yerr']
-                    plot_args['yerr'] = [[0] * len(yerr_data), yerr_data]
+                    yerr_data = bar_args['yerr']
+                    bar_args['yerr'] = [[0] * len(yerr_data), yerr_data]
                 
                 # Remove parameters that cause issues in newer seaborn versions
                 # Keep 'errorbar' since we need it for SD/SEM, but remove others
                 for param in ['errwidth', 'elinewidth', 'capthick']:
-                    if param in plot_args:
-                        plot_args.pop(param)
+                    if param in bar_args:
+                        bar_args.pop(param)
                 
                 # Get desired z-order for error bars based on upward-only setting
                 # z-order concept: error bars (behind=5, front=15) | bars (10) | stripplot (15) | axes (20)
@@ -6445,32 +7415,84 @@ class ExPlotApp:
                 upward_only = self.upward_errorbar_var.get() if hasattr(self, 'upward_errorbar_var') else False
                 
                 # Modify err_kws to include appropriate z-order
-                if 'err_kws' not in plot_args:
-                    plot_args['err_kws'] = {}
+                if 'err_kws' not in bar_args:
+                    bar_args['err_kws'] = {}
                     
                 if upward_only:
                     # For upward-only: error bars should be BEHIND the bars
-                    plot_args['err_kws']['zorder'] = 5  # Lower z-order than bars
+                    bar_args['err_kws']['zorder'] = 5  # Lower z-order than bars
                 else:
                     # For bidirectional: error bars should be IN FRONT of bars
-                    plot_args['err_kws']['zorder'] = 15  # Higher z-order than bars
+                    bar_args['err_kws']['zorder'] = 15  # Higher z-order than bars
                 
                 # Set z-order for bars (always the same)
-                plot_args['zorder'] = 10
+                bar_args['zorder'] = 10
                 
-                # Create barplot with properly positioned error bars
-                ax = sns.barplot(**plot_args)
+                # Create barplot with completely isolated parameters
+                ax = sns.barplot(**bar_args)
+                
+                # Adjust bar widths and positions to create gaps between bars within groups
+                if plot_kind == "bar" and hue_col and hue_col in df_plot.columns:
+                    # Get the number of hue groups
+                    n_groups = len(df_plot[hue_col].unique())
+                    # Calculate the width for each bar (smaller for more groups)
+                    bar_width = 0.8 / n_groups * 0.85  # Make each bar 85% of its allotted space
                     
+                    # Adjust each bar's width to create gaps
+                    for bar in ax.patches:
+                        # Get current bar position and width
+                        current_width = bar.get_width()
+                        current_x = bar.get_x()
+                        # Calculate the center of this bar
+                        center = current_x + current_width / 2
+                        # Set the new width (narrower)
+                        bar.set_width(bar_width)
+                        # Recenter the bar at the same position
+                        bar.set_x(center - bar_width / 2)
+                
                 # Fix axis element visibility by bringing them to the front
                 for spine in ax.spines.values():
                     spine.set_zorder(20)  # Highest z-order for axis elements
                 ax.xaxis.set_zorder(20)
                 ax.yaxis.set_zorder(20)
                 
-                # Fix outline color issues - if no outline is desired, set edgecolor to match facecolor
-                if hasattr(self, 'bar_outline_var') and not self.bar_outline_var.get():
-                    for bar in ax.patches:
-                        bar.set_edgecolor(bar.get_facecolor())
+                # Handle outline colors after bar adjustments
+                if hasattr(self, 'bar_outline_var'):
+                    if not self.bar_outline_var.get():
+                        # When outlines are disabled, set edgecolor to match facecolor
+                        for bar in ax.patches:
+                            bar.set_edgecolor(bar.get_facecolor())
+                    else:
+                        # When outlines are enabled, apply the outline color setting
+                        # The width adjustments above might have reset the edgecolor, so we need to set it again
+                        if hue_col and hue_col in df_plot.columns:
+                            # For grouped data, each group needs its own color or the setting's color
+                            outline_color = self.get_outline_color(None)
+                            if self.outline_color_var.get() == "as_set":
+                                # For "As set", make each bar's outline match its own color
+                                for bar in ax.patches:
+                                    bar.set_edgecolor(bar.get_facecolor())
+                                    bar.set_linewidth(max(linewidth, 0.5))
+                            else:
+                                # Apply the same outline color to all bars
+                                for bar in ax.patches:
+                                    bar.set_edgecolor(outline_color)
+                                    # Ensure the linewidth is visible
+                                    bar.set_linewidth(max(linewidth, 0.5))
+                        else:
+                            # For ungrouped data, use the single color setting
+                            single_color_name = self.single_color_var.get()
+                            single_color = self.custom_colors.get(single_color_name, 'black')
+                            outline_color = self.get_outline_color(single_color)
+                            for bar in ax.patches:
+                                if self.outline_color_var.get() == "as_set":
+                                    # Explicitly set the edgecolor to match the facecolor
+                                    bar.set_edgecolor(bar.get_facecolor())
+                                    bar.set_linewidth(max(linewidth, 0.5))
+                                else:
+                                    # Use the explicit outline color
+                                    bar.set_edgecolor(outline_color)
+                                    bar.set_linewidth(max(linewidth, 0.5))
             elif plot_kind == "box":
                 # For ungrouped data, we need to adjust the boxplot parameters
                 # to ensure proper centering over X-values
@@ -6485,12 +7507,103 @@ class ExPlotApp:
                     # Adjust width to ensure proper centering
                     box_args['width'] = 0.5
                     
+                    # Get outline color based on setting
+                    single_color_name = self.single_color_var.get()
+                    single_color = self.custom_colors.get(single_color_name, 'black')
+                    outline_color = self.get_outline_color(single_color)
+                    
+                    # Set outline properties with the determined color
+                    box_args['boxprops'] = {'edgecolor': outline_color}
+                    box_args['whiskerprops'] = {'color': outline_color}
+                    box_args['medianprops'] = {'color': outline_color}
+                    box_args['capprops'] = {'color': outline_color}
+                    
                     sns.boxplot(**box_args)
                 else:
-                    # Use original parameters for grouped data
+                    # Adjust parameters for grouped data to add spacing
+                    if 'hue' in plot_args and plot_args['hue'] is not None:
+                        # For grouped box plots
+                        plot_args['width'] = 0.6  # Make boxes narrower than default
+                        plot_args['dodge'] = True  # Enable dodging for groups
+                        plot_args['gap'] = 0.2    # Add gap between boxes in the same group
+                    
+                    # For grouped data, determine outline color
+                    if self.outline_color_var.get() == "as_set":
+                        # Will use palette colors for each box
+                        # Don't set explicit colors here as Seaborn will handle them
+                        plot_args['boxprops'] = {'linewidth': max(linewidth, 0.5)}
+                        plot_args['whiskerprops'] = {'linewidth': max(linewidth, 0.5)}
+                        plot_args['medianprops'] = {'linewidth': max(linewidth, 0.5)}
+                        plot_args['capprops'] = {'linewidth': max(linewidth, 0.5)}
+                    else:
+                        # Use explicit color from setting
+                        outline_color = self.get_outline_color(None)  # No default color provided
+                        plot_args['boxprops'] = {'edgecolor': outline_color, 'linewidth': max(linewidth, 0.5)}
+                        plot_args['whiskerprops'] = {'color': outline_color, 'linewidth': max(linewidth, 0.5)}
+                        plot_args['medianprops'] = {'color': outline_color, 'linewidth': max(linewidth, 0.5)}
+                        plot_args['capprops'] = {'color': outline_color, 'linewidth': max(linewidth, 0.5)}
+                    
                     sns.boxplot(**plot_args)
                     
                 ax.tick_params(axis='x', which='both', direction='in', length=4, width=linewidth, top=False, bottom=True, labeltop=False, labelbottom=True)
+                
+            elif plot_kind == "violin":
+                # For violin plots, create a completely separate args dictionary
+                # with no shared parameters with other plot types
+                violin_args = {}
+                
+                # Basic data parameters
+                violin_args['data'] = df_plot
+                violin_args['x'] = x_col if not swap_axes else value_col
+                violin_args['y'] = value_col if not swap_axes else x_col
+                violin_args['hue'] = hue_col
+                violin_args['ax'] = ax
+                
+                # Styling parameters
+                violin_args['palette'] = palette
+                violin_args['linewidth'] = max(linewidth, 0.5)  # Ensure minimum visible linewidth
+                
+                # Determine outline color based on settings
+                if self.outline_color_var.get() == "as_set":
+                    if hue_col and hue_col in df_plot.columns:
+                        # For grouped violin plots with 'as_set', each violin will use its own color
+                        # Don't set explicit edgecolor here as Seaborn will use the palette colors
+                        pass
+                    else:
+                        # For single color violin plot with 'as_set'
+                        single_color_name = self.single_color_var.get()
+                        single_color = self.custom_colors.get(single_color_name, 'black')
+                        violin_args['edgecolor'] = single_color
+                else:
+                    # Use the explicit color from settings
+                    outline_color = self.get_outline_color(None)
+                    violin_args['edgecolor'] = outline_color
+                
+                # For ungrouped data, we need different width settings
+                if hue_col is None or hue_col not in df_plot.columns:
+                    # Adjust width for ungrouped data
+                    violin_args['width'] = 0.7
+                else:
+                    # For grouped violin plots
+                    violin_args['width'] = 0.8
+                    violin_args['dodge'] = True
+                    violin_args['gap'] = 0.15    # Add gap between violins in the same group
+                
+                # Add violin-specific parameters based on user preference
+                if self.violin_inner_box_var.get():
+                    violin_args['inner'] = "box"  # Shows a mini boxplot inside each violin
+                else:
+                    violin_args['inner'] = "stick"  # Just show the quartiles
+                
+                violin_args['scale'] = "width"  # Makes all violins have the same width
+                
+                # Create the violin plot with completely isolated parameters
+                sns.violinplot(**violin_args)
+                
+                # Ensure axis ticks are properly formatted
+                ax.tick_params(axis='x', which='both', direction='in', length=4, width=linewidth, top=False, bottom=True, labeltop=False, labelbottom=True)
+                
+                # Stripplots will be handled by the global show_stripplot functionality
             elif plot_kind == "xy":
                 # For XY plots, always use original X values (not categorical)
                 if hasattr(self, 'x_categorical_map'):
@@ -6742,7 +7855,7 @@ class ExPlotApp:
                 sns.stripplot(**stripplot_args)
 
             # --- Always rebuild legend after all plotting ---
-            if hue_col and plot_kind == "box":
+            if hue_col and (plot_kind == "box" or plot_kind == "violin"):
                 import matplotlib.patches as mpatches
                 hue_levels = list(df_plot[hue_col].dropna().unique())
                 palette_name = self.palette_var.get()
@@ -7109,395 +8222,127 @@ class ExPlotApp:
 
             # --- Statistics/Annotations ---
             if self.use_stats_var.get():
-                base_groups = []
-                hue_groups = []
-                annotation_count = 0
                 try:
-                    print(f"[DEBUG] Starting annotations: x_col={x_col}, value_col={value_col}, hue_col={hue_col}")
+                    print(f"[DEBUG] Starting statistics calculation: x_col={x_col}, value_col={value_col}, hue_col={hue_col}")
                     # Calculate p-values for all pairs
                     self.calculate_and_store_pvals(df_plot, x_col, value_col, hue_col)
                     print(f"[DEBUG] After calculate_and_store_pvals, latest_pvals = {self.latest_pvals}")
+                    
+                    # Only add annotations if the checkbox is selected
+                    show_annotations = getattr(self, 'show_statistics_annotations_var', None)
+                    if show_annotations is None or not show_annotations.get():
+                        print(f"[DEBUG] Statistical annotations disabled by user preference")
+                        continue
+                    
+                    # Import required modules for annotations
+                    from statannotations.Annotator import Annotator
                     import itertools
-                    y_max = df_plot[value_col].astype(float).max()
-                    y_min = df_plot[value_col].astype(float).min()
-                    # Ensure we have a reasonable height for annotations
-                    if y_max <= 0:
-                        y_max = 1
-                    # Make sure annotations are positioned well above the error bars
-                    if self.errorbar_type_var.get() == "SD":
-                        # Calculate standard deviation for each group to ensure annotations clear the error bars
-                        std_vals = df_plot.groupby(x_col)[value_col].std().max()
-                        # If std is NaN or 0, use a sensible default
-                        if pd.isna(std_vals) or std_vals == 0:
-                            std_vals = 0.1 * y_max
-                        # Position annotations well above the standard deviation error bars
-                        pval_height = y_max + 1.5 * std_vals
-                    else:
-                        # For SEM or no error bars, position relative to the max
-                        pval_height = y_max * 1.15  # 15% above the maximum value
                     
-                    step = 0.07 * (y_max - y_min if y_max != y_min else 0.2 * y_max)
-                    if step <= 0:
-                        step = 0.1 * y_max  # Ensure a minimum step size
+
+                    # Define p-value format configuration for statannotations using current alpha level
+                    try:
+                        alpha = float(self.alpha_level_var.get())
+                    except (ValueError, AttributeError):
+                        alpha = 0.05  # Default if not set or invalid
                     
-                    test_used = ""
-                    # Get the unique x-values and their positions
-                    x_values = [g for g in df_plot[x_col].dropna().unique()]
-                    positions = {g: i for i, g in enumerate(x_values)}
-                    print(f"[DEBUG] X values: {x_values}, positions: {positions}")
+                    # Use the same threshold logic as in our pval_to_annotation function
+                    pvalue_format = {
+                        'text_format': 'star',
+                        'pvalue_thresholds': [
+                            (alpha/5000, '****'),  # 4 stars threshold (e.g., 0.00001 at alpha=0.05)
+                            (alpha/50, '***'),    # 3 stars threshold (e.g., 0.001 at alpha=0.05)
+                            (alpha/5, '**'),      # 2 stars threshold (e.g., 0.01 at alpha=0.05)
+                            (alpha, '*'),         # 1 star threshold (alpha itself)
+                            (1, 'ns')             # Not significant
+                        ]
+                    }
                     
-                    # Always print DEBUG information about the p-values being used
-                    print(f"[DEBUG] Annotation stats: latest_pvals = {self.latest_pvals}")
+                    print(f"[DEBUG] Using pvalue thresholds: {[t[0] for t in pvalue_format['pvalue_thresholds']]}")
                     
-                    # For bar plots, we want to directly annotate between the bars
-                    # Get all combinations of x_values for comparison
-                    if len(x_values) > 1:
-                        pairs = list(itertools.combinations(x_values, 2))
-                        # No longer comparing all pairs
+                    
+                    # Determine what kind of annotations we need based on the data structure
+                    if hue_col and hue_col in df_plot.columns:
+                        # For data with groups (hue column), create pairwise comparisons within each x-category
+                        hue_groups = list(df_plot[hue_col].dropna().unique())
+                        base_groups = list(df_plot[x_col].dropna().unique())
+                        print(f"[DEBUG] Hue annotation case: x_values={base_groups}, hue_groups={hue_groups}")
                         
-                        # Calculate maximum value for positioning annotations
-                        y_max = df_plot[value_col].astype(float).max()
-                        
-                        # Get error metrics to determine annotation heights
-                        error_metrics = {}
-                        for x_val in x_values:
-                            subset = df_plot[df_plot[x_col] == x_val]
-                            mean_val = subset[value_col].mean()
-                            std_val = subset[value_col].std()
-                            error_metrics[x_val] = {'mean': mean_val, 'std': std_val}
-                        
-                        # Print all available p-value keys before annotation loop
-                        print(f"[DEBUG] Available p-value keys before annotation: {list(self.latest_pvals.keys())}")
-                        annotation_count = 0
-                        
-                        # Add annotations for group comparisons (e.g., 'Treated' vs 'Untreated') within each x-value
-                        # Dynamically determine group names from the data
-                        group_names = list(df_plot[hue_col].dropna().unique()) if hue_col else []
-                        
-                        # CASE 1: Two groups (e.g., Treated vs Untreated) within each x-value
-                        if len(group_names) == 2:
-                            g1, g2 = group_names
-                            for idx, x_val in enumerate(x_values):
-                                # Try different key formats to find the p-value
-                                key1 = (x_val, g1, g2)
-                                key2 = (x_val, g2, g1)
-                                key3 = self.stat_key(x_val, g1, g2)
-                                
-                                pval = self.latest_pvals.get(key1)
-                                if pval is None:
-                                    pval = self.latest_pvals.get(key2)
-                                if pval is None:
-                                    pval = self.latest_pvals.get(key3)
-                                    
-                                if pval is not None:
-                                    print(f"[DEBUG] Found p-value for {x_val}, {g1} vs {g2}: {pval}")
-                                else:
-                                    print(f"[DEBUG] Missing p-value for {x_val}, {g1} vs {g2}")
-                                    continue
-                                    
-                                try:
-                                    pos = positions[x_val]
-                                except Exception as e:
-                                    print(f"[DEBUG] Could not find position for {x_val}: {e}")
-                                    continue
-                                    
-                                # Find the y values (heights) for both groups at this x_val
-                                # Find the y values (heights) for both groups at this x_val
-                                y1 = df_plot[(df_plot[x_col]==x_val) & (df_plot[hue_col]==g1)][value_col].mean()
-                                y2 = df_plot[(df_plot[x_col]==x_val) & (df_plot[hue_col]==g2)][value_col].mean()
-                                y_max_group = max(y1, y2)
-                                
-                                # Get error bar values if they exist
-                                err1 = error_metrics[x_val]['std'] if self.errorbar_type_var.get() == "SD" else 0
-                                
-                                # Position annotation closer to the bars while still above error bars
-                                # Use a percentage of the error bar value for more proportional spacing
-                                err_factor = 1.1 if err1 > 0 else 0
-                                annotation_height = y_max_group + (err1 * err_factor) + (y_max * 0.08)
-                                annotation_text = self.pval_to_annotation(pval)
-                                print(f"[DEBUG] Adding annotation: {x_val}, {g1} vs {g2} -> {annotation_text} (p={pval})")
-                                annotation_count += 1
-                                
-                                # Calculate bar positions for hue groups
-                                width = 0.8  # Typical seaborn bar width
-                                group_width = width / len(group_names)
-                                g1_index = group_names.index(g1)
-                                g2_index = group_names.index(g2)
-                                
-                                # Calculate positions with offsets
-                                g1_pos = pos - width/2 + group_width/2 + g1_index * group_width
-                                g2_pos = pos - width/2 + group_width/2 + g2_index * group_width
-                                
-                                if swap_axes:
-                                    # Draw bracket style annotation for swapped axes
-                                    line_height = annotation_height
-                                    # Horizontal line connecting the bars
-                                    ax.plot([line_height, line_height], [g1_pos, g2_pos], color='black', linewidth=linewidth, zorder=10)
-                                    # Vertical lines at each end
-                                    for end_pos in [g1_pos, g2_pos]:
-                                        ax.plot([line_height - (y_max * 0.02), line_height], [end_pos, end_pos], color='black', linewidth=linewidth, zorder=10)
-                                    # Place the significance marker next to the line
-                                    mid_pos = (g1_pos + g2_pos) / 2
-                                    ax.text(line_height + (y_max * 0.03), mid_pos, annotation_text, ha='left', va='center', fontsize=fontsize, color='black', zorder=11)
-                                else:
-                                    # Draw bracket style annotation for normal axes
-                                    line_height = annotation_height
-                                    # Horizontal line connecting the bars
-                                    ax.plot([g1_pos, g2_pos], [line_height, line_height], color='black', linewidth=linewidth, zorder=10)
-                                    # Vertical lines at each end
-                                    for end_pos in [g1_pos, g2_pos]:
-                                        ax.plot([end_pos, end_pos], [line_height - (y_max * 0.02), line_height], color='black', linewidth=linewidth, zorder=10)
-                                    # Place the significance marker above the line
-                                    mid_pos = (g1_pos + g2_pos) / 2
-                                    ax.text(mid_pos, line_height + (y_max * 0.03), annotation_text, ha='center', va='bottom', fontsize=fontsize, color='black', zorder=11)
-                                    
-                            print(f"[DEBUG] Total annotations drawn: {annotation_count}")
-                        # CASE 2: Multiple groups within each x-value
-                        elif len(group_names) > 2:
-                            # We're going to place annotations independently for each x-value
-                            for x_val in x_values:
-                                # Get all pairwise combinations of groups
-                                group_pairs = list(itertools.combinations(group_names, 2))
-                                
-                                # Track vertical spacing for annotations within this x-value
-                                annotation_vertical_offset = 0
-                                
-                                for g1, g2 in group_pairs:
-                                    # Try different key formats to find the p-value
-                                    key1 = (x_val, g1, g2)
-                                    key2 = (x_val, g2, g1)
-                                    key3 = self.stat_key(x_val, g1, g2)
-                                    
-                                    pval = self.latest_pvals.get(key1)
-                                    if pval is None:
-                                        pval = self.latest_pvals.get(key2)
-                                    if pval is None:
-                                        pval = self.latest_pvals.get(key3)
-                                    
-                                    if pval is None:
-                                        continue
-                                        
-                                    try:
-                                        pos = positions[x_val]
-                                    except Exception as e:
-                                        print(f"[DEBUG] Could not find position for {x_val}: {e}")
-                                        continue
-                                        
-                                    # Find the y values (heights) for both groups at this x_val
-                                    y1 = df_plot[(df_plot[x_col]==x_val) & (df_plot[hue_col]==g1)][value_col].mean()
-                                    y2 = df_plot[(df_plot[x_col]==x_val) & (df_plot[hue_col]==g2)][value_col].mean()
-                                    y_values = [y1, y2]
-                                    y_max_group = max(y_values)
-                                    
-                                    # Get error bar values if they exist
-                                    err1 = error_metrics[x_val]['std'] if self.errorbar_type_var.get() == "SD" else 0
-                                    
-                                    # Determine spacing for annotation based on heights and number of annotations
-                                    base_offset = 0.10  # Start closer to the bars
-                                    spacing = 0.12     # Space between each comparison
-                                    
-                                    # Check how many comparisons we expect to have
-                                    total_possible_comparisons = len(group_names) * (len(group_names) - 1) // 2
-                                    
-                                    # Special handling for small figures with multiple comparisons
-                                    if annotation_count == 0:
-                                        plot_height_val = self.plot_height_var.get()
-                                        
-                                        # Aggressively adjust figure height for small plots with many annotations
-                                        if total_possible_comparisons > 2:  # More than 2 comparisons
-                                            # Get current figure height and increase it to accommodate annotations
-                                            current_height = self.fig.get_figheight()
-                                            
-                                            # Scale extra height based on plot size and number of comparisons
-                                            comparison_factor = min(1.0, 0.25 * total_possible_comparisons)  # Cap at reasonable value
-                                            size_factor = max(1.0, 3.0 / plot_height_val)  # Higher factor for smaller plots
-                                            extra_height = comparison_factor * size_factor * plot_height_val
-                                            
-                                            # Apply the height increase
-                                            self.fig.set_figheight(current_height + extra_height)
-                                            
-                                            # Update y-axis limits to maintain visual spacing
-                                            if not swap_axes:
-                                                current_ylim = ax.get_ylim()
-                                                ax.set_ylim(current_ylim[0], current_ylim[1] * (1 + extra_height/current_height/2))
-                                    
-                                    # Calculate annotation height, accounting for error bars
-                                    # Use a percentage of the error bar value for more proportional spacing
-                                    err_factor = 1.1 if err1 > 0 else 0
-                                    annotation_height = y_max_group + (err1 * err_factor) + (y_max * (base_offset + spacing * annotation_vertical_offset))
-                                    p_text = self.pval_to_annotation(pval)
-                                    print(f"[DEBUG] Adding annotation: {x_val}, {g1} vs {g2} -> {p_text} (p={pval})")
-                                    annotation_count += 1
-                                    
-                                    # Get bar positions for each group within this x-value
-                                    if not swap_axes:
-                                        # Calculate bar positions for hue groups
-                                        width = 0.8  # Typical seaborn bar width
-                                        group_width = width / len(group_names)
-                                        g1_index = group_names.index(g1)
-                                        g2_index = group_names.index(g2)
-                                        
-                                        # Calculate positions with offsets
-                                        g1_pos = pos - width/2 + group_width/2 + g1_index * group_width
-                                        g2_pos = pos - width/2 + group_width/2 + g2_index * group_width
-                                        
-                                        # Draw the bracket line
-                                        line_height = annotation_height
-                                        # Horizontal line connecting the bars
-                                        ax.plot([g1_pos, g2_pos], [line_height, line_height], color='black', linewidth=linewidth, zorder=10)
-                                        # Vertical lines at each end
-                                        for end_pos in [g1_pos, g2_pos]:
-                                            ax.plot([end_pos, end_pos], [line_height - (y_max * 0.02), line_height], color='black', linewidth=linewidth, zorder=10)
-                                        
-                                        # Place the significance marker above the line with specified spacing
-                                        mid_pos = (g1_pos + g2_pos) / 2
-                                        
-                                        # Check if we're near the top of the plot and have multiple rows of annotations
-                                        y_top = ax.get_ylim()[1]
-                                        plot_height_val = self.plot_height_var.get()
-                                        
-                                        # For small plots, be more aggressive about resizing
-                                        if line_height + (y_max * 0.05) > 0.9 * y_top:
-                                            # If we're getting too close to the top, add more figure height
-                                            current_height = self.fig.get_figheight()
-                                            
-                                            # Determine scaling factor - more aggressive for smaller plots
-                                            if plot_height_val < 2.0:
-                                                height_scale = 1.25  # 25% increase for very small plots
-                                            else:
-                                                height_scale = 1.1   # 10% increase for normal plots
-                                                
-                                            # Cap the height increase to avoid excessively tall plots
-                                            if current_height < plot_height_val * 3:  # Allow up to 3x original height
-                                                self.fig.set_figheight(current_height * height_scale)
-                                                # Update y-axis limits to maintain visual spacing
-                                                ax.set_ylim(ax.get_ylim()[0], y_top * 1.3)
-                                        
-                                        ax.text(mid_pos, line_height + (y_max * 0.03), p_text, ha='center', va='bottom', fontsize=fontsize, color='black', zorder=11)
-                                    else:
-                                        # Similar logic for swapped axes
-                                        width = 0.8
-                                        group_width = width / len(group_names)
-                                        g1_index = group_names.index(g1)
-                                        g2_index = group_names.index(g2)
-                                        
-                                        g1_pos = pos - width/2 + group_width/2 + g1_index * group_width
-                                        g2_pos = pos - width/2 + group_width/2 + g2_index * group_width
-                                        
-                                        line_height = annotation_height
-                                        ax.plot([line_height, line_height], [g1_pos, g2_pos], color='black', linewidth=linewidth, zorder=10)
-                                        for end_pos in [g1_pos, g2_pos]:
-                                            ax.plot([line_height - (y_max * 0.02), line_height], [end_pos, end_pos], color='black', linewidth=linewidth, zorder=10)
-                                        
-                                        mid_pos = (g1_pos + g2_pos) / 2
-                                        ax.text(line_height + (y_max * 0.02), mid_pos, p_text, ha='left', va='center', fontsize=fontsize, color='black', zorder=11)
-                                        
-                                    # Increment vertical offset for the next comparison within this x-value
-                                    annotation_vertical_offset += 1
-                                
-                            print(f"[DEBUG] Total annotations drawn for multiple groups: {annotation_count}")
-                        # CASE 3: One group but multiple x-categories (e.g., Control vs Experimental)
-                        elif len(x_values) > 1 and (hue_col is None or len(group_names) == 1):
-                            # Get pairs of x-values to compare
-                            pairs = list(itertools.combinations(x_values, 2))
-                            for idx, (x1, x2) in enumerate(pairs):
-                                # Determine key format to use
-                                key = (x1, x2)
+                        # For each x value, create pairs to compare the hue groups
+                        for x_val in base_groups:
+                            # Get all pairwise combinations of hue groups
+                            hue_pairs = list(itertools.combinations(hue_groups, 2))
+                            
+                            # Create list of comparisons
+                            pairs_to_compare = []
+                            pair_pvalues = []
+                            
+                            for h1, h2 in hue_pairs:
+                                # Try different key formats to find p-values
+                                key = self.stat_key(x_val, h1, h2)
                                 pval = self.latest_pvals.get(key)
                                 
-                                # If not found, try the reversed key
-                                if pval is None:
-                                    key = (x2, x1)
-                                    pval = self.latest_pvals.get(key)
-                                
-                                # Final fallback to the sorted key method
-                                if pval is None:
-                                    key = self.stat_key(x1, x2)
-                                    pval = self.latest_pvals.get(key)
-                                
-                                if pval is not None:
-                                    print(f"[DEBUG] Found p-value for {x1} vs {x2}: {pval}")
-                                    pos1, pos2 = positions[x1], positions[x2]
-                                    annotation_text = self.pval_to_annotation(pval)
-                                    print(f"[DEBUG] Adding annotation: {x1} vs {x2} -> {annotation_text} (p={pval})")
-                                    annotation_count += 1
-                                    
-                                    # Calculate annotation height (increase for each additional annotation)
-                                    annotation_height = y_max * 1.15 + idx * (y_max * 0.08)
-                                    
-                                    # Draw annotation lines and text
-                                    if swap_axes:
-                                        # Horizontal annotation for swapped axes
-                                        ax.plot([annotation_height, annotation_height, annotation_height, annotation_height], 
-                                                [pos1, pos1 - 0.05, pos2 + 0.05, pos2], 
-                                                color='black', linewidth=linewidth, zorder=10)
-                                        ax.text(annotation_height + (y_max * 0.02), (pos1 + pos2) / 2, 
-                                                annotation_text, ha='left', va='center', 
-                                                fontsize=fontsize, color='black', zorder=11)
-                                    else:
-                                        # Vertical annotation for normal axes
-                                        ax.plot([pos1, pos1, pos2, pos2], 
-                                                [annotation_height, annotation_height + (y_max * 0.02), 
-                                                annotation_height + (y_max * 0.02), annotation_height], 
-                                                color='black', linewidth=linewidth, zorder=10)
-                                        ax.text((pos1 + pos2) / 2, annotation_height + (y_max * 0.03), 
-                                                annotation_text, ha='center', va='bottom', 
-                                                fontsize=fontsize, color='black', zorder=11)
-                                else:
-                                    print(f"[DEBUG] Missing p-value for pair {x1} vs {x2}")
+                                if pval is not None and not pd.isna(pval):
+                                    # Add to our comparison list
+                                    pairs_to_compare.append([(x_val, h1), (x_val, h2)])
+                                    pair_pvalues.append(pval)
                             
-                            print(f"[DEBUG] Total annotations drawn in x-category comparison: {annotation_count}")
+                            if pairs_to_compare:
+                                try:
+                                    # Create annotator
+                                    annotator = Annotator(ax, pairs_to_compare, data=df_plot, 
+                                                       x=x_col, y=value_col, hue=hue_col)
+                                    
+                                    # Add annotations
+                                    annotator.configure(test=None, text_format='star', 
+                                                     pvalue_format=pvalue_format,
+                                                     loc='inside',
+                                                     line_width=self.linewidth.get()
+                                                     )
+                                    annotator.set_pvalues(pair_pvalues)
+                                    annotator.annotate()
+                                except Exception as e:
+                                    print(f"[DEBUG] Error adding annotations for {x_val}: {e}")
                     else:
-                        print("[DEBUG] Statistical annotations skipped: no applicable annotation case")
-                        print(f"[DEBUG] Annotating with hue groups: {base_groups} / {hue_groups}")
-                        
-                        for i, g in enumerate(base_groups):
-                            df_sub = df_plot[df_plot[x_col] == g]
-                            pairs = list(itertools.combinations(hue_groups, 2))
-                            x_base = i
+                        # For data without groups (no hue column), compare between x-categories directly
+                        x_categories = list(df_plot[x_col].dropna().unique())
+                        if len(x_categories) > 1:
+                            # Get all pairwise combinations of x categories
+                            x_pairs = list(itertools.combinations(x_categories, 2))
                             
-                            for idx, (h1, h2) in enumerate(pairs):
-                                key = self.stat_key(g, h1, h2)
-                                pval = self.latest_pvals.get(key, np.nan)
-                                if pval is None or (isinstance(pval, float) and np.isnan(pval)):
-                                    print(f"[DEBUG] Missing p-value for hue annotation key: {key}")
-                                    continue  # Skip this annotation
-                                    
-                                print(f"[DEBUG] Hue comparison: {g} : {h1} vs {h2} -> {self.pval_to_annotation(pval)} (p={pval})")
+                            # Create list of comparisons
+                            pairs_to_compare = []
+                            pair_pvalues = []
+                            
+                            for x1, x2 in x_pairs:
+                                # Try different key formats to find p-values
+                                key = self.stat_key(x1, x2)
+                                pval = self.latest_pvals.get(key)
                                 
-                                # Calculate bar positions for each hue group
-                                bar_centers = []
-                                for j, hue_val in enumerate(hue_groups):
-                                    bar_pos = x_base - 0.4 + (j + 0.5) * (0.8 / n_hue)
-                                    bar_centers.append(bar_pos)
-                                x1 = bar_centers[hue_groups.index(h1)]
-                                x2 = bar_centers[hue_groups.index(h2)]
-                                y = pval_height + idx * step + i * step * len(pairs)
-                                # Dynamically calculate annotation height based on bar heights and additional plot elements
-                                bar_heights = []
-                                error_bar_heights = []
-                                stripplot_heights = []
-                                for j, hue_val in enumerate(hue_groups):
-                                    subset = df_sub[df_sub[hue_col] == hue_val]
-                                    bar_height = subset[value_col].mean() if not subset.empty else 0
-                                    bar_heights.append(bar_height)
-                                    if show_errorbars:
-                                        std_err = subset[value_col].std() if not subset.empty else 0
-                                        error_bar_heights.append(bar_height + std_err)
-                                    if show_stripplot:
-                                        max_strip = subset[value_col].max() if not subset.empty else 0
-                                        stripplot_heights.append(max_strip)
-                                max_bar_height = max(bar_heights)
-                                max_error_height = max(error_bar_heights) if error_bar_heights else max_bar_height
-                                max_stripplot_height = max(stripplot_heights) if stripplot_heights else max_bar_height
-                                y_annotation = max(max_bar_height, max_error_height, max_stripplot_height) * 1.25  # 25% above the highest element to ensure visibility
-                                annotation_text = self.pval_to_annotation(pval)
-                                if swap_axes:
-                                    ax.plot([y_annotation, y_annotation, y_annotation, y_annotation], [x1, x1, x2, x2], lw=linewidth, c='k', zorder=10)
-                                    ax.text(y_annotation * 1.05, (x1+x2)/2, annotation_text, ha='left', va='center', fontsize=max(int(fontsize*0.7), 6), zorder=11, weight='bold')
-                                else:
-                                    ax.plot([x1, x1, x2, x2], [y_annotation, y_annotation, y_annotation, y_annotation], lw=linewidth, c='k', zorder=10)
-                                    ax.text((x1+x2)/2, y_annotation * 1.05, annotation_text, ha='center', va='bottom', fontsize=max(int(fontsize*0.7), 6), zorder=11, weight='bold')
+                                if pval is not None and not pd.isna(pval):
+                                    # Add to our comparison list
+                                    pairs_to_compare.append([x1, x2])
+                                    pair_pvalues.append(pval)
+                        
+                            if pairs_to_compare:
+                                try:
+                                    # Create annotator for x-category comparisons
+                                    annotator = Annotator(ax, pairs_to_compare, data=df_plot, 
+                                                       x=x_col, y=value_col)
+                                    
+                                    # Add annotations
+                                    annotator.configure(test=None, text_format='star', 
+                                                     pvalue_format=pvalue_format,
+                                                     loc='inside',
+                                                     line_width=self.linewidth.get()
+                                                     )
+                                    annotator.set_pvalues(pair_pvalues)
+                                    annotator.annotate()
+                                except Exception as e:
+                                    print(f"[DEBUG] Error adding ungrouped annotations: {e}")
+                                
+                            print(f"[DEBUG] Total annotations drawn: {len(pair_pvalues)}")
+                    
+                    # Save the figure for later reference
                     fig = ax.figure
                 except Exception as e:
                     ax.text(0.01, 0.98, f"Stats error: {e}", transform=ax.transAxes, fontsize=fontsize*0.8, va='top', ha='left',
@@ -7517,12 +8362,17 @@ class ExPlotApp:
         pages = convert_from_path(self.temp_pdf, dpi=150)
         image = pages[0]
 
-        # Show the statistical details button if statistics are used
-        if self.use_stats_var.get():
+        # Show the statistical details button if statistics were calculated
+        if self.use_stats_var.get() and hasattr(self, 'latest_stats') and self.latest_stats:
             try:
                 self.stats_details_btn.pack(pady=5)
             except Exception as e:
                 print(f"Error showing stats details button: {e}")
+        else:
+            try:
+                self.stats_details_btn.pack_forget()
+            except Exception as e:
+                print(f"Error hiding stats details button: {e}")
         photo = ImageTk.PhotoImage(image)
         self.preview_label = tk.Label(self.canvas_frame, image=photo)
         self.preview_label.image = photo
