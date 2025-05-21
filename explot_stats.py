@@ -200,9 +200,39 @@ def run_posthoc(df, value_col, category_col, posthoc_type="Tukey's HSD"):
         elif posthoc_type == "Dunn's test":
             posthoc = sp.posthoc_dunn(df, val_col=value_col, group_col=category_col)
         else:  # Default to Tamhane's T2
+            # For Tamhane's T2, we need to process the result similar to Tukey's HSD
+            # Ensure we're working with a Series when calling unique()
+            if isinstance(category_col, str):
+                groups = list(df[category_col].unique())
+            else:
+                # If category_col is not a string, try to get the first column if it's a DataFrame
+                groups = list(df[category_col[0]].unique()) if hasattr(category_col, '__getitem__') else []
+                
             posthoc = sp.posthoc_tamhane(df, val_col=value_col, group_col=category_col)
+            
+            # Convert to matrix format for consistency with Tukey's HSD
+            posthoc_matrix = pd.DataFrame(index=groups, columns=groups)
+            
+            # Fill the matrix with p-values from the posthoc test
+            for i, g1 in enumerate(groups):
+                for j, g2 in enumerate(groups):
+                    if i == j:
+                        posthoc_matrix.loc[g1, g2] = 1.0  # Diagonal is 1.0 (no difference with self)
+                    else:
+                        try:
+                            p_val = posthoc.loc[g1, g2]
+                            # Ensure p-value is not exactly 0 (which can happen with floating point precision)
+                            if p_val == 0:
+                                # Use a very small non-zero value instead of 0
+                                p_val = 1e-100
+                            posthoc_matrix.loc[g1, g2] = p_val
+                        except KeyError:
+                            # If the comparison is missing, set to 1.0 (no significance)
+                            posthoc_matrix.loc[g1, g2] = 1.0
+            
+            return posthoc_matrix.astype(float)
         
-        # Ensure diagonal is 1.0 (no difference with self)
+        # For other test types, ensure diagonal is 1.0 (no difference with self)
         for g in posthoc.index:
             if g in posthoc.columns:
                 posthoc.loc[g, g] = 1.0
@@ -221,8 +251,16 @@ def run_posthoc(df, value_col, category_col, posthoc_type="Tukey's HSD"):
         except Exception as e2:
             debug(f"Fallback post-hoc test also failed: {e2}")
             # Return empty DataFrame if all else fails
-            groups = sorted(df[category_col].unique())
-            return pd.DataFrame(1.0, index=groups, columns=groups)
+            try:
+                if isinstance(category_col, str):
+                    groups = sorted(df[category_col].unique())
+                else:
+                    # If category_col is not a string, try to get the first column if it's a DataFrame
+                    groups = sorted(df[category_col[0]].unique()) if hasattr(category_col, '__getitem__') else []
+                return pd.DataFrame(1.0, index=groups, columns=groups)
+            except Exception as e3:
+                debug(f"Error creating fallback matrix: {e3}")
+                return pd.DataFrame()
 
 
 def run_ttest(df, value_col, group1, group2, category_col, test_type="Welch's t-test (unpaired, unequal variances)", alternative="two-sided"):
