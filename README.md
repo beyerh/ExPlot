@@ -37,6 +37,8 @@ Alternatively, provide several *y_value* columns, each with a different name.
 ```python
 conda create --name explot python=3.10
 conda activate explot
+conda config --add channels conda-forge
+conda config --set channel_priority strict
 conda install scipy pandas matplotlib seaborn pingouin openpyxl nuitka
 pip install scikit_posthocs statannotations pillow PyMuPDF
 ```
