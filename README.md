@@ -1,6 +1,8 @@
 # ExPlot
 A ython/Tkinter app to plot data from Excel sheets using *seaborn*, fully developed with Claude 3.7 Sonnet, Cascade Base, SWE-1, and GPT-4.1 using Windsurf.
 
+![ExPlot](img/ExPlot.png)
+
 # Data structure
 Provide an Excel file with one or several sheets for different data sets to be plotted. The data should be in the following format:
 
@@ -32,6 +34,9 @@ Alternatively, provide several *y_value* columns, each with a different name.
 - XY Fitting with predefined or cutom models
 - t-tests, ANOVA, and post-hoc tests
 - Save and load data
+
+# Examples
+File --> Load Example Data
 
 # Environment
 ```python

@@ -1,6 +1,6 @@
 # ExPlot - Data visualization tool for Excel files
 
-VERSION = "0.6.4"
+VERSION = "0.6.5"
 # =====================================================================
 
 import tkinter as tk
@@ -16,7 +16,6 @@ import matplotlib
 from matplotlib.ticker import AutoMinorLocator, MultipleLocator, LogLocator, NullLocator
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from PIL import Image, ImageTk
-#from pdf2image import convert_from_path
 import json
 import numpy as np
 from scipy import stats
@@ -909,6 +908,7 @@ class ExPlotApp:
         self.show_stripplot_var = tk.BooleanVar(value=True)
         self.bar_outline_var = tk.BooleanVar(value=False)
         self.violin_inner_box_var = tk.BooleanVar(value=True)  # Show box inside violin plots
+        self.bar_gap_multiplier_var = tk.DoubleVar(value=0.75)  # Multiplier for bar gap width (higher = less gap)
         self.plot_kind_var = tk.StringVar(value="bar")  # "bar", "box", "violin", or "xy"
         # Outline color setting ("as_set", "black", "gray", "white")
         self.outline_color_var = tk.StringVar(value="as_set")
@@ -1131,9 +1131,15 @@ class ExPlotApp:
             self.save_fitting_models()
         
         self.load_custom_colors_palettes()
+        
         # Initialize default plot dimensions for the plot area
         self.plot_width_var = tk.DoubleVar(value=1.5)
         self.plot_height_var = tk.DoubleVar(value=1.5)
+        
+        # Initialize color variables *before* loading preferences
+        self.single_color_var = tk.StringVar(value=list(self.custom_colors.keys())[0] if self.custom_colors else "")
+        self.palette_var = tk.StringVar(value=list(self.custom_palettes.keys())[0] if self.custom_palettes else "")
+        
         self.load_user_preferences()
         self.setup_menu()
         self.setup_ui()
@@ -1376,6 +1382,7 @@ class ExPlotApp:
                 # Plot appearance
                 'plot_width': self.plot_width_var.get(),
                 'plot_height': self.plot_height_var.get(),
+                'bar_gap_multiplier': self.bar_gap_multiplier_var.get() if hasattr(self, 'bar_gap_multiplier_var') else 0.8,
                 'xlogscale': self.xlogscale_var.get() if hasattr(self, 'xlogscale_var') else False,
                 'xlog_base': self.xlog_base_var.get() if hasattr(self, 'xlog_base_var') else "10",
                 'logscale': self.logscale_var.get() if hasattr(self, 'logscale_var') else False,
@@ -1625,6 +1632,9 @@ class ExPlotApp:
                 
             if 'plot_height' in project and hasattr(self, 'plot_height_var'):
                 self.plot_height_var.set(project['plot_height'])
+                
+            if 'bar_gap_multiplier' in project and hasattr(self, 'bar_gap_multiplier_var'):
+                self.bar_gap_multiplier_var.set(project['bar_gap_multiplier'])
                 
             if 'xlogscale' in project and hasattr(self, 'xlogscale_var'):
                 self.xlogscale_var.set(project['xlogscale'])
@@ -1876,6 +1886,7 @@ class ExPlotApp:
         appearance_tab = ttk.Frame(notebook)
         bar_graph_tab = ttk.Frame(notebook)
         xy_plot_tab = ttk.Frame(notebook)
+        colors_tab = ttk.Frame(notebook)
         
         notebook.add(general_tab, text='General')
         notebook.add(plot_settings_tab, text='Plot Settings')
@@ -1883,6 +1894,7 @@ class ExPlotApp:
         notebook.add(appearance_tab, text='Appearance')
         notebook.add(bar_graph_tab, text='Bar Graph')
         notebook.add(xy_plot_tab, text='XY Plot')
+        notebook.add(colors_tab, text='Colors')
         
         # Variables to hold settings
         # General tab
@@ -1907,6 +1919,9 @@ class ExPlotApp:
         self.settings_alpha_level_var = tk.StringVar(value=self.alpha_level_var.get())
         self.settings_posthoc_type_var = tk.StringVar(value=self.posthoc_type_var.get())
         
+        # Bar Graph tab
+        self.settings_bar_gap_multiplier_var = tk.DoubleVar(value=self.bar_gap_multiplier_var.get())
+        
         # Appearance tab
         self.settings_linewidth = tk.DoubleVar(value=self.linewidth.get())
         self.settings_plot_width_var = tk.DoubleVar(value=self.plot_width_var.get())
@@ -1922,6 +1937,11 @@ class ExPlotApp:
         self.settings_xy_show_mean_var = tk.BooleanVar(value=self.xy_show_mean_var.get())
         self.settings_xy_show_mean_errorbars_var = tk.BooleanVar(value=self.xy_show_mean_errorbars_var.get())
         self.settings_xy_draw_band_var = tk.BooleanVar(value=self.xy_draw_band_var.get())
+        
+        # Colors tab
+        self.settings_single_color_var = tk.StringVar(value=self.single_color_var.get() if hasattr(self, 'single_color_var') else list(self.custom_colors.keys())[0])
+        self.settings_palette_var = tk.StringVar(value=self.palette_var.get() if hasattr(self, 'palette_var') else list(self.custom_palettes.keys())[0])
+        self.settings_outline_color_var = tk.StringVar(value=self.outline_color_var.get())
         
         # General Tab Content
         tk.Label(general_tab, text="Default Plot Type:", anchor="w").grid(row=0, column=0, sticky="w", padx=10, pady=10)
@@ -2001,6 +2021,9 @@ class ExPlotApp:
         tk.Checkbutton(bar_graph_tab, text="Draw bar outlines", variable=self.settings_bar_outline_var).grid(row=0, column=0, sticky="w", padx=10, pady=10)
         tk.Checkbutton(bar_graph_tab, text="Upward-only error bars", variable=self.settings_upward_errorbar_var).grid(row=1, column=0, sticky="w", padx=10, pady=10)
         
+        tk.Label(bar_graph_tab, text="Bar gap multiplier:", anchor="w").grid(row=2, column=0, sticky="w", padx=10, pady=10)
+        tk.Spinbox(bar_graph_tab, from_=0.5, to=1.0, increment=0.05, textvariable=self.settings_bar_gap_multiplier_var, width=5).grid(row=2, column=1, sticky="w", padx=10, pady=10)
+        
         # XY Plot Tab Content
         tk.Label(xy_plot_tab, text="Marker Symbol:", anchor="w").grid(row=0, column=0, sticky="w", padx=10, pady=10)
         ttk.Combobox(xy_plot_tab, textvariable=self.settings_xy_marker_symbol_var, values=["o", "s", "^", "D", "v", "P", "X", "+", "x", "*", "."], width=5, state="readonly").grid(row=0, column=1, sticky="w", padx=10, pady=10)
@@ -2019,6 +2042,74 @@ class ExPlotApp:
         tk.Checkbutton(xy_plot_tab, text="With Error Bars", variable=self.settings_xy_show_mean_errorbars_var).grid(row=7, column=0, sticky="w", padx=30, pady=5, columnspan=2)
         tk.Checkbutton(xy_plot_tab, text="Draw Bands", variable=self.settings_xy_draw_band_var).grid(row=8, column=0, sticky="w", padx=10, pady=5, columnspan=2)
         
+        # Colors Tab Content
+        # Single Color section
+        tk.Label(colors_tab, text="Single Data Color:", anchor="w", font=(None, 10, 'bold')).grid(row=0, column=0, sticky="w", padx=10, pady=(10, 5))
+        self.settings_single_color_dropdown = ttk.Combobox(colors_tab, textvariable=self.settings_single_color_var, values=list(self.custom_colors.keys()), width=20, state="readonly")
+        self.settings_single_color_dropdown.grid(row=1, column=0, sticky="w", padx=10, pady=5)
+        
+        # Create a frame for the color preview
+        single_color_preview_frame = tk.Frame(colors_tab)
+        single_color_preview_frame.grid(row=2, column=0, sticky="w", padx=10, pady=5)
+        self.settings_single_color_preview = tk.Canvas(single_color_preview_frame, width=60, height=20, bg='white', highlightthickness=1)
+        self.settings_single_color_preview.pack()
+        
+        # Function to update single color preview
+        def update_settings_single_color_preview(event=None):
+            self.settings_single_color_preview.delete('all')
+            name = self.settings_single_color_var.get()
+            hexcode = self.custom_colors.get(name)
+            if hexcode:
+                self.settings_single_color_preview.create_rectangle(10, 2, 50, 18, fill=hexcode, outline='black')
+            else:
+                # If color not found, reset to first available color
+                if self.custom_colors:
+                    self.settings_single_color_var.set(list(self.custom_colors.keys())[0])
+                    update_settings_single_color_preview()
+        
+        self.settings_single_color_dropdown.bind('<<ComboboxSelected>>', update_settings_single_color_preview)
+        update_settings_single_color_preview()
+        
+        # Group Palette section
+        tk.Label(colors_tab, text="Group Palette:", anchor="w", font=(None, 10, 'bold')).grid(row=3, column=0, sticky="w", padx=10, pady=(20, 5))
+        self.settings_palette_dropdown = ttk.Combobox(colors_tab, textvariable=self.settings_palette_var, values=list(self.custom_palettes.keys()), width=20, state="readonly")
+        self.settings_palette_dropdown.grid(row=4, column=0, sticky="w", padx=10, pady=5)
+        
+        # Create a frame for the palette preview
+        palette_preview_frame = tk.Frame(colors_tab)
+        palette_preview_frame.grid(row=5, column=0, sticky="w", padx=10, pady=5)
+        self.settings_palette_preview = tk.Canvas(palette_preview_frame, width=120, height=20, bg='white', highlightthickness=1)
+        self.settings_palette_preview.pack()
+        
+        # Function to update palette preview
+        def update_settings_palette_preview(event=None):
+            self.settings_palette_preview.delete('all')
+            name = self.settings_palette_var.get()
+            colors = self.custom_palettes.get(name, [])
+            if colors:
+                for i, hexcode in enumerate(colors[:8]):
+                    x0 = 10 + i*14
+                    x1 = x0 + 12
+                    self.settings_palette_preview.create_rectangle(x0, 2, x1, 18, fill=hexcode, outline='black')
+            else:
+                # If palette not found, reset to first available palette
+                if self.custom_palettes:
+                    self.settings_palette_var.set(list(self.custom_palettes.keys())[0])
+                    update_settings_palette_preview()
+        
+        self.settings_palette_dropdown.bind('<<ComboboxSelected>>', update_settings_palette_preview)
+        update_settings_palette_preview()
+        
+        # Outline Color section
+        tk.Label(colors_tab, text="Outline Color:", anchor="w", font=(None, 10, 'bold')).grid(row=6, column=0, sticky="w", padx=10, pady=(20, 5))
+        outline_frame = tk.Frame(colors_tab)
+        outline_frame.grid(row=7, column=0, sticky="w", padx=10, pady=5)
+        
+        tk.Radiobutton(outline_frame, text="As set", variable=self.settings_outline_color_var, value="as_set").pack(anchor="w", pady=2)
+        tk.Radiobutton(outline_frame, text="Black", variable=self.settings_outline_color_var, value="black").pack(anchor="w", pady=2)
+        tk.Radiobutton(outline_frame, text="Gray", variable=self.settings_outline_color_var, value="gray").pack(anchor="w", pady=2)
+        tk.Radiobutton(outline_frame, text="White", variable=self.settings_outline_color_var, value="white").pack(anchor="w", pady=2)
+        
         # Buttons at the bottom
         button_frame = tk.Frame(window)
         button_frame.pack(pady=10, fill='x')
@@ -2026,6 +2117,11 @@ class ExPlotApp:
         def save_settings():
             # Update main variables from settings first
             self.bar_outline_var.set(self.settings_bar_outline_var.get())
+            self.bar_gap_multiplier_var.set(self.settings_bar_gap_multiplier_var.get())
+            # Update color settings
+            self.single_color_var.set(self.settings_single_color_var.get())
+            self.palette_var.set(self.settings_palette_var.get())
+            self.outline_color_var.set(self.settings_outline_color_var.get())
             # Then save preferences
             self.save_user_preferences()
             messagebox.showinfo("Settings Saved", "Your preferences have been saved.")
@@ -4063,6 +4159,7 @@ class ExPlotApp:
             'bar_outline': False,
             'outline_color': 'as_set',  # Default outline color setting
             'upward_errorbar': True,  # Use upward-only error bars by default
+            'bar_gap_multiplier': 0.75,  # Default bar gap multiplier
             'use_stats': False,  # Default 'Use statistics' setting
             'ttest_type': "Welch's t-test (unpaired, unequal variances)",
             'ttest_alternative': 'two-sided',
@@ -4080,8 +4177,17 @@ class ExPlotApp:
             'xy_connect': False,
             'xy_show_mean': True,
             'xy_show_mean_errorbars': True,
-            'xy_draw_band': False
+            'xy_draw_band': False,
+            # Default color settings
+            'single_color': None,  # Will be set after colors are loaded
+            'palette': None  # Will be set after palettes are loaded
         }
+        
+        # Set default colors after loading custom colors
+        if hasattr(self, 'custom_colors') and self.custom_colors and default_preferences['single_color'] is None:
+            default_preferences['single_color'] = list(self.custom_colors.keys())[0]
+        if hasattr(self, 'custom_palettes') and self.custom_palettes and default_preferences['palette'] is None:
+            default_preferences['palette'] = list(self.custom_palettes.keys())[0]
         
         # Check if user preferences file exists
         if os.path.exists(self.default_settings_file):
@@ -4090,6 +4196,12 @@ class ExPlotApp:
                     user_prefs = json.load(f)
                 # Update default_preferences with user's saved preferences
                 default_preferences.update(user_prefs)
+                
+                # Validate color settings exist in current colors/palettes
+                if 'single_color' in user_prefs and user_prefs['single_color'] not in self.custom_colors:
+                    default_preferences['single_color'] = list(self.custom_colors.keys())[0]
+                if 'palette' in user_prefs and user_prefs['palette'] not in self.custom_palettes:
+                    default_preferences['palette'] = list(self.custom_palettes.keys())[0]
             except Exception as e:
                 messagebox.showwarning("Error Loading Preferences", f"Could not load preferences: {str(e)}")
         
@@ -4119,6 +4231,8 @@ class ExPlotApp:
             self.outline_color_var.set(preferences['outline_color'])
         if hasattr(self, 'upward_errorbar_var') and 'upward_errorbar' in preferences:
             self.upward_errorbar_var.set(preferences['upward_errorbar'])
+        if hasattr(self, 'bar_gap_multiplier_var') and 'bar_gap_multiplier' in preferences:
+            self.bar_gap_multiplier_var.set(preferences['bar_gap_multiplier'])
             
         # Statistics tab
         if hasattr(self, 'use_stats_var') and 'use_stats' in preferences:
@@ -4141,6 +4255,14 @@ class ExPlotApp:
             self.plot_width_var.set(preferences['plot_width'])
         if 'plot_height' in preferences and hasattr(self, 'plot_height_var'):
             self.plot_height_var.set(preferences['plot_height'])
+            
+        # Color settings
+        if 'single_color' in preferences and hasattr(self, 'single_color_var'):
+            if preferences['single_color'] in self.custom_colors:
+                self.single_color_var.set(preferences['single_color'])
+        if 'palette' in preferences and hasattr(self, 'palette_var'):
+            if preferences['palette'] in self.custom_palettes:
+                self.palette_var.set(preferences['palette'])
         
         # XY Plot tab
         if hasattr(self, 'xy_marker_symbol_var') and 'xy_marker_symbol' in preferences:
@@ -4166,6 +4288,16 @@ class ExPlotApp:
         """Save current UI settings as user preferences to a JSON file."""
         preferences = {}
         
+        # Always save current color settings (not just from the settings dialog)
+        if hasattr(self, 'single_color_var') and self.single_color_var.get() in self.custom_colors:
+            preferences['single_color'] = self.single_color_var.get()
+        if hasattr(self, 'palette_var') and self.palette_var.get() in self.custom_palettes:
+            preferences['palette'] = self.palette_var.get()
+        if hasattr(self, 'outline_color_var'):
+            preferences['outline_color'] = self.outline_color_var.get()
+        if hasattr(self, 'bar_gap_multiplier_var'):
+            preferences['bar_gap_multiplier'] = self.bar_gap_multiplier_var.get()
+        
         # General tab settings
         if hasattr(self, 'settings_plot_kind_var'):
             preferences['plot_kind'] = self.settings_plot_kind_var.get()
@@ -4187,6 +4319,16 @@ class ExPlotApp:
             preferences['bar_outline'] = self.settings_bar_outline_var.get()
         if hasattr(self, 'settings_upward_errorbar_var'):
             preferences['upward_errorbar'] = self.settings_upward_errorbar_var.get()
+        if hasattr(self, 'settings_bar_gap_multiplier_var'):
+            preferences['bar_gap_multiplier'] = self.settings_bar_gap_multiplier_var.get()
+            
+        # Colors tab settings
+        if hasattr(self, 'settings_single_color_var'):
+            preferences['single_color'] = self.settings_single_color_var.get()
+        if hasattr(self, 'settings_palette_var'):
+            preferences['palette'] = self.settings_palette_var.get()
+        if hasattr(self, 'settings_outline_color_var'):
+            preferences['outline_color'] = self.settings_outline_color_var.get()
             
         # Statistics tab
         if hasattr(self, 'settings_use_stats_var'):
@@ -4504,6 +4646,13 @@ class ExPlotApp:
         bar_grp.pack(fill='x', padx=6, pady=4)
         tk.Checkbutton(bar_grp, text="Draw bar outlines", variable=self.bar_outline_var).pack(anchor="w", pady=1)
         tk.Checkbutton(bar_grp, text="Upward-only error bars", variable=self.upward_errorbar_var).pack(anchor="w", pady=1)
+        
+        # Bar gap multiplier control
+        bar_gap_frame = tk.Frame(bar_grp)
+        bar_gap_frame.pack(anchor="w", pady=1, fill='x')
+        tk.Label(bar_gap_frame, text="Bar gap multiplier:").pack(side="left")
+        tk.Spinbox(bar_gap_frame, from_=0.5, to=1.0, increment=0.05, 
+                  textvariable=self.bar_gap_multiplier_var, width=5).pack(side="left", padx=4)
         
         # --- Violin Plot group ---
         violin_grp = tk.LabelFrame(frame, text="Violin Plot", padx=6, pady=6)
@@ -4912,7 +5061,8 @@ class ExPlotApp:
                 'swap_axes': self.swap_axes_var.get() if hasattr(self, 'swap_axes_var') else False,
                 'show_frame': self.show_frame_var.get() if hasattr(self, 'show_frame_var') else False,
                 'show_hgrid': self.show_hgrid_var.get() if hasattr(self, 'show_hgrid_var') else False,
-                'show_vgrid': self.show_vgrid_var.get() if hasattr(self, 'show_vgrid_var') else False
+                'show_vgrid': self.show_vgrid_var.get() if hasattr(self, 'show_vgrid_var') else False,
+                'bar_gap_multiplier': self.bar_gap_multiplier_var.get() if hasattr(self, 'bar_gap_multiplier_var') else 0.75
             },
             'axis': {
                 'x_label': self.xlabel_entry.get() if hasattr(self, 'xlabel_entry') else '',
@@ -5063,6 +5213,8 @@ class ExPlotApp:
                     self.show_hgrid_var.set(app['show_hgrid'])
                 if 'show_vgrid' in app and hasattr(self, 'show_vgrid_var'):
                     self.show_vgrid_var.set(app['show_vgrid'])
+                if 'bar_gap_multiplier' in app and hasattr(self, 'bar_gap_multiplier_var'):
+                    self.bar_gap_multiplier_var.set(float(app['bar_gap_multiplier']))
             
             # Axis settings
             if 'axis' in settings:
@@ -5585,7 +5737,7 @@ class ExPlotApp:
         # --- Single color group ---
         single_grp = tk.LabelFrame(frame, text="Single Data Color", padx=6, pady=6)
         single_grp.pack(fill='x', padx=6, pady=4)
-        self.single_color_var = tk.StringVar(value=list(self.custom_colors.keys())[0])
+        # Don't reinitialize single_color_var which already exists and has been set with preferences
         tk.Label(single_grp, text="Single Data Color:").pack(anchor="w")
         self.single_color_dropdown = ttk.Combobox(single_grp, textvariable=self.single_color_var, values=list(self.custom_colors.keys()))
         self.single_color_dropdown.pack(fill='x', pady=2)
@@ -5603,7 +5755,7 @@ class ExPlotApp:
         # --- Palette group ---
         palette_grp = tk.LabelFrame(frame, text="Group Palette", padx=6, pady=6)
         palette_grp.pack(fill='x', padx=6, pady=4)
-        self.palette_var = tk.StringVar(value=list(self.custom_palettes.keys())[0])
+        # No need to re-initialize self.palette_var as it's already set in __init__
         tk.Label(palette_grp, text="Group Palette:").pack(anchor="w")
         self.palette_dropdown = ttk.Combobox(palette_grp, textvariable=self.palette_var, values=list(self.custom_palettes.keys()))
         self.palette_dropdown.pack(fill='x', pady=2)
@@ -5642,6 +5794,12 @@ class ExPlotApp:
         self.palette_dropdown['values'] = list(self.custom_palettes.keys())
         if self.palette_var.get() not in self.custom_palettes and self.custom_palettes:
             self.palette_var.set(list(self.custom_palettes.keys())[0])
+        
+        # Also update settings dropdowns if they exist
+        if hasattr(self, 'settings_single_color_dropdown'):
+            self.settings_single_color_dropdown['values'] = list(self.custom_colors.keys())
+        if hasattr(self, 'settings_palette_dropdown'):
+            self.settings_palette_dropdown['values'] = list(self.custom_palettes.keys())
 
     def create_dropdown(self, parent, label_text, attr_name):
         tk.Label(parent, text=label_text).pack()
@@ -7797,8 +7955,10 @@ class ExPlotApp:
                 if plot_kind == "bar" and hue_col and hue_col in df_plot.columns:
                     # Get the number of hue groups
                     n_groups = len(df_plot[hue_col].unique())
+                    # Get the bar gap multiplier setting
+                    bar_gap_multiplier = self.bar_gap_multiplier_var.get()
                     # Calculate the width for each bar (smaller for more groups)
-                    bar_width = 0.8 / n_groups * 0.85  # Make each bar 85% of its allotted space
+                    bar_width = 0.8 / n_groups * bar_gap_multiplier  # Adjust bar width based on the multiplier
                     
                     # Adjust each bar's width to create gaps
                     for bar in ax.patches:

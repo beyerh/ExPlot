@@ -13,23 +13,10 @@ python -m nuitka \
   --macos-app-name="ExPlot" \
   --macos-app-icon=explot.icns \
   --enable-plugin=tk-inter \
-  --include-package=matplotlib \
-  --include-package=pandas \
-  --include-package=seaborn \
-  --include-package=scipy \
-  --include-package=pingouin \
-  --include-package=openpyxl \
-  --include-package=scikit_posthocs \
-  --include-package=statannotations \
   --include-package=matplotlib.backends.backend_pdf \
-  --include-package=matplotlib.backends.backend_tkagg \
-  --include-package=matplotlib.backends.backend_agg \
-  --include-package=PIL \
-  --include-module=fitz \
   --output-dir=build \
   explot.py
 
-cp pingouin build_small/ExPlot.app/Contents/MacOS
-cp example_data.xlsx build_small/ExPlot.app/Contents/MacOS
-
 echo "Build complete. Application is in the build directory."
+echo "Manually copy pingouin and example_data.xlsx to build/ExPlot.app/Contents/MacOS."
+
