@@ -1,25 +1,27 @@
 # ExPlot - Data visualization tool for Excel files
 
-VERSION = "0.6.3"
+VERSION = "0.6.4"
 # =====================================================================
 
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk, colorchooser
 import pandas as pd
 import seaborn as sns
+from pathlib import Path
+import os
+os.environ['MPLCONFIGDIR'] = str(Path.home())+"/.matplotlib/"
+import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib
 from matplotlib.ticker import AutoMinorLocator, MultipleLocator, LogLocator, NullLocator
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from PIL import Image, ImageTk
-from pdf2image import convert_from_path
-import os
+#from pdf2image import convert_from_path
 import json
 import numpy as np
 from scipy import stats
 import sys
 import tempfile
-from pathlib import Path
 import pingouin as pg
 import scikit_posthocs as sp
 import math
@@ -31,6 +33,14 @@ from matplotlib.collections import PatchCollection
 from tkinter import font as tkfont
 from statannotations.Annotator import Annotator
 
+# Disable dask imports, nuitka fix for macOS
+'''import sys
+sys.modules['dask'] = None
+sys.modules['dask.array'] = None
+sys.modules['dask.dataframe'] = None
+sys.modules['dask.array.core'] = None
+sys.modules['dask.array.compat'] = None
+'''
 
 DEFAULT_COLORS = {
     "Black": "#000000",
@@ -933,49 +943,6 @@ class ExPlotApp:
         self.fitting_use_black_lines_var = tk.BooleanVar(value=False)
         self.fitting_use_black_bands_var = tk.BooleanVar(value=False)
         self.fitting_use_group_colors_var = tk.BooleanVar(value=True)
-        # Store the default models
-        self.default_fitting_models = {
-            # Basic models
-            "Linear Regression": {
-                "parameters": [("A0", 1.0), ("A1", 1.0)],
-                "formula": "# a simple linear model\ny = A0 + A1 * x",
-                "description": "A basic linear relationship between variables. Use for data showing a constant rate of change or a straight-line trend. Common in many fields when two variables have a simple proportional relationship."
-            },
-            "Quadratic": {
-                "parameters": [("A0", 1.0), ("A1", 1.0), ("A2", 0.1)],
-                "formula": "# quadratic polynomial model\ny = A0 + A1 * x + A2 * x**2",
-                "description": "Models data with one curve or inflection point. Useful for processes with acceleration/deceleration or parabolic relationships. Applications include projectile motion, cost functions, and simple optimization problems."
-            },
-            "Cubic": {
-                "parameters": [("A0", 1.0), ("A1", 1.0), ("A2", 0.1), ("A3", 0.01)],
-                "formula": "# cubic polynomial model\ny = A0 + A1 * x + A2 * x**2 + A3 * x**3",
-                "description": "Models data with two possible inflection points. Useful for more complex curved relationships that change direction multiple times. Common in economics, physics, and engineering when modeling complex systems."
-            },
-            "Power Law": {
-                "parameters": [("A", 1.0), ("b", 1.0)],
-                "formula": "# power law relationship (allometric)\ny = A * x**b",
-                "description": "Models scaling relationships where one variable changes as a power of another. Essential for allometric scaling in biology (e.g., body mass vs. metabolic rate). Also used in physics, economics, and network science."
-            },
-            "Exponential": {
-                "parameters": [("A", 1.0), ("k", 0.1)],
-                "formula": "# simple exponential growth/decay\ny = A * exp(k * x)",
-                "description": "Models exponential growth (k > 0) or decay (k < 0) processes. Used for population growth, radioactive decay, compound interest, and many biological processes with constant growth/decay rates."
-            },
-            "Michaelis-Menten": {
-                "parameters": [("Vmax", 100.0), ("Km", 10.0)],
-                "formula": "# enzyme kinetics model\ny = Vmax * x / (Km + x)",
-                "description": "The standard model for enzyme kinetics where reaction velocity approaches a maximum (Vmax) as substrate concentration increases. Km is the substrate concentration at half-maximum velocity. Fundamental in biochemistry and pharmaceutical research."
-            }
-        }
-        
-        # Load saved models or initialize with defaults
-        self.fitting_models = self.load_fitting_models()
-        
-        # If no saved models exist, initialize with defaults
-        if not self.fitting_models:
-            self.fitting_models = self.default_fitting_models.copy()
-            self.save_fitting_models()
-        
         # Initialize default models dictionary for reference
         self.default_fitting_models = {
             # Basic models
@@ -1154,6 +1121,15 @@ class ExPlotApp:
                 "description": "Models complex systems with three different time scales or compartments. Used for multicompartment pharmacokinetic models, complex decay processes in physics, and systems with multiple parallel or sequential processes with different rates."
             }
         }
+        
+        # Load saved models or initialize with defaults
+        self.fitting_models = self.load_fitting_models()
+        
+        # If no saved models exist, initialize with defaults
+        if not self.fitting_models:
+            self.fitting_models = self.default_fitting_models.copy()
+            self.save_fitting_models()
+        
         self.load_custom_colors_palettes()
         # Initialize default plot dimensions for the plot area
         self.plot_width_var = tk.DoubleVar(value=1.5)
@@ -7077,73 +7053,57 @@ class ExPlotApp:
                 
                 # --- Bar plot: always horizontal bars if swap_axes, for both categorical and numerical x ---
                 if plot_kind == "bar":
+                    # Build base arguments common to both orientations
                     base_args = {
-                        'errorbar': 'sd',
-                        'capsize': 0.2,
-                        'palette': palette,
-                        'err_kws': {'color': 'black', 'linewidth': linewidth},
+                        'errorbar': 'sd', 
+                        'capsize': 0.2, 
+                        'palette': palette, 
+                        'err_kws': {'color': 'black', 'linewidth': linewidth}, 
                         'estimator': estimator
                     }
+                    
+                    # Add edge color if bar outline is enabled
                     if self.bar_outline_var.get():
-                        if hue_col and hue_col in df_plot.columns:
-                            outline_color = self.get_outline_color(None)
-                        else:
+                        # Get the appropriate outline color based on setting
+                        if hue_col and hue_col in df_plot.columns:  # Use palette colors for grouped data
+                            outline_color = self.get_outline_color(None)  # We'll handle colors per group
+                        else:  # Use single color for ungrouped data
                             single_color_name = self.single_color_var.get()
                             single_color = self.custom_colors.get(single_color_name, 'black')
                             outline_color = self.get_outline_color(single_color)
+                        
+                        # Ensure linewidth is at least 0.5 for visibility
                         effective_linewidth = max(linewidth, 0.5)
                         base_args.update({'edgecolor': outline_color, 'linewidth': effective_linewidth})
-                    # --- FIX: Properly handle categorical x for swapped axes ---
+                    
                     if swap_axes:
-                        if hasattr(self, 'x_categorical_map') and hasattr(self, 'x_categorical_reverse_map'):
-                            df_plot['_x_numeric'] = df_plot[x_col].map(self.x_categorical_map)
-                            sns.barplot(
-                                data=df_plot, y='_x_numeric', x=value_col, hue=hue_col, ax=ax, **base_args
-                            )
-                            y_tick_positions = sorted(df_plot['_x_numeric'].unique())
-                            y_tick_labels = [self.x_categorical_reverse_map.get(pos, '') for pos in y_tick_positions]
-                            ax.set_yticks(y_tick_positions)
-                            ax.set_yticklabels(y_tick_labels)
-                            df_plot.drop('_x_numeric', axis=1, inplace=True, errors='ignore')
-                        else:
-                            sns.barplot(
-                                data=df_plot, y=x_col, x=value_col, hue=hue_col, ax=ax, **base_args
-                            )
-                        continue
-                    else:
-                        sns.barplot(
-                            data=df_plot, x=x_col, y=value_col, hue=hue_col, ax=ax, **base_args
+                        plot_args = dict(
+                            data=df_plot, y=x_col, x=value_col, hue=hue_col, ax=ax,
+                            **base_args
                         )
-                        continue
+                    else:
+                        plot_args = dict(
+                            data=df_plot, x=x_col, y=value_col, hue=hue_col, ax=ax,
+                            **base_args
+                        )
                 elif plot_kind == "box":
                     plot_args.update(dict(palette=palette, linewidth=linewidth, showcaps=True, boxprops=dict(linewidth=linewidth), medianprops=dict(linewidth=linewidth), dodge=True, width=0.7))
                 elif plot_kind == "violin":
-                    # --- FIX: Properly handle categorical x for swapped axes ---
-                    violin_specific_args = dict(inner="box", scale="width")
-                    if swap_axes:
-                        if hasattr(self, 'x_categorical_map') and hasattr(self, 'x_categorical_reverse_map'):
-                            df_plot['_x_numeric'] = df_plot[x_col].map(self.x_categorical_map)
-                            sns.violinplot(
-                                data=df_plot, y='_x_numeric', x=value_col, hue=hue_col, ax=ax,
-                                palette=palette, linewidth=linewidth, dodge=True, width=0.8, **violin_specific_args
-                            )
-                            y_tick_positions = sorted(df_plot['_x_numeric'].unique())
-                            y_tick_labels = [self.x_categorical_reverse_map.get(pos, '') for pos in y_tick_positions]
-                            ax.set_yticks(y_tick_positions)
-                            ax.set_yticklabels(y_tick_labels)
-                            df_plot.drop('_x_numeric', axis=1, inplace=True, errors='ignore')
-                        else:
-                            sns.violinplot(
-                                data=df_plot, y=x_col, x=value_col, hue=hue_col, ax=ax,
-                                palette=palette, linewidth=linewidth, dodge=True, width=0.8, **violin_specific_args
-                            )
-                        continue
-                    else:
-                        sns.violinplot(
-                            data=df_plot, x=x_col, y=value_col, hue=hue_col, ax=ax,
-                            palette=palette, linewidth=linewidth, dodge=True, width=0.8, **violin_specific_args
-                        )
-                        continue
+                    # Create a fresh set of arguments specifically for violin plots
+                    # Don't modify plot_args which might be used by other plot types
+                    violin_specific_args = dict(
+                        inner="box",  # Show box plot inside violin
+                        scale="width",  # Scale violins to have the same width
+                    )
+                    
+                    # Set up violin plot specific arguments without affecting other plot types
+                    plot_args.update(dict(
+                        palette=palette, 
+                        linewidth=linewidth, 
+                        dodge=True, 
+                        width=0.8,
+                        **violin_specific_args  # Add violin-specific arguments separately
+                    ))
                 elif plot_kind == "xy":
                     marker_size = self.xy_marker_size_var.get()
                     marker_symbol = self.xy_marker_symbol_var.get()
@@ -8769,10 +8729,44 @@ class ExPlotApp:
         self.display_preview()
 
     def display_preview(self):
+        """Display a preview of the figure using PyMuPDF if available, or directly from matplotlib"""
         for widget in self.canvas_frame.winfo_children():
             widget.destroy()
-        pages = convert_from_path(self.temp_pdf, dpi=150)
-        image = pages[0]
+            
+        try:
+            # Try using PyMuPDF (fitz) for better rendering if available
+            try:
+                import fitz
+                doc = fitz.open(self.temp_pdf)
+                pix = doc[0].get_pixmap(matrix=fitz.Matrix(2, 2))  # Higher resolution
+                image_data = pix.tobytes("ppm")
+                from io import BytesIO
+                buf = BytesIO(image_data)
+                image = Image.open(buf)
+                doc.close()
+                print("Using PyMuPDF for preview")
+            except ImportError:
+                # Fall back to matplotlib direct rendering
+                print("PyMuPDF not available, using matplotlib for preview")
+                if hasattr(self, 'fig') and self.fig is not None:
+                    # Use tight_layout and bbox_inches to reduce whitespace
+                    self.fig.tight_layout(pad=0.1)  # Reduce padding
+                    from io import BytesIO
+                    buf = BytesIO()
+                    self.fig.savefig(buf, format='png', dpi=300, bbox_inches='tight', pad_inches=0.1)
+                    buf.seek(0)
+                    image = Image.open(buf)
+                else:
+                    raise Exception("No figure available for preview")
+        except Exception as e:
+            print(f"Error creating preview: {e}")
+            # Create a placeholder image if rendering fails
+            width, height = 800, 600
+            image = Image.new('RGB', (width, height), color=(240, 240, 240))
+            from PIL import ImageDraw
+            draw = ImageDraw.Draw(image)
+            text = f"Preview not available\n{str(e)}"
+            draw.text((10, height//2), text, fill=(0, 0, 0))
 
         # Show the statistical details button if statistics were calculated
         if self.use_stats_var.get() and hasattr(self, 'latest_stats') and self.latest_stats:
@@ -8785,9 +8779,11 @@ class ExPlotApp:
                 self.stats_details_btn.pack_forget()
             except Exception as e:
                 print(f"Error hiding stats details button: {e}")
+                
+        # Display the image
         photo = ImageTk.PhotoImage(image)
         self.preview_label = tk.Label(self.canvas_frame, image=photo)
-        self.preview_label.image = photo
+        self.preview_label.image = photo  # Keep a reference to prevent garbage collection
         self.preview_label.pack()
 
     def save_pdf(self):
