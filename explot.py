@@ -1,6 +1,6 @@
 # ExPlot - Data visualization tool for Excel files
 
-VERSION = "0.6.5"
+VERSION = "0.6.6"
 # =====================================================================
 
 import tkinter as tk
@@ -17,6 +17,7 @@ from matplotlib.ticker import AutoMinorLocator, MultipleLocator, LogLocator, Nul
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from PIL import Image, ImageTk
 import json
+import time
 import numpy as np
 from scipy import stats
 import sys
@@ -882,6 +883,10 @@ class ExPlotApp:
     def __init__(self, root):
         self.latest_pvals = {}  # {(group, h1, h2): pval or (h1, h2): pval}
         self.latest_test_info = {}  # Stores detailed test information for each p-value key
+        
+        # Theme settings
+        self.theme_name = 'light'  # Default theme
+        self.dark_mode = False  # Track dark mode state
 
         self.root = root
         self.version = VERSION  # Use the global VERSION constant
@@ -895,6 +900,7 @@ class ExPlotApp:
         self.custom_colors_file = str(self.config_dir / "custom_colors.json")
         self.custom_palettes_file = str(self.config_dir / "custom_palettes.json")
         self.default_settings_file = str(self.config_dir / "default_settings.json")
+        self.theme_settings_file = str(self.config_dir / "theme_settings.json")
         self.models_file = str(self.config_dir / "fitting_models.json")
         self.temp_pdf = str(Path(tempfile.gettempdir()) / "explot_temp_plot.pdf")
         self.xaxis_renames = {}
@@ -4146,10 +4152,38 @@ class ExPlotApp:
             return '#{:02x}{:02x}{:02x}'.format(*color)
         return str(color)
         
+    def _load_theme_settings(self):
+        """Load theme settings from JSON file."""
+        if os.path.exists(self.theme_settings_file):
+            try:
+                with open(self.theme_settings_file, 'r') as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, IOError) as e:
+                print(f"Warning: Could not load theme settings: {e}")
+        return {}
+
+    def _save_theme_settings(self, theme_name, dark_mode):
+        """Save theme settings to JSON file."""
+        try:
+            with open(self.theme_settings_file, 'w') as f:
+                json.dump({
+                    'theme_name': theme_name,
+                    'dark_mode': dark_mode,
+                    'timestamp': time.time()
+                }, f, indent=2)
+        except IOError as e:
+            print(f"Warning: Could not save theme settings: {e}")
+
     def load_user_preferences(self):
-        """Load user preferences from a JSON file and apply them to the application."""
-        # Initialize default preferences first
+        """Load user preferences from JSON files and apply them to the application."""
+        # Load theme settings first
+        theme_settings = self._load_theme_settings()
+        
+        # Initialize default preferences
         default_preferences = {
+            # Initialize theme settings from saved file or use defaults
+            'theme_name': theme_settings.get('theme_name', 'light'),
+            'dark_mode': theme_settings.get('dark_mode', False),
             'plot_kind': 'bar',
             'show_stripplot': True,
             'strip_black': True,
@@ -4180,7 +4214,10 @@ class ExPlotApp:
             'xy_draw_band': False,
             # Default color settings
             'single_color': None,  # Will be set after colors are loaded
-            'palette': None  # Will be set after palettes are loaded
+            'palette': None,  # Will be set after palettes are loaded
+            # Theme settings
+            'theme_name': 'light',
+            'dark_mode': False
         }
         
         # Set default colors after loading custom colors
@@ -4263,6 +4300,17 @@ class ExPlotApp:
         if 'palette' in preferences and hasattr(self, 'palette_var'):
             if preferences['palette'] in self.custom_palettes:
                 self.palette_var.set(preferences['palette'])
+                
+        # Theme settings
+        # Load theme settings
+        if 'theme_name' in preferences:
+            self.theme_name = preferences['theme_name']
+        if 'dark_mode' in preferences:
+            self.dark_mode = preferences['dark_mode']
+            
+        # Save theme settings to dedicated file
+        if hasattr(self, 'theme_name') and hasattr(self, 'dark_mode'):
+            self._save_theme_settings(self.theme_name, self.dark_mode)
         
         # XY Plot tab
         if hasattr(self, 'xy_marker_symbol_var') and 'xy_marker_symbol' in preferences:
@@ -4284,8 +4332,13 @@ class ExPlotApp:
         if hasattr(self, 'xy_draw_band_var') and 'xy_draw_band' in preferences:
             self.xy_draw_band_var.set(preferences['xy_draw_band'])
     
-    def save_user_preferences(self):
-        """Save current UI settings as user preferences to a JSON file."""
+    def save_user_preferences(self, silent=False):
+        """
+        Save current UI settings as user preferences to a JSON file.
+        
+        Args:
+            silent: If True, suppresses the success message (used for automatic saves)
+        """
         preferences = {}
         
         # Always save current color settings (not just from the settings dialog)
@@ -4297,6 +4350,12 @@ class ExPlotApp:
             preferences['outline_color'] = self.outline_color_var.get()
         if hasattr(self, 'bar_gap_multiplier_var'):
             preferences['bar_gap_multiplier'] = self.bar_gap_multiplier_var.get()
+            
+        # Save theme settings to both preferences and dedicated file
+        if hasattr(self, 'theme_name') and hasattr(self, 'dark_mode'):
+            preferences['theme_name'] = self.theme_name
+            preferences['dark_mode'] = self.dark_mode
+            self._save_theme_settings(self.theme_name, self.dark_mode)
         
         # General tab settings
         if hasattr(self, 'settings_plot_kind_var'):
@@ -4412,10 +4471,12 @@ class ExPlotApp:
             self.xy_draw_band_var.set(preferences.get('xy_draw_band', False))
             self.bar_outline_var.set(preferences.get('bar_outline', False))
             
-            # Confirmation message
-            messagebox.showinfo("Settings Saved", "Your preferences have been saved and applied.")
+            # Only show success message if not in silent mode
+            if not silent:
+                messagebox.showinfo("Settings Saved", "Your preferences have been saved and applied.")
         except Exception as e:
-            messagebox.showerror("Error Saving Preferences", f"Could not save preferences: {str(e)}")
+            if not silent:  # Only show error dialog if not in silent mode
+                messagebox.showerror("Error Saving Preferences", f"Could not save preferences: {str(e)}")
             print(f"Error saving preferences: {str(e)}")
 
     def setup_ui(self):
@@ -4450,23 +4511,23 @@ class ExPlotApp:
         top_button_frame.pack(fill='x', padx=10, pady=(5, 10))
         
         # Plot and Stats buttons side by side in the top frame
-        plot_button = tk.Button(
+        plot_button = ttk.Button(
             top_button_frame, 
             text="Generate Plot", 
-            command=self.plot_graph, 
-            width=15, 
-            height=2
+            command=self.plot_graph,
+            style='Accent.TButton',
+            width=15
         )
-        plot_button.pack(side="left", padx=5)
+        plot_button.pack(side="left", padx=5, ipady=5)
         
-        self.stats_details_btn = tk.Button(
+        self.stats_details_btn = ttk.Button(
             top_button_frame, 
             text="Statistical Details", 
             command=self.show_statistical_details,
-            width=15, 
-            height=2
+            style='Accent.TButton',
+            width=15
         )
-        self.stats_details_btn.pack(side="left", padx=5)
+        self.stats_details_btn.pack(side="left", padx=5, ipady=5)
         
         # Canvas frame for the plot
         self.canvas_frame = tk.Frame(right_frame)

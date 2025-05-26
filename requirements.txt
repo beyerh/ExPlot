@@ -1,0 +1,23 @@
+# Core dependencies
+numpy>=1.21.0
+pandas>=1.5.0
+matplotlib>=3.5.0
+seaborn>=0.12.0
+scipy>=1.8.0
+
+# Statistics and data analysis
+pingouin>=0.5.0
+scikit-posthocs>=0.7.0
+
+# Excel and data handling
+openpyxl>=3.0.7
+xlrd>=2.0.1
+
+# Image and PDF handling
+Pillow>=10.0.0
+
+# Build and packaging
+nuitka>=1.3.0
+
+# Statistical annotations
+statannotations>=0.4.4
