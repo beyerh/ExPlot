@@ -887,6 +887,9 @@ class ExPlotApp:
         # Theme settings
         self.theme_name = 'light'  # Default theme
         self.dark_mode = False  # Track dark mode state
+        
+        # Initialize preview_dpi early so it's available when loading preferences
+        self.preview_dpi = tk.IntVar(value=175)  # Default DPI value
 
         self.root = root
         self.version = VERSION  # Use the global VERSION constant
@@ -1932,6 +1935,7 @@ class ExPlotApp:
         self.settings_linewidth = tk.DoubleVar(value=self.linewidth.get())
         self.settings_plot_width_var = tk.DoubleVar(value=self.plot_width_var.get())
         self.settings_plot_height_var = tk.DoubleVar(value=self.plot_height_var.get())
+        self.settings_preview_dpi_var = tk.IntVar(value=self.preview_dpi.get() if hasattr(self, 'preview_dpi') else 175)
         
         # XY Plot tab
         self.settings_xy_marker_symbol_var = tk.StringVar(value=self.xy_marker_symbol_var.get())
@@ -1950,57 +1954,89 @@ class ExPlotApp:
         self.settings_outline_color_var = tk.StringVar(value=self.outline_color_var.get())
         
         # General Tab Content
-        tk.Label(general_tab, text="Default Plot Type:", anchor="w").grid(row=0, column=0, sticky="w", padx=10, pady=10)
+        ttk.Label(general_tab, text="Default Plot Type:", anchor="w").grid(row=0, column=0, sticky="w", padx=10, pady=10)
         ttk.Combobox(general_tab, textvariable=self.settings_plot_kind_var, values=["bar", "box", "violin", "xy"], width=15, state="readonly").grid(row=0, column=1, sticky="w", padx=10, pady=10)
         
         # Plot Settings Tab Content
-        tk.Checkbutton(plot_settings_tab, text="Show stripplot", variable=self.settings_show_stripplot_var).grid(row=0, column=0, sticky="w", padx=10, pady=5)
-        tk.Checkbutton(plot_settings_tab, text="Use black stripplot", variable=self.settings_strip_black_var).grid(row=1, column=0, sticky="w", padx=10, pady=5)
+        ttk.Checkbutton(plot_settings_tab, text="Show stripplot", variable=self.settings_show_stripplot_var).grid(row=0, column=0, sticky="w", padx=10, pady=5)
+        ttk.Checkbutton(plot_settings_tab, text="Use black stripplot", variable=self.settings_strip_black_var).grid(row=1, column=0, sticky="w", padx=10, pady=5)
         
-        tk.Label(plot_settings_tab, text="Error bar type:", anchor="w").grid(row=2, column=0, sticky="w", padx=10, pady=10)
+        ttk.Label(plot_settings_tab, text="Error bar type:", anchor="w").grid(row=2, column=0, sticky="w", padx=10, pady=10)
         ttk.Combobox(plot_settings_tab, textvariable=self.settings_errorbar_type_var, values=["SD", "SEM"], width=15, state="readonly").grid(row=2, column=1, sticky="w", padx=10, pady=10)
         
-        tk.Checkbutton(plot_settings_tab, text="Black error bars", variable=self.settings_errorbar_black_var).grid(row=3, column=0, sticky="w", padx=10, pady=5)
+        ttk.Checkbutton(plot_settings_tab, text="Black error bars", variable=self.settings_errorbar_black_var).grid(row=3, column=0, sticky="w", padx=10, pady=5)
         
-        tk.Label(plot_settings_tab, text="Error bar capsize:", anchor="w").grid(row=4, column=0, sticky="w", padx=10, pady=10)
+        ttk.Label(plot_settings_tab, text="Error bar capsize:", anchor="w").grid(row=4, column=0, sticky="w", padx=10, pady=10)
         ttk.Combobox(plot_settings_tab, textvariable=self.settings_errorbar_capsize_var, values=["Default", "None", "Small", "Medium", "Large"], width=15, state="readonly").grid(row=4, column=1, sticky="w", padx=10, pady=10)
         
         # Statistics Tab Content
         # Use statistics checkbox at the top
-        tk.Checkbutton(stats_tab, text="Use statistics by default", variable=self.settings_use_stats_var).grid(row=0, column=0, columnspan=2, sticky="w", padx=10, pady=5)
+        ttk.Checkbutton(stats_tab, text="Use statistics by default", variable=self.settings_use_stats_var).grid(row=0, column=0, columnspan=2, sticky="w", padx=10, pady=5)
         
-        tk.Label(stats_tab, text="t-test type:", anchor="w").grid(row=1, column=0, sticky="w", padx=10, pady=10)
+        ttk.Label(stats_tab, text="t-test type:", anchor="w").grid(row=1, column=0, sticky="w", padx=10, pady=10)
         ttest_options = ["Student's t-test (unpaired, equal variances)", "Welch's t-test (unpaired, unequal variances)", "Paired t-test"]
         ttk.Combobox(stats_tab, textvariable=self.settings_ttest_type_var, values=ttest_options, width=35, state="readonly").grid(row=1, column=1, sticky="w", padx=10, pady=10)
         
-        tk.Label(stats_tab, text="T-test Alternative:", anchor="w").grid(row=2, column=0, sticky="w", padx=10, pady=10)
+        ttk.Label(stats_tab, text="T-test Alternative:", anchor="w").grid(row=2, column=0, sticky="w", padx=10, pady=10)
         ttest_alternative_options = ["two-sided", "less", "greater"]
         ttk.Combobox(stats_tab, textvariable=self.settings_ttest_alternative_var, values=ttest_alternative_options, width=35, state="readonly").grid(row=2, column=1, sticky="w", padx=10, pady=10)
         
-        tk.Label(stats_tab, text="ANOVA type:", anchor="w").grid(row=3, column=0, sticky="w", padx=10, pady=10)
+        ttk.Label(stats_tab, text="ANOVA type:", anchor="w").grid(row=3, column=0, sticky="w", padx=10, pady=10)
         anova_options = ["One-way ANOVA", "Welch's ANOVA", "Repeated measures ANOVA"]
         ttk.Combobox(stats_tab, textvariable=self.settings_anova_type_var, values=anova_options, width=35, state="readonly").grid(row=3, column=1, sticky="w", padx=10, pady=10)
         
-        tk.Label(stats_tab, text="Alpha level:", anchor="w").grid(row=4, column=0, sticky="w", padx=10, pady=10)
+        ttk.Label(stats_tab, text="Alpha level:", anchor="w").grid(row=4, column=0, sticky="w", padx=10, pady=10)
         alpha_options = ["0.05", "0.01", "0.001", "0.0001"]
         ttk.Combobox(stats_tab, textvariable=self.settings_alpha_level_var, values=alpha_options, width=35, state="readonly").grid(row=4, column=1, sticky="w", padx=10, pady=10)
         
-        tk.Label(stats_tab, text="Post-hoc test:", anchor="w").grid(row=5, column=0, sticky="w", padx=10, pady=10)
+        ttk.Label(stats_tab, text="Post-hoc test:", anchor="w").grid(row=5, column=0, sticky="w", padx=10, pady=10)
         posthoc_options = ["Tukey's HSD", "Tamhane's T2", "Scheffe's test", "Dunn's test"]
         ttk.Combobox(stats_tab, textvariable=self.settings_posthoc_type_var, values=posthoc_options, width=35, state="readonly").grid(row=5, column=1, sticky="w", padx=10, pady=10)
         
         # Appearance Tab Content
-        tk.Label(appearance_tab, text="Line width:", anchor="w").grid(row=0, column=0, sticky="w", padx=10, pady=10)
+        ttk.Label(appearance_tab, text="Line width:", anchor="w").grid(row=0, column=0, sticky="w", padx=10, pady=10)
         tk.Spinbox(appearance_tab, from_=0.5, to=5.0, increment=0.5, textvariable=self.settings_linewidth, width=5).grid(row=0, column=1, sticky="w", padx=10, pady=10)
         
-        tk.Label(appearance_tab, text="Plot width (inches):", anchor="w").grid(row=1, column=0, sticky="w", padx=10, pady=10)
+        ttk.Label(appearance_tab, text="Plot width (inches):", anchor="w").grid(row=1, column=0, sticky="w", padx=10, pady=10)
         tk.Spinbox(appearance_tab, from_=0.5, to=5.0, increment=0.1, textvariable=self.settings_plot_width_var, width=5).grid(row=1, column=1, sticky="w", padx=10, pady=10)
         
-        tk.Label(appearance_tab, text="Plot height (inches):", anchor="w").grid(row=2, column=0, sticky="w", padx=10, pady=10)
+        ttk.Label(appearance_tab, text="Plot height (inches):", anchor="w").grid(row=2, column=0, sticky="w", padx=10, pady=10)
         tk.Spinbox(appearance_tab, from_=0.5, to=5.0, increment=0.1, textvariable=self.settings_plot_height_var, width=5).grid(row=2, column=1, sticky="w", padx=10, pady=10)
         
-        # Reset colors/palettes
-        tk.Label(appearance_tab, text="Reset options:", anchor="w", font=(None, 10, 'bold')).grid(row=3, column=0, sticky="w", padx=10, pady=(20, 5))
+        ttk.Label(appearance_tab, text="Preview size (DPI):", anchor="w").grid(row=3, column=0, sticky="w", padx=10, pady=10)
+        tk.Spinbox(appearance_tab, from_=50, to=300, increment=25, textvariable=self.settings_preview_dpi_var, width=5).grid(row=3, column=1, sticky="w", padx=10, pady=10)
+        
+        # Bar Graph Tab Content
+        ttk.Checkbutton(bar_graph_tab, text="Draw bar outlines", variable=self.settings_bar_outline_var).grid(row=0, column=0, sticky="w", padx=10, pady=10)
+        ttk.Checkbutton(bar_graph_tab, text="Upward-only error bars", variable=self.settings_upward_errorbar_var).grid(row=1, column=0, sticky="w", padx=10, pady=10)
+        
+        ttk.Label(bar_graph_tab, text="Bar gap multiplier:", anchor="w").grid(row=2, column=0, sticky="w", padx=10, pady=10)
+        tk.Spinbox(bar_graph_tab, from_=0.5, to=1.0, increment=0.05, textvariable=self.settings_bar_gap_multiplier_var, width=5).grid(row=2, column=1, sticky="w", padx=10, pady=10)
+        
+        # XY Plot Tab Content
+        ttk.Label(xy_plot_tab, text="Marker Symbol:", anchor="w").grid(row=0, column=0, sticky="w", padx=10, pady=10)
+        ttk.Combobox(xy_plot_tab, textvariable=self.settings_xy_marker_symbol_var, values=["o", "s", "^", "D", "v", "P", "X", "+", "x", "*", "."], width=5, state="readonly").grid(row=0, column=1, sticky="w", padx=10, pady=10)
+        
+        ttk.Label(xy_plot_tab, text="Marker Size:", anchor="w").grid(row=1, column=0, sticky="w", padx=10, pady=10)
+        tk.Spinbox(xy_plot_tab, from_=1, to=15, increment=0.5, textvariable=self.settings_xy_marker_size_var, width=5).grid(row=1, column=1, sticky="w", padx=10, pady=10)
+        
+        ttk.Checkbutton(xy_plot_tab, text="Filled Symbols", variable=self.settings_xy_filled_var).grid(row=2, column=0, sticky="w", padx=10, pady=5, columnspan=2)
+        
+        ttk.Label(xy_plot_tab, text="Line Style:", anchor="w").grid(row=3, column=0, sticky="w", padx=10, pady=10)
+        ttk.Combobox(xy_plot_tab, textvariable=self.settings_xy_line_style_var, values=["solid", "dashed", "dotted", "dashdot"], width=10, state="readonly").grid(row=3, column=1, sticky="w", padx=10, pady=10)
+        
+        ttk.Checkbutton(xy_plot_tab, text="Lines in Black", variable=self.settings_xy_line_black_var).grid(row=4, column=0, sticky="w", padx=10, pady=5, columnspan=2)
+        ttk.Checkbutton(xy_plot_tab, text="Connect Mean with Lines", variable=self.settings_xy_connect_var).grid(row=5, column=0, sticky="w", padx=10, pady=5, columnspan=2)
+        ttk.Checkbutton(xy_plot_tab, text="Show Mean Values", variable=self.settings_xy_show_mean_var).grid(row=6, column=0, sticky="w", padx=10, pady=5, columnspan=2)
+        ttk.Checkbutton(xy_plot_tab, text="With Error Bars", variable=self.settings_xy_show_mean_errorbars_var).grid(row=7, column=0, sticky="w", padx=30, pady=5, columnspan=2)
+        ttk.Checkbutton(xy_plot_tab, text="Draw Bands", variable=self.settings_xy_draw_band_var).grid(row=8, column=0, sticky="w", padx=10, pady=5, columnspan=2)
+        
+        # Colors Tab Content
+        # Reset colors/palettes section
+        reset_frame = ttk.Frame(colors_tab)
+        reset_frame.grid(row=0, column=0, columnspan=2, sticky="w", padx=10, pady=(10, 20))
+        
+        ttk.Label(reset_frame, text="Reset options:", font=(None, 10, 'bold')).pack(side=tk.LEFT, padx=5)
         
         def reset_colors():
             if messagebox.askyesno("Reset Colors", "This will delete your custom colors and cannot be undone. Continue?"):
@@ -2017,47 +2053,19 @@ class ExPlotApp:
                 self.load_custom_colors_palettes()
                 self.update_color_palette_dropdowns()
                 messagebox.showinfo("Reset Palettes", "Color palettes have been reset to default.")
-                
-        reset_frame = tk.Frame(appearance_tab)
-        reset_frame.grid(row=4, column=0, columnspan=2, sticky="w", padx=10, pady=5)
-        tk.Button(reset_frame, text="Reset Colors", command=reset_colors, width=15).grid(row=0, column=0, padx=5)
-        tk.Button(reset_frame, text="Reset Palettes", command=reset_palettes, width=15).grid(row=0, column=1, padx=5)
         
-        # Bar Graph Tab Content
-        tk.Checkbutton(bar_graph_tab, text="Draw bar outlines", variable=self.settings_bar_outline_var).grid(row=0, column=0, sticky="w", padx=10, pady=10)
-        tk.Checkbutton(bar_graph_tab, text="Upward-only error bars", variable=self.settings_upward_errorbar_var).grid(row=1, column=0, sticky="w", padx=10, pady=10)
+        ttk.Button(reset_frame, text="Reset Colors", command=reset_colors, width=15).pack(side=tk.LEFT, padx=5)
+        ttk.Button(reset_frame, text="Reset Palettes", command=reset_palettes, width=15).pack(side=tk.LEFT, padx=5)
         
-        tk.Label(bar_graph_tab, text="Bar gap multiplier:", anchor="w").grid(row=2, column=0, sticky="w", padx=10, pady=10)
-        tk.Spinbox(bar_graph_tab, from_=0.5, to=1.0, increment=0.05, textvariable=self.settings_bar_gap_multiplier_var, width=5).grid(row=2, column=1, sticky="w", padx=10, pady=10)
-        
-        # XY Plot Tab Content
-        tk.Label(xy_plot_tab, text="Marker Symbol:", anchor="w").grid(row=0, column=0, sticky="w", padx=10, pady=10)
-        ttk.Combobox(xy_plot_tab, textvariable=self.settings_xy_marker_symbol_var, values=["o", "s", "^", "D", "v", "P", "X", "+", "x", "*", "."], width=5, state="readonly").grid(row=0, column=1, sticky="w", padx=10, pady=10)
-        
-        tk.Label(xy_plot_tab, text="Marker Size:", anchor="w").grid(row=1, column=0, sticky="w", padx=10, pady=10)
-        tk.Spinbox(xy_plot_tab, from_=1, to=15, increment=0.5, textvariable=self.settings_xy_marker_size_var, width=5).grid(row=1, column=1, sticky="w", padx=10, pady=10)
-        
-        tk.Checkbutton(xy_plot_tab, text="Filled Symbols", variable=self.settings_xy_filled_var).grid(row=2, column=0, sticky="w", padx=10, pady=5, columnspan=2)
-        
-        tk.Label(xy_plot_tab, text="Line Style:", anchor="w").grid(row=3, column=0, sticky="w", padx=10, pady=10)
-        ttk.Combobox(xy_plot_tab, textvariable=self.settings_xy_line_style_var, values=["solid", "dashed", "dotted", "dashdot"], width=10, state="readonly").grid(row=3, column=1, sticky="w", padx=10, pady=10)
-        
-        tk.Checkbutton(xy_plot_tab, text="Lines in Black", variable=self.settings_xy_line_black_var).grid(row=4, column=0, sticky="w", padx=10, pady=5, columnspan=2)
-        tk.Checkbutton(xy_plot_tab, text="Connect Mean with Lines", variable=self.settings_xy_connect_var).grid(row=5, column=0, sticky="w", padx=10, pady=5, columnspan=2)
-        tk.Checkbutton(xy_plot_tab, text="Show Mean Values", variable=self.settings_xy_show_mean_var).grid(row=6, column=0, sticky="w", padx=10, pady=5, columnspan=2)
-        tk.Checkbutton(xy_plot_tab, text="With Error Bars", variable=self.settings_xy_show_mean_errorbars_var).grid(row=7, column=0, sticky="w", padx=30, pady=5, columnspan=2)
-        tk.Checkbutton(xy_plot_tab, text="Draw Bands", variable=self.settings_xy_draw_band_var).grid(row=8, column=0, sticky="w", padx=10, pady=5, columnspan=2)
-        
-        # Colors Tab Content
         # Single Color section
-        tk.Label(colors_tab, text="Single Data Color:", anchor="w", font=(None, 10, 'bold')).grid(row=0, column=0, sticky="w", padx=10, pady=(10, 5))
+        ttk.Label(colors_tab, text="Single Data Color:", anchor="w", font=(None, 10, 'bold')).grid(row=1, column=0, sticky="w", padx=10, pady=(10, 5))
         self.settings_single_color_dropdown = ttk.Combobox(colors_tab, textvariable=self.settings_single_color_var, values=list(self.custom_colors.keys()), width=20, state="readonly")
         self.settings_single_color_dropdown.grid(row=1, column=0, sticky="w", padx=10, pady=5)
         
         # Create a frame for the color preview
-        single_color_preview_frame = tk.Frame(colors_tab)
+        single_color_preview_frame = ttk.Frame(colors_tab)
         single_color_preview_frame.grid(row=2, column=0, sticky="w", padx=10, pady=5)
-        self.settings_single_color_preview = tk.Canvas(single_color_preview_frame, width=60, height=20, bg='white', highlightthickness=1)
+        self.settings_single_color_preview = tk.Canvas(single_color_preview_frame, width=60, height=20, highlightthickness=1, bg='white')
         self.settings_single_color_preview.pack()
         
         # Function to update single color preview
@@ -2077,14 +2085,14 @@ class ExPlotApp:
         update_settings_single_color_preview()
         
         # Group Palette section
-        tk.Label(colors_tab, text="Group Palette:", anchor="w", font=(None, 10, 'bold')).grid(row=3, column=0, sticky="w", padx=10, pady=(20, 5))
+        ttk.Label(colors_tab, text="Group Palette:", anchor="w", font=(None, 10, 'bold')).grid(row=3, column=0, sticky="w", padx=10, pady=(20, 5))
         self.settings_palette_dropdown = ttk.Combobox(colors_tab, textvariable=self.settings_palette_var, values=list(self.custom_palettes.keys()), width=20, state="readonly")
         self.settings_palette_dropdown.grid(row=4, column=0, sticky="w", padx=10, pady=5)
         
         # Create a frame for the palette preview
-        palette_preview_frame = tk.Frame(colors_tab)
+        palette_preview_frame = ttk.Frame(colors_tab)
         palette_preview_frame.grid(row=5, column=0, sticky="w", padx=10, pady=5)
-        self.settings_palette_preview = tk.Canvas(palette_preview_frame, width=120, height=20, bg='white', highlightthickness=1)
+        self.settings_palette_preview = tk.Canvas(palette_preview_frame, width=120, height=20, highlightthickness=1, bg='white')
         self.settings_palette_preview.pack()
         
         # Function to update palette preview
@@ -2107,17 +2115,17 @@ class ExPlotApp:
         update_settings_palette_preview()
         
         # Outline Color section
-        tk.Label(colors_tab, text="Outline Color:", anchor="w", font=(None, 10, 'bold')).grid(row=6, column=0, sticky="w", padx=10, pady=(20, 5))
-        outline_frame = tk.Frame(colors_tab)
+        ttk.Label(colors_tab, text="Outline Color:", anchor="w", font=(None, 10, 'bold')).grid(row=6, column=0, sticky="w", padx=10, pady=(20, 5))
+        outline_frame = ttk.Frame(colors_tab)
         outline_frame.grid(row=7, column=0, sticky="w", padx=10, pady=5)
         
-        tk.Radiobutton(outline_frame, text="As set", variable=self.settings_outline_color_var, value="as_set").pack(anchor="w", pady=2)
-        tk.Radiobutton(outline_frame, text="Black", variable=self.settings_outline_color_var, value="black").pack(anchor="w", pady=2)
-        tk.Radiobutton(outline_frame, text="Gray", variable=self.settings_outline_color_var, value="gray").pack(anchor="w", pady=2)
-        tk.Radiobutton(outline_frame, text="White", variable=self.settings_outline_color_var, value="white").pack(anchor="w", pady=2)
+        ttk.Radiobutton(outline_frame, text="As set", variable=self.settings_outline_color_var, value="as_set").pack(anchor="w", pady=2)
+        ttk.Radiobutton(outline_frame, text="Black", variable=self.settings_outline_color_var, value="black").pack(anchor="w", pady=2)
+        ttk.Radiobutton(outline_frame, text="Gray", variable=self.settings_outline_color_var, value="gray").pack(anchor="w", pady=2)
+        ttk.Radiobutton(outline_frame, text="White", variable=self.settings_outline_color_var, value="white").pack(anchor="w", pady=2)
         
         # Buttons at the bottom
-        button_frame = tk.Frame(window)
+        button_frame = ttk.Frame(window)
         button_frame.pack(pady=10, fill='x')
         
         def save_settings():
@@ -2128,6 +2136,9 @@ class ExPlotApp:
             self.single_color_var.set(self.settings_single_color_var.get())
             self.palette_var.set(self.settings_palette_var.get())
             self.outline_color_var.set(self.settings_outline_color_var.get())
+            # Update preview DPI
+            if hasattr(self, 'preview_dpi'):
+                self.preview_dpi.set(self.settings_preview_dpi_var.get())
             # Then save preferences
             self.save_user_preferences()
             messagebox.showinfo("Settings Saved", "Your preferences have been saved.")
@@ -2140,9 +2151,9 @@ class ExPlotApp:
                 messagebox.showinfo("Reset Preferences", "All preferences have been reset to default values.")
                 window.destroy()
         
-        tk.Button(button_frame, text="Save Settings", command=save_settings, width=15).pack(side=tk.LEFT, padx=5)
-        tk.Button(button_frame, text="Reset All Preferences", command=reset_all_preferences, width=20).pack(side=tk.LEFT, padx=5)
-        tk.Button(button_frame, text="Cancel", command=window.destroy, width=10).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(button_frame, text="Save Settings", command=save_settings, width=15).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Reset All Preferences", command=reset_all_preferences, width=20).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Cancel", command=window.destroy, width=10).pack(side=tk.RIGHT, padx=5)
 
     def show_about(self):
         messagebox.showinfo("About ExPlot", f"ExPlot\nVersion: {self.version}\n\nA tool for plotting Excel data.")
@@ -2300,7 +2311,7 @@ class ExPlotApp:
         # Create dialog window
         window = tk.Toplevel(self.root)
         window.title(f"Format {'X' if axis_type == 'x' else 'Y'}-Axis Label")
-        window.geometry("650x580")
+        window.geometry("650x650")
         window.transient(self.root)
         window.grab_set()
         
@@ -2313,7 +2324,7 @@ class ExPlotApp:
         preview_frame.pack(fill='x', padx=5, pady=5)
         
         # Create canvas for preview
-        preview_fig = plt.Figure(figsize=(5, 1.5), dpi=100)
+        preview_fig = plt.Figure(figsize=(3, 3), dpi=75)
         preview_ax = preview_fig.add_subplot(111)
         preview_canvas = FigureCanvasTkAgg(preview_fig, master=preview_frame)
         preview_canvas.get_tk_widget().pack(fill='both', expand=True)
@@ -4116,7 +4127,7 @@ class ExPlotApp:
             details_text.insert(tk.END, traceback.format_exc())
         finally:
             details_text.config(state='disabled')
-            tk.Button(window, text='Close', command=window.destroy).pack(pady=8)
+            ttk.Button(window, text='Close', command=window.destroy).pack(pady=8)
 
 
     def load_custom_colors_palettes(self):
@@ -4217,7 +4228,9 @@ class ExPlotApp:
             'palette': None,  # Will be set after palettes are loaded
             # Theme settings
             'theme_name': 'light',
-            'dark_mode': False
+            'dark_mode': False,
+            # Preview settings
+            'preview_dpi': 175  # Default DPI for preview images
         }
         
         # Set default colors after loading custom colors
@@ -4292,6 +4305,8 @@ class ExPlotApp:
             self.plot_width_var.set(preferences['plot_width'])
         if 'plot_height' in preferences and hasattr(self, 'plot_height_var'):
             self.plot_height_var.set(preferences['plot_height'])
+        if hasattr(self, 'preview_dpi') and 'preview_dpi' in preferences:
+            self.preview_dpi.set(preferences['preview_dpi'])
             
         # Color settings
         if 'single_color' in preferences and hasattr(self, 'single_color_var'):
@@ -4403,6 +4418,10 @@ class ExPlotApp:
         if hasattr(self, 'settings_posthoc_type_var'):
             preferences['posthoc_type'] = self.settings_posthoc_type_var.get()
             
+            self.xy_show_mean_errorbars_var.set(preferences.get('xy_show_mean_errorbars', True))
+        if hasattr(self, 'xy_draw_band_var') and 'xy_draw_band' in preferences:
+            self.xy_draw_band_var.set(preferences['xy_draw_band'])
+            
         # Appearance tab
         if hasattr(self, 'settings_linewidth'):
             preferences['linewidth'] = self.settings_linewidth.get()
@@ -4414,7 +4433,9 @@ class ExPlotApp:
             plot_height = self.settings_plot_height_var.get()
             preferences['plot_height'] = plot_height
             self.plot_height_var.set(plot_height)  # Apply to main app immediately
-        
+        if hasattr(self, 'preview_dpi'):
+            preferences['preview_dpi'] = self.preview_dpi.get()
+            
         # XY Plot tab
         if hasattr(self, 'settings_xy_marker_symbol_var'):
             preferences['xy_marker_symbol'] = self.settings_xy_marker_symbol_var.get()
@@ -4480,21 +4501,21 @@ class ExPlotApp:
             print(f"Error saving preferences: {str(e)}")
 
     def setup_ui(self):
-        main_frame = tk.Frame(self.root)
+        main_frame = ttk.Frame(self.root)
         main_frame.pack(fill='both', expand=True)
 
-        left_frame = tk.Frame(main_frame)
+        left_frame = ttk.Frame(main_frame)
         left_frame.pack(side='left', fill='both', expand=False)
 
         self.tab_control = ttk.Notebook(left_frame)
         self.tab_control.pack(fill='both', expand=True)
 
-        self.basic_tab = tk.Frame(self.tab_control)
-        self.appearance_tab = tk.Frame(self.tab_control)
-        self.axis_tab = tk.Frame(self.tab_control)
-        self.colors_tab = tk.Frame(self.tab_control)
-        self.stats_settings_tab = tk.Frame(self.tab_control)
-        self.xy_fitting_tab = tk.Frame(self.tab_control)
+        self.basic_tab = ttk.Frame(self.tab_control)
+        self.appearance_tab = ttk.Frame(self.tab_control)
+        self.axis_tab = ttk.Frame(self.tab_control)
+        self.colors_tab = ttk.Frame(self.tab_control)
+        self.stats_settings_tab = ttk.Frame(self.tab_control)
+        self.xy_fitting_tab = ttk.Frame(self.tab_control)
 
         self.tab_control.add(self.basic_tab, text="Basic")
         self.tab_control.add(self.appearance_tab, text="Appearance")
@@ -4503,11 +4524,11 @@ class ExPlotApp:
         self.tab_control.add(self.xy_fitting_tab, text="XY Fitting")
         self.tab_control.add(self.colors_tab, text="Colors")
 
-        right_frame = tk.Frame(main_frame)
+        right_frame = ttk.Frame(main_frame)
         right_frame.pack(side='right', fill='both', expand=True)
         
         # Create a top frame for action buttons
-        top_button_frame = tk.Frame(right_frame, pady=10)
+        top_button_frame = ttk.Frame(right_frame, padding=10)
         top_button_frame.pack(fill='x', padx=10, pady=(5, 10))
         
         # Plot and Stats buttons side by side in the top frame
@@ -4530,11 +4551,11 @@ class ExPlotApp:
         self.stats_details_btn.pack(side="left", padx=5, ipady=5)
         
         # Canvas frame for the plot
-        self.canvas_frame = tk.Frame(right_frame)
+        self.canvas_frame = ttk.Frame(right_frame)
         self.canvas_frame.pack(fill='both', expand=True, padx=10, pady=(0, 10))
         
         # Bottom frame (kept for potential future use)
-        self.bottom_frame = tk.Frame(self.root)
+        self.bottom_frame = ttk.Frame(self.root)
         self.bottom_frame.pack(side="bottom", fill="x")
 
 
@@ -4547,33 +4568,33 @@ class ExPlotApp:
     def setup_basic_tab(self):
         frame = self.basic_tab
         # File/Sheet group
-        file_grp = tk.LabelFrame(frame, text="File/Sheet", padx=6, pady=6)
+        file_grp = ttk.LabelFrame(frame, text="File/Sheet", padding=6)
         file_grp.pack(fill='x', padx=6, pady=(8,4))
-        tk.Button(file_grp, text='Load Excel File', command=self.load_file).pack(fill='x', pady=2)
-        tk.Label(file_grp, text="Sheet:").pack(anchor="w")
+        ttk.Button(file_grp, text='Load Excel File', command=self.load_file).pack(fill='x', pady=2)
+        ttk.Label(file_grp, text="Sheet:").pack(anchor="w")
         self.sheet_var = tk.StringVar()
         self.sheet_dropdown = ttk.Combobox(file_grp, textvariable=self.sheet_var, width=18)
         self.sheet_dropdown.pack(fill='x', pady=2)
         self.sheet_dropdown.bind('<<ComboboxSelected>>', self.load_sheet)
         # Columns group
-        col_grp = tk.LabelFrame(frame, text="Columns", padx=6, pady=6)
+        col_grp = ttk.LabelFrame(frame, text="Columns", padding=6)
         col_grp.pack(fill='x', padx=6, pady=4)
-        tk.Label(col_grp, text="X-axis column:").grid(row=0, column=0, sticky="w", pady=2)
+        ttk.Label(col_grp, text="X-axis column:").grid(row=0, column=0, sticky="w", pady=2)
         self.xaxis_var = tk.StringVar()
         self.xaxis_var.trace_add('write', self.update_x_axis_label)
         self.xaxis_dropdown = ttk.Combobox(col_grp, textvariable=self.xaxis_var, width=18)
         self.xaxis_dropdown.grid(row=0, column=1, sticky="ew", padx=2, pady=2)
-        tk.Label(col_grp, text="Group column:").grid(row=1, column=0, sticky="w", pady=2)
+        ttk.Label(col_grp, text="Group column:").grid(row=1, column=0, sticky="w", pady=2)
         self.group_var = tk.StringVar()
         self.group_dropdown = ttk.Combobox(col_grp, textvariable=self.group_var, width=18)
         self.group_dropdown.grid(row=1, column=1, sticky="ew", padx=2, pady=2)
-        tk.Label(col_grp, text="Y-axis columns:").grid(row=2, column=0, sticky="nw", pady=(4,0))
+        ttk.Label(col_grp, text="Y-axis columns:").grid(row=2, column=0, sticky="nw", pady=(4,0))
         # Scrollable frame for value checkbuttons
-        value_vars_scroll_frame = tk.Frame(col_grp)
+        value_vars_scroll_frame = ttk.Frame(col_grp)
         value_vars_scroll_frame.grid(row=2, column=1, sticky="ew", pady=(2,0))
         value_vars_canvas = tk.Canvas(value_vars_scroll_frame, height=120)
-        value_vars_scrollbar = tk.Scrollbar(value_vars_scroll_frame, orient="vertical", command=value_vars_canvas.yview)
-        self.value_vars_inner_frame = tk.Frame(value_vars_canvas)
+        value_vars_scrollbar = ttk.Scrollbar(value_vars_scroll_frame, orient="vertical", command=value_vars_canvas.yview)
+        self.value_vars_inner_frame = ttk.Frame(value_vars_canvas)
         self.value_vars_inner_frame.bind(
             "<Configure>", lambda e: value_vars_canvas.configure(scrollregion=value_vars_canvas.bbox("all")))
         value_vars_canvas.create_window((0, 0), window=self.value_vars_inner_frame, anchor="nw")
@@ -4584,66 +4605,66 @@ class ExPlotApp:
         self.value_checkbuttons = []
         col_grp.columnconfigure(1, weight=1)
         # Options group
-        opt_grp = tk.LabelFrame(frame, text="Options", padx=6, pady=6)
+        opt_grp = ttk.LabelFrame(frame, text="Options", padding=6)
         opt_grp.pack(fill='x', padx=6, pady=4)
 
 
         
         # Statistics settings
-        stats_frame = tk.Frame(opt_grp)
+        stats_frame = ttk.Frame(opt_grp)
         stats_frame.pack(anchor="w", pady=2)
-        tk.Label(stats_frame, text="Statistics:").pack(side="left")
-        tk.Checkbutton(stats_frame, text="Use statistics", variable=self.use_stats_var).pack(side="left")
+        ttk.Label(stats_frame, text="Statistics:").pack(side="left")
+        ttk.Checkbutton(stats_frame, text="Use statistics", variable=self.use_stats_var).pack(side="left")
         
         # Add checkbox for showing statistical annotations
         self.show_statistics_annotations_var = tk.BooleanVar(value=True)
-        tk.Checkbutton(opt_grp, text="Show statistical annotations on plot", variable=self.show_statistics_annotations_var).pack(anchor="w", pady=1)
+        ttk.Checkbutton(opt_grp, text="Show statistical annotations on plot", variable=self.show_statistics_annotations_var).pack(anchor="w", pady=1)
         
         # --- Error bar type (SD/SEM) ---
         # We use the errorbar_type_var that was initialized in __init__
         # No need to create it again here
             
-        errorbar_frame = tk.Frame(opt_grp)
+        errorbar_frame = ttk.Frame(opt_grp)
         errorbar_frame.pack(anchor="w", pady=2)
-        tk.Label(errorbar_frame, text="Error bars:").pack(side="left")
-        tk.Radiobutton(errorbar_frame, text="SD", variable=self.errorbar_type_var, value="SD").pack(side="left")
-        tk.Radiobutton(errorbar_frame, text="SEM", variable=self.errorbar_type_var, value="SEM").pack(side="left")
+        ttk.Label(errorbar_frame, text="Error bars:").pack(side="left")
+        ttk.Radiobutton(errorbar_frame, text="SD", variable=self.errorbar_type_var, value="SD").pack(side="left")
+        ttk.Radiobutton(errorbar_frame, text="SEM", variable=self.errorbar_type_var, value="SEM").pack(side="left")
         # Black errorbars option
         self.errorbar_black_var = tk.BooleanVar(value=True)
-        tk.Checkbutton(opt_grp, text="Black errorbars", variable=self.errorbar_black_var).pack(anchor="w", pady=1)
-        btn_fr = tk.Frame(opt_grp)
+        ttk.Checkbutton(opt_grp, text="Black errorbars", variable=self.errorbar_black_var).pack(anchor="w", pady=1)
+        btn_fr = ttk.Frame(opt_grp)
         btn_fr.pack(fill='x', pady=(2,0))
-        tk.Button(btn_fr, text="Modify X categories", command=self.modify_x_categories, width=20).pack(side="left", padx=1)
+        ttk.Button(btn_fr, text="Modify X categories", command=self.modify_x_categories, width=20).pack(side="left", padx=1)
         # --- Plot type group (with horizontal layout for XY options, no tabs) ---
-        type_grp = tk.LabelFrame(frame, text="Plot Type", padx=6, pady=6)
+        type_grp = ttk.LabelFrame(frame, text="Plot Type", padding=6)
         type_grp.pack(fill='x', padx=6, pady=4)
         # Frame for radio buttons (left)
-        plot_type_radio_frame = tk.Frame(type_grp)
+        plot_type_radio_frame = ttk.Frame(type_grp)
         plot_type_radio_frame.grid(row=0, column=0, sticky="nw")
-        tk.Label(plot_type_radio_frame, text="Plot Type:").pack(anchor="w")
-        bar_radio = tk.Radiobutton(plot_type_radio_frame, text="Bar Graph", variable=self.plot_kind_var, value="bar")
-        box_radio = tk.Radiobutton(plot_type_radio_frame, text="Box Plot", variable=self.plot_kind_var, value="box")
-        violin_radio = tk.Radiobutton(plot_type_radio_frame, text="Violin Plot", variable=self.plot_kind_var, value="violin")
-        xy_radio = tk.Radiobutton(plot_type_radio_frame, text="XY Plot", variable=self.plot_kind_var, value="xy")
+        ttk.Label(plot_type_radio_frame, text="Plot Type:").pack(anchor="w")
+        bar_radio = ttk.Radiobutton(plot_type_radio_frame, text="Bar Graph", variable=self.plot_kind_var, value="bar")
+        box_radio = ttk.Radiobutton(plot_type_radio_frame, text="Box Plot", variable=self.plot_kind_var, value="box")
+        violin_radio = ttk.Radiobutton(plot_type_radio_frame, text="Violin Plot", variable=self.plot_kind_var, value="violin")
+        xy_radio = ttk.Radiobutton(plot_type_radio_frame, text="XY Plot", variable=self.plot_kind_var, value="xy")
         bar_radio.pack(anchor="w")
         box_radio.pack(anchor="w")
         violin_radio.pack(anchor="w")
         xy_radio.pack(anchor="w")
         # XY options frame (right)
-        self.xy_options_frame = tk.Frame(type_grp)
+        self.xy_options_frame = ttk.Frame(type_grp)
         # XY options widgets in xy_options_frame
-        self.xy_marker_symbol_label = tk.Label(self.xy_options_frame, text="XY Marker Symbol:")
+        self.xy_marker_symbol_label = ttk.Label(self.xy_options_frame, text="XY Marker Symbol:")
         self.xy_marker_symbol_dropdown = ttk.Combobox(self.xy_options_frame, textvariable=self.xy_marker_symbol_var, values=["o", "s", "^", "D", "v", "P", "X", "+", "x", "*", "."], width=10)
-        self.xy_marker_size_label = tk.Label(self.xy_options_frame, text="XY Marker Size:")
-        self.xy_marker_size_entry = tk.Entry(self.xy_options_frame, textvariable=self.xy_marker_size_var, width=6)
-        self.xy_filled_check = tk.Checkbutton(self.xy_options_frame, text="Filled symbols", variable=self.xy_filled_var)
-        self.xy_line_style_label = tk.Label(self.xy_options_frame, text="Line style:")
+        self.xy_marker_size_label = ttk.Label(self.xy_options_frame, text="XY Marker Size:")
+        self.xy_marker_size_entry = ttk.Entry(self.xy_options_frame, textvariable=self.xy_marker_size_var, width=6)
+        self.xy_filled_check = ttk.Checkbutton(self.xy_options_frame, text="Filled symbols", variable=self.xy_filled_var)
+        self.xy_line_style_label = ttk.Label(self.xy_options_frame, text="Line style:")
         self.xy_line_style_dropdown = ttk.Combobox(self.xy_options_frame, textvariable=self.xy_line_style_var, values=["solid", "dashed", "dotted", "dashdot"], width=10)
-        self.xy_line_black_check = tk.Checkbutton(self.xy_options_frame, text="Lines in black", variable=self.xy_line_black_var)
-        self.xy_connect_check = tk.Checkbutton(self.xy_options_frame, text="Connect mean with lines", variable=self.xy_connect_var)
-        self.xy_show_mean_check = tk.Checkbutton(self.xy_options_frame, text="Show mean values", variable=self.xy_show_mean_var, command=self.update_xy_mean_errorbar_state)
-        self.xy_show_mean_errorbars_check = tk.Checkbutton(self.xy_options_frame, text="With errorbars", variable=self.xy_show_mean_errorbars_var)
-        self.xy_draw_band_check = tk.Checkbutton(self.xy_options_frame, text="Draw bands (min-max or error)", variable=self.xy_draw_band_var)
+        self.xy_line_black_check = ttk.Checkbutton(self.xy_options_frame, text="Lines in black", variable=self.xy_line_black_var)
+        self.xy_connect_check = ttk.Checkbutton(self.xy_options_frame, text="Connect mean with lines", variable=self.xy_connect_var)
+        self.xy_show_mean_check = ttk.Checkbutton(self.xy_options_frame, text="Show mean values", variable=self.xy_show_mean_var, command=self.update_xy_mean_errorbar_state)
+        self.xy_show_mean_errorbars_check = ttk.Checkbutton(self.xy_options_frame, text="With errorbars", variable=self.xy_show_mean_errorbars_var)
+        self.xy_draw_band_check = ttk.Checkbutton(self.xy_options_frame, text="Draw bands (min-max or error)", variable=self.xy_draw_band_var)
         # Pack XY widgets in order
         self.xy_marker_symbol_label.grid(row=0, column=0, sticky="w", padx=4, pady=2)
         self.xy_marker_symbol_dropdown.grid(row=0, column=1, sticky="w", padx=2, pady=2)
@@ -4678,125 +4699,135 @@ class ExPlotApp:
     def setup_appearance_tab(self):
         frame = self.appearance_tab
         # --- Size group ---
-        size_grp = tk.LabelFrame(frame, text="Figure Size", padx=6, pady=6)
+        size_grp = ttk.LabelFrame(frame, text="Figure Size", padding=6)
         size_grp.pack(fill='x', padx=6, pady=(8,4))
-        tk.Label(size_grp, text="Plot Width (inches):").grid(row=0, column=0, sticky="w", pady=2)
-        self.width_entry = tk.Entry(size_grp, textvariable=self.plot_width_var)
+        ttk.Label(size_grp, text="Plot Width (inches):").grid(row=0, column=0, sticky="w", pady=2)
+        self.width_entry = ttk.Entry(size_grp, textvariable=self.plot_width_var)
         self.width_entry.grid(row=0, column=1, sticky="ew", padx=2, pady=2)
-        tk.Label(size_grp, text="Plot Height per plot (inches):").grid(row=1, column=0, sticky="w", pady=2)
-        self.height_entry = tk.Entry(size_grp, textvariable=self.plot_height_var)
+        ttk.Label(size_grp, text="Plot Height per plot (inches):").grid(row=1, column=0, sticky="w", pady=2)
+        self.height_entry = ttk.Entry(size_grp, textvariable=self.plot_height_var)
         self.height_entry.grid(row=1, column=1, sticky="ew", padx=2, pady=2)
         size_grp.columnconfigure(1, weight=1)
         # --- Font/Line group ---
-        font_grp = tk.LabelFrame(frame, text="Font & Line", padx=6, pady=6)
+        font_grp = ttk.LabelFrame(frame, text="Font & Line", padding=6)
         font_grp.pack(fill='x', padx=6, pady=4)
-        tk.Label(font_grp, text="Font Size:").grid(row=0, column=0, sticky="w", pady=2)
-        self.fontsize_entry = tk.Entry(font_grp)
+        ttk.Label(font_grp, text="Font Size:").grid(row=0, column=0, sticky="w", pady=2)
+        self.fontsize_entry = ttk.Entry(font_grp)
         self.fontsize_entry.insert(0, "10")
         self.fontsize_entry.grid(row=0, column=1, sticky="ew", padx=2, pady=2)
-        tk.Label(font_grp, text="Line Width:").grid(row=1, column=0, sticky="w", pady=2)
-        self.linewidth_entry = tk.Entry(font_grp, textvariable=self.linewidth)
+        ttk.Label(font_grp, text="Line Width:").grid(row=1, column=0, sticky="w", pady=2)
+        self.linewidth_entry = ttk.Entry(font_grp, textvariable=self.linewidth)
         self.linewidth_entry.grid(row=1, column=1, sticky="ew", padx=2, pady=2)
-        tk.Label(font_grp, text="Error Bar Capsize:").grid(row=2, column=0, sticky="w", pady=2)
+        ttk.Label(font_grp, text="Error Bar Capsize:").grid(row=2, column=0, sticky="w", pady=2)
         self.capsize_dropdown = ttk.Combobox(font_grp, textvariable=self.errorbar_capsize_var, 
                                         values=["Default", "Narrow", "Wide", "Wider", "None"], width=10)
         self.capsize_dropdown.grid(row=2, column=1, sticky="ew", padx=2, pady=2)
         font_grp.columnconfigure(1, weight=1)
         # --- Bar Graph group ---
-        bar_grp = tk.LabelFrame(frame, text="Bar Graph", padx=6, pady=6)
+        bar_grp = ttk.LabelFrame(frame, text="Bar Graph", padding=6)
         bar_grp.pack(fill='x', padx=6, pady=4)
-        tk.Checkbutton(bar_grp, text="Draw bar outlines", variable=self.bar_outline_var).pack(anchor="w", pady=1)
-        tk.Checkbutton(bar_grp, text="Upward-only error bars", variable=self.upward_errorbar_var).pack(anchor="w", pady=1)
+        ttk.Checkbutton(bar_grp, text="Draw bar outlines", variable=self.bar_outline_var).pack(anchor="w", pady=1)
+        ttk.Checkbutton(bar_grp, text="Upward-only error bars", variable=self.upward_errorbar_var).pack(anchor="w", pady=1)
         
         # Bar gap multiplier control
-        bar_gap_frame = tk.Frame(bar_grp)
+        bar_gap_frame = ttk.Frame(bar_grp)
         bar_gap_frame.pack(anchor="w", pady=1, fill='x')
-        tk.Label(bar_gap_frame, text="Bar gap multiplier:").pack(side="left")
+        ttk.Label(bar_gap_frame, text="Bar gap multiplier:").pack(side="left")
         tk.Spinbox(bar_gap_frame, from_=0.5, to=1.0, increment=0.05, 
                   textvariable=self.bar_gap_multiplier_var, width=5).pack(side="left", padx=4)
         
         # --- Violin Plot group ---
-        violin_grp = tk.LabelFrame(frame, text="Violin Plot", padx=6, pady=6)
+        violin_grp = ttk.LabelFrame(frame, text="Violin Plot", padding=6)
         violin_grp.pack(fill='x', padx=6, pady=4)
-        tk.Checkbutton(violin_grp, text="Show box inside violin", variable=self.violin_inner_box_var).pack(anchor="w", pady=1)
+        ttk.Checkbutton(violin_grp, text="Show box inside violin", variable=self.violin_inner_box_var).pack(anchor="w", pady=1)
         
         # --- XY Plot group ---
-        xy_grp = tk.LabelFrame(frame, text="XY Plot", padx=6, pady=6)
+        xy_grp = ttk.LabelFrame(frame, text="XY Plot", padding=6)
         xy_grp.pack(fill='x', padx=6, pady=4)
-        tk.Checkbutton(xy_grp, text="Filled symbols", variable=self.xy_filled_var).pack(anchor="w", pady=1)
+        ttk.Checkbutton(xy_grp, text="Filled symbols", variable=self.xy_filled_var).pack(anchor="w", pady=1)
         
         # Line style
-        line_style_frame = tk.Frame(xy_grp)
+        line_style_frame = ttk.Frame(xy_grp)
         line_style_frame.pack(anchor="w", pady=1, fill='x')
-        tk.Label(line_style_frame, text="Line style:").pack(side="left")
+        ttk.Label(line_style_frame, text="Line style:").pack(side="left")
         ttk.Combobox(line_style_frame, textvariable=self.xy_line_style_var, 
                     values=["solid", "dashed", "dotted", "dashdot"], width=10).pack(side="left", padx=4)
         
-        tk.Checkbutton(xy_grp, text="Lines in black", variable=self.xy_line_black_var).pack(anchor="w", pady=1)
+        ttk.Checkbutton(xy_grp, text="Lines in black", variable=self.xy_line_black_var).pack(anchor="w", pady=1)
         
         # --- Stripplot group ---
-        strip_grp = tk.LabelFrame(frame, text="Stripplot", padx=6, pady=6)
+        strip_grp = ttk.LabelFrame(frame, text="Stripplot", padding=6)
         strip_grp.pack(fill='x', padx=6, pady=4)
         self.strip_black_var = tk.BooleanVar(value=True)
-        tk.Checkbutton(strip_grp, text="Show stripplot with black dots", variable=self.strip_black_var).pack(anchor="w", pady=1)
+        ttk.Checkbutton(strip_grp, text="Show stripplot with black dots", variable=self.strip_black_var).pack(anchor="w", pady=1)
         self.show_stripplot_var = tk.BooleanVar(value=True)
-        tk.Checkbutton(strip_grp, text="Show stripplot", variable=self.show_stripplot_var).pack(anchor="w", pady=1)
+        ttk.Checkbutton(strip_grp, text="Show stripplot", variable=self.show_stripplot_var).pack(anchor="w", pady=1)
         # --- Display options group ---
-        disp_grp = tk.LabelFrame(frame, text="Display Options", padx=6, pady=6)
+        disp_grp = ttk.LabelFrame(frame, text="Display Options", padding=6)
         disp_grp.pack(fill='x', padx=6, pady=4)
         self.show_frame_var = tk.BooleanVar(value=False)
-        tk.Checkbutton(disp_grp, text="Show graph frame", variable=self.show_frame_var).pack(anchor="w", pady=1)
+        ttk.Checkbutton(disp_grp, text="Show graph frame", variable=self.show_frame_var).pack(anchor="w", pady=1)
         self.show_hgrid_var = tk.BooleanVar(value=False)
-        tk.Checkbutton(disp_grp, text="Show horizontal grid", variable=self.show_hgrid_var).pack(anchor="w", pady=1)
+        ttk.Checkbutton(disp_grp, text="Show horizontal grid", variable=self.show_hgrid_var).pack(anchor="w", pady=1)
         self.show_vgrid_var = tk.BooleanVar(value=False)
-        tk.Checkbutton(disp_grp, text="Show vertical grid", variable=self.show_vgrid_var).pack(anchor="w", pady=1)
+        ttk.Checkbutton(disp_grp, text="Show vertical grid", variable=self.show_vgrid_var).pack(anchor="w", pady=1)
+        
+        # Preview DPI setting
+        dpi_frame = ttk.Frame(disp_grp)
+        dpi_frame.pack(anchor="w", pady=1, fill='x')
+        ttk.Label(dpi_frame, text="Preview size:").pack(side="left")
+        # Use the existing preview_dpi variable that was created in __init__
+        tk.Spinbox(dpi_frame, from_=50, to=300, increment=25, 
+                  textvariable=self.preview_dpi, width=5).pack(side="left", padx=4)
+        ttk.Label(dpi_frame, text="dpi").pack(side="left")
+        
         # Note: Swap axes setting moved to Axis tab
 
     def setup_axis_tab(self):
         frame = self.axis_tab
         
         # --- Combined X/Y Labels frame ---
-        labels_frame = tk.Frame(frame)
+        labels_frame = ttk.Frame(frame)
         labels_frame.pack(fill='x', padx=4, pady=1)
         
         # X-axis label row with grid layout for alignment
-        xlabel_frame = tk.Frame(labels_frame)
+        xlabel_frame = ttk.Frame(labels_frame)
         xlabel_frame.pack(fill='x', padx=0, pady=1)
         xlabel_frame.columnconfigure(1, weight=1)
-        tk.Label(xlabel_frame, text="X-axis Label:", width=14, anchor="w").grid(row=0, column=0, padx=2)
-        self.xlabel_entry = tk.Entry(xlabel_frame)
+        ttk.Label(xlabel_frame, text="X-axis Label:", width=14, anchor="w").grid(row=0, column=0, padx=2)
+        self.xlabel_entry = ttk.Entry(xlabel_frame)
         self.xlabel_entry.grid(row=0, column=1, sticky="ew", padx=2)
-        tk.Button(xlabel_frame, text="Format", command=lambda: self.open_label_formatter('x')).grid(row=0, column=2, padx=2)
+        ttk.Button(xlabel_frame, text="Format", command=lambda: self.open_label_formatter('x')).grid(row=0, column=2, padx=2)
         
         # Y-axis label row (just below X)
         ylabel_frame = tk.Frame(labels_frame)
         ylabel_frame.pack(fill='x', padx=0, pady=1)
         ylabel_frame.columnconfigure(1, weight=1)
-        tk.Label(ylabel_frame, text="Y-axis Label:", width=14, anchor="w").grid(row=0, column=0, padx=2)
-        self.ylabel_entry = tk.Entry(ylabel_frame)
+        ttk.Label(ylabel_frame, text="Y-axis Label:", width=14, anchor="w").grid(row=0, column=0, padx=2)
+        self.ylabel_entry = ttk.Entry(ylabel_frame)
         self.ylabel_entry.grid(row=0, column=1, sticky="ew", padx=2)
-        tk.Button(ylabel_frame, text="Format", command=lambda: self.open_label_formatter('y')).grid(row=0, column=2, padx=2)
+        ttk.Button(ylabel_frame, text="Format", command=lambda: self.open_label_formatter('y')).grid(row=0, column=2, padx=2)
         
         # --- Label orientation (horizontal layout) ---
         orient_frame = tk.Frame(frame)
         orient_frame.pack(fill='x', padx=4, pady=1)
-        tk.Label(orient_frame, text="X-axis Label Orientation:").pack(side="left")
+        ttk.Label(orient_frame, text="X-axis Label Orientation:").pack(side="left")
         self.label_orientation = tk.StringVar(value="vertical")
-        tk.Radiobutton(orient_frame, text="Vertical", variable=self.label_orientation, 
+        ttk.Radiobutton(orient_frame, text="Vertical", variable=self.label_orientation, 
                       value="vertical").pack(side="left", padx=5)
-        tk.Radiobutton(orient_frame, text="Horizontal", variable=self.label_orientation, 
+        ttk.Radiobutton(orient_frame, text="Horizontal", variable=self.label_orientation, 
                        value="horizontal").pack(side="left", padx=5)
-        tk.Radiobutton(orient_frame, text="Angled", variable=self.label_orientation, 
+        ttk.Radiobutton(orient_frame, text="Angled", variable=self.label_orientation, 
                       value="angled").pack(side="left", padx=5)
         
         # --- Axis swap option ---
         swap_frame = tk.Frame(frame)
         swap_frame.pack(fill='x', padx=4, pady=(10, 1))
         self.swap_axes_var = tk.BooleanVar(value=False)
-        tk.Checkbutton(swap_frame, text="Swap X and Y axes", variable=self.swap_axes_var).pack(anchor="w", pady=2)
+        ttk.Checkbutton(swap_frame, text="Swap X and Y axes", variable=self.swap_axes_var).pack(anchor="w", pady=2)
         
         # --- X-Axis settings (more compact with grid layout) ---
-        xaxis_grp = tk.LabelFrame(frame, text="X-Axis Settings", padx=4, pady=2)
+        xaxis_grp = ttk.LabelFrame(frame, text="X-Axis Settings", padding=4)
         xaxis_grp.pack(fill='x', padx=4, pady=1)
         
         # Use grid layout for better alignment
@@ -4809,23 +4840,23 @@ class ExPlotApp:
         
         # Row 1: Min/Max values
         tk.Label(xaxis_grid, text="Minimum:", width=12, anchor="w").grid(row=0, column=0, sticky="w", pady=2)
-        self.xmin_entry = tk.Entry(xaxis_grid, width=10)
+        self.xmin_entry = ttk.Entry(xaxis_grid, width=10)
         self.xmin_entry.grid(row=0, column=1, sticky="w", pady=2)
         tk.Label(xaxis_grid, text="Maximum:", width=12, anchor="w").grid(row=0, column=2, sticky="w", padx=(10,0), pady=2)
-        self.xmax_entry = tk.Entry(xaxis_grid, width=10)
+        self.xmax_entry = ttk.Entry(xaxis_grid, width=10)
         self.xmax_entry.grid(row=0, column=3, sticky="w", pady=2)
         
         # Row 2: Tick settings
-        tk.Label(xaxis_grid, text="Major Tick:", width=12, anchor="w").grid(row=1, column=0, sticky="w", pady=2)
-        self.xinterval_entry = tk.Entry(xaxis_grid, width=10)
+        tk.Label(xaxis_grid, text="Major Interval:", width=12, anchor="w").grid(row=1, column=0, sticky="w", pady=2)
+        self.xinterval_entry = ttk.Entry(xaxis_grid, width=10)
         self.xinterval_entry.grid(row=1, column=1, sticky="w", pady=2)
         tk.Label(xaxis_grid, text="Minor/Major:", width=12, anchor="w").grid(row=1, column=2, sticky="w", padx=(10,0), pady=2)
-        self.xminor_ticks_entry = tk.Entry(xaxis_grid, width=10)
+        self.xminor_ticks_entry = ttk.Entry(xaxis_grid, width=10)
         self.xminor_ticks_entry.grid(row=1, column=3, sticky="w", pady=2)
         
         # Row 3: Log options
         self.xlogscale_var = tk.BooleanVar(value=False)
-        tk.Checkbutton(xaxis_grid, text="Logarithmic X-axis", variable=self.xlogscale_var, 
+        ttk.Checkbutton(xaxis_grid, text="Logarithmic X-axis", variable=self.xlogscale_var, 
                       command=self.update_xlog_options).grid(row=2, column=0, columnspan=2, sticky="w", pady=2)
         tk.Label(xaxis_grid, text="Base:", width=6, anchor="e").grid(row=2, column=2, sticky="e", pady=2)
         self.xlog_base_var = tk.StringVar(value="10")
@@ -4834,7 +4865,7 @@ class ExPlotApp:
         self.xlog_base_dropdown.grid(row=2, column=3, sticky="w", pady=2)
         
         # --- Y-Axis settings with grid layout ---
-        yaxis_grp = tk.LabelFrame(frame, text="Y-Axis Settings", padx=4, pady=2)
+        yaxis_grp = ttk.LabelFrame(frame, text="Y-Axis Settings", padding=4)
         yaxis_grp.pack(fill='x', padx=4, pady=1)
         
         # Use grid layout for better alignment
@@ -4847,23 +4878,23 @@ class ExPlotApp:
         
         # Row 1: Min/Max values
         tk.Label(yaxis_grid, text="Minimum:", width=12, anchor="w").grid(row=0, column=0, sticky="w", pady=2)
-        self.ymin_entry = tk.Entry(yaxis_grid, width=10)
+        self.ymin_entry = ttk.Entry(yaxis_grid, width=10)
         self.ymin_entry.grid(row=0, column=1, sticky="w", pady=2)
         tk.Label(yaxis_grid, text="Maximum:", width=12, anchor="w").grid(row=0, column=2, sticky="w", padx=(10,0), pady=2)
-        self.ymax_entry = tk.Entry(yaxis_grid, width=10)
+        self.ymax_entry = ttk.Entry(yaxis_grid, width=10)
         self.ymax_entry.grid(row=0, column=3, sticky="w", pady=2)
         
         # Row 2: Tick settings
-        tk.Label(yaxis_grid, text="Major Tick:", width=12, anchor="w").grid(row=1, column=0, sticky="w", pady=2)
-        self.yinterval_entry = tk.Entry(yaxis_grid, width=10)
+        tk.Label(yaxis_grid, text="Major Interval:", width=12, anchor="w").grid(row=1, column=0, sticky="w", pady=2)
+        self.yinterval_entry = ttk.Entry(yaxis_grid, width=10)
         self.yinterval_entry.grid(row=1, column=1, sticky="w", pady=2)
         tk.Label(yaxis_grid, text="Minor/Major:", width=12, anchor="w").grid(row=1, column=2, sticky="w", padx=(10,0), pady=2)
-        self.minor_ticks_entry = tk.Entry(yaxis_grid, width=10)
+        self.minor_ticks_entry = ttk.Entry(yaxis_grid, width=10)
         self.minor_ticks_entry.grid(row=1, column=3, sticky="w", pady=2)
         
         # Row 3: Log options
         self.logscale_var = tk.BooleanVar(value=False)
-        tk.Checkbutton(yaxis_grid, text="Logarithmic Y-axis", variable=self.logscale_var, 
+        ttk.Checkbutton(yaxis_grid, text="Logarithmic Y-axis", variable=self.logscale_var, 
                       command=self.update_ylog_options).grid(row=2, column=0, columnspan=2, sticky="w", pady=2)
         tk.Label(yaxis_grid, text="Base:", width=6, anchor="e").grid(row=2, column=2, sticky="e", pady=2)
         self.ylog_base_var = tk.StringVar(value="10")
@@ -4900,13 +4931,13 @@ class ExPlotApp:
             else:
                 print("[DEBUG] Fitting disabled")
 
-        self.use_fitting_cb = tk.Checkbutton(fit_enable_frame, text="Enable Model Fitting", 
+        self.use_fitting_cb = ttk.Checkbutton(fit_enable_frame, text="Enable Model Fitting", 
                                              variable=self.use_fitting_var, 
                                              command=toggle_fitting)
         self.use_fitting_cb.pack(anchor="w", pady=2)
         
         # Model selection group
-        model_grp = tk.LabelFrame(frame, text="Model Selection", padx=6, pady=6)
+        model_grp = ttk.LabelFrame(frame, text="Model Selection", padding=6)
         model_grp.pack(fill='x', padx=6, pady=4)
         
         # Model dropdown
@@ -4928,44 +4959,44 @@ class ExPlotApp:
         fit_color_frame.grid(row=2, column=1, sticky="ew", padx=2, pady=2)
         
         # Option to use black lines
-        self.fit_black_lines_cb = tk.Checkbutton(fit_color_frame, text="Black Lines", 
+        self.fit_black_lines_cb = ttk.Checkbutton(fit_color_frame, text="Black Lines", 
                                                variable=self.fitting_use_black_lines_var)
         self.fit_black_lines_cb.pack(side=tk.LEFT, padx=2)
         
         # Option to use black bands for confidence intervals
-        self.fit_black_bands_cb = tk.Checkbutton(fit_color_frame, text="Black Bands", 
+        self.fit_black_bands_cb = ttk.Checkbutton(fit_color_frame, text="Black Bands", 
                                                variable=self.fitting_use_black_bands_var)
         self.fit_black_bands_cb.pack(side=tk.LEFT, padx=2)
         
         # Option to match group colors
-        self.fit_group_cb = tk.Checkbutton(fit_color_frame, text="Match Groups", 
+        self.fit_group_cb = ttk.Checkbutton(fit_color_frame, text="Match Groups", 
                                           variable=self.fitting_use_group_colors_var)
         self.fit_group_cb.pack(side=tk.LEFT, padx=2)
         
         # Button to manage models
-        manage_models_btn = tk.Button(model_grp, text="Manage Models", command=self.manage_fitting_models)
+        manage_models_btn = ttk.Button(model_grp, text="Manage Models", command=self.manage_fitting_models)
         manage_models_btn.grid(row=3, column=0, columnspan=2, sticky="ew", padx=2, pady=6)
         
         # Parameters group
-        self.params_grp = tk.LabelFrame(frame, text="Model Parameters", padx=6, pady=6)
+        self.params_grp = ttk.LabelFrame(frame, text="Model Parameters", padding=6)
         self.params_grp.pack(fill='x', padx=6, pady=4)
         
         # Description display group
-        description_grp = tk.LabelFrame(frame, text="Model Description", padx=6, pady=6)
+        description_grp = ttk.LabelFrame(frame, text="Model Description", padding=6)
         description_grp.pack(fill='x', padx=6, pady=4)
         
         description_frame = tk.Frame(description_grp)
         description_frame.pack(fill='both', expand=True, padx=2, pady=2)
         
         self.description_text = tk.Text(description_frame, height=4, width=40, wrap=tk.WORD)
-        description_scrollbar = tk.Scrollbar(description_frame, command=self.description_text.yview)
+        description_scrollbar = ttk.Scrollbar(description_frame, command=self.description_text.yview)
         self.description_text.config(yscrollcommand=description_scrollbar.set)
         
         self.description_text.pack(side=tk.LEFT, fill='both', expand=True)
         description_scrollbar.pack(side=tk.RIGHT, fill='y')
         
         # Formula display group
-        formula_grp = tk.LabelFrame(frame, text="Model Formula", padx=6, pady=6)
+        formula_grp = ttk.LabelFrame(frame, text="Model Formula", padding=6)
         formula_grp.pack(fill='x', padx=6, pady=4, expand=True)
         
         # Formula display with scrollbar
@@ -4973,14 +5004,14 @@ class ExPlotApp:
         formula_frame.pack(fill='both', expand=True, padx=2, pady=2)
         
         self.formula_text = tk.Text(formula_frame, height=5, width=40, wrap=tk.WORD)
-        formula_scrollbar = tk.Scrollbar(formula_frame, command=self.formula_text.yview)
+        formula_scrollbar = ttk.Scrollbar(formula_frame, command=self.formula_text.yview)
         self.formula_text.config(yscrollcommand=formula_scrollbar.set)
         
         self.formula_text.pack(side=tk.LEFT, fill='both', expand=True)
         formula_scrollbar.pack(side=tk.RIGHT, fill='y')
         
         # Result display group
-        result_grp = tk.LabelFrame(frame, text="Fitting Results", padx=6, pady=6)
+        result_grp = ttk.LabelFrame(frame, text="Fitting Results", padding=6)
         result_grp.pack(fill='x', padx=6, pady=4)
         
         # Results text with scrollbar
@@ -4988,7 +5019,7 @@ class ExPlotApp:
         result_frame.pack(fill='both', expand=True, padx=2, pady=2)
         
         self.result_text = tk.Text(result_frame, height=8, width=40, wrap=tk.WORD)
-        result_scrollbar = tk.Scrollbar(result_frame, command=self.result_text.yview)
+        result_scrollbar = ttk.Scrollbar(result_frame, command=self.result_text.yview)
         self.result_text.config(yscrollcommand=result_scrollbar.set)
         
         self.result_text.pack(side=tk.LEFT, fill='both', expand=True)
@@ -5029,7 +5060,7 @@ class ExPlotApp:
             label.pack(side=tk.LEFT, padx=2)
             
             var = tk.DoubleVar(value=default_value)
-            entry = tk.Entry(frame, textvariable=var, width=10)
+            entry = ttk.Entry(frame, textvariable=var, width=10)
             entry.pack(side=tk.RIGHT, padx=2)
             
             self.param_entries.append((param_name, var))
@@ -5455,35 +5486,38 @@ class ExPlotApp:
         model_listbox_frame = tk.Frame(left_frame)
         model_listbox_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
-        model_listbox = tk.Listbox(model_listbox_frame, selectmode=tk.SINGLE, width=25)
-        model_scrollbar = tk.Scrollbar(model_listbox_frame, command=model_listbox.yview)
-        model_listbox.config(yscrollcommand=model_scrollbar.set)
+        # Create Treeview for model list with a single column
+        model_tree = ttk.Treeview(model_listbox_frame, selectmode='browse', show='tree', height=10)
+        model_tree.column('#0', width=200, stretch=tk.YES)
+        model_tree.heading('#0', text='Models', anchor='w')
+        model_scrollbar = ttk.Scrollbar(model_listbox_frame, orient='vertical', command=model_tree.yview)
+        model_tree.configure(yscrollcommand=model_scrollbar.set)
         
-        model_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        model_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         model_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
-        # Add models to listbox
+        # Add models to treeview
         for model in sorted(self.fitting_models.keys()):
-            model_listbox.insert(tk.END, model)
+            model_tree.insert('', 'end', text=model, values=(model,))
         
         # Buttons frame for model management
         btn_frame = tk.Frame(left_frame)
         btn_frame.pack(fill=tk.X, padx=5, pady=5)
         
-        add_btn = tk.Button(btn_frame, text="Add New Model", 
-                          command=lambda: self.add_new_model(model_listbox, dialog))
+        add_btn = ttk.Button(btn_frame, text="Add New Model", 
+                          command=lambda: self.add_new_model(model_tree, dialog))
         add_btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
         
-        remove_btn = tk.Button(btn_frame, text="Remove Model", 
-                             command=lambda: self.remove_model(model_listbox, dialog))
+        remove_btn = ttk.Button(btn_frame, text="Remove Model", 
+                             command=lambda: self.remove_model(model_tree, dialog))
         remove_btn.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=2)
         
         # Additional buttons frame
         extra_btn_frame = tk.Frame(left_frame)
         extra_btn_frame.pack(fill=tk.X, padx=5, pady=5)
         
-        restore_btn = tk.Button(extra_btn_frame, text="Restore Default Models", 
-                             command=lambda: self.restore_default_models(model_listbox))
+        restore_btn = ttk.Button(extra_btn_frame, text="Restore Default Models", 
+                             command=lambda: self.restore_default_models(model_tree))
         restore_btn.pack(fill=tk.X, expand=True)
         
         # Right side - model details
@@ -5496,52 +5530,53 @@ class ExPlotApp:
         
         tk.Label(name_frame, text="Model Name:").pack(side=tk.LEFT, padx=2)
         name_var = tk.StringVar()
-        name_entry = tk.Entry(name_frame, textvariable=name_var, width=30)
+        name_entry = ttk.Entry(name_frame, textvariable=name_var, width=30)
         name_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
         
         # Description
-        desc_frame = tk.LabelFrame(right_frame, text="Description")
+        desc_frame = ttk.LabelFrame(right_frame, text="Description")
         desc_frame.pack(fill=tk.BOTH, expand=False, padx=5, pady=5)
         
         desc_text = tk.Text(desc_frame, height=9, width=40)
-        desc_scrollbar = tk.Scrollbar(desc_frame, command=desc_text.yview)
+        desc_scrollbar = ttk.Scrollbar(desc_frame, command=desc_text.yview)
         desc_text.config(yscrollcommand=desc_scrollbar.set)
         
         desc_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
         desc_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
         # Parameters
-        param_frame = tk.LabelFrame(right_frame, text="Parameters (name, default value)")
+        param_frame = ttk.LabelFrame(right_frame, text="Parameters (name, default value)")
         param_frame.pack(fill=tk.BOTH, expand=False, padx=5, pady=5)
         
         param_text = tk.Text(param_frame, height=5, width=40)
-        param_scrollbar = tk.Scrollbar(param_frame, command=param_text.yview)
+        param_scrollbar = ttk.Scrollbar(param_frame, command=param_text.yview)
         param_text.config(yscrollcommand=param_scrollbar.set)
         
         param_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
         param_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
         # Formula
-        formula_frame = tk.LabelFrame(right_frame, text="Formula")
+        formula_frame = ttk.LabelFrame(right_frame, text="Formula")
         formula_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
         formula_text = tk.Text(formula_frame, height=4, width=40)
-        formula_scrollbar = tk.Scrollbar(formula_frame, command=formula_text.yview)
+        formula_scrollbar = ttk.Scrollbar(formula_frame, command=formula_text.yview)
         formula_text.config(yscrollcommand=formula_scrollbar.set)
         
         formula_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
         formula_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
         # Save button
-        save_btn = tk.Button(right_frame, text="Save Model", 
+        save_btn = ttk.Button(right_frame, text="Save Model", 
                            command=lambda: self.save_model(name_var, desc_text, param_text, formula_text, model_listbox, dialog))
         save_btn.pack(fill=tk.X, padx=5, pady=5)
         
         # Function to update right panel when model is selected
         def on_model_select(event):
-            selection = model_listbox.curselection()
+            selection = model_tree.selection()
             if selection:
-                model_name = model_listbox.get(selection[0])
+                item = model_tree.item(selection[0])
+                model_name = item['text']
                 model_info = self.fitting_models.get(model_name, {})
                 
                 name_var.set(model_name)
@@ -5560,9 +5595,9 @@ class ExPlotApp:
                 formula_text.delete(1.0, tk.END)
                 formula_text.insert(tk.END, model_info.get("formula", ""))
         
-        model_listbox.bind('<<ListboxSelect>>', on_model_select)
+        model_tree.bind('<<TreeviewSelect>>', on_model_select)
         
-    def add_new_model(self, listbox, dialog):
+    def add_new_model(self, tree, dialog):
         """Add a new empty model to the list"""
         count = 1
         new_name = f"New Model {count}"
@@ -5570,7 +5605,7 @@ class ExPlotApp:
             count += 1
             new_name = f"New Model {count}"
             
-        # Add to models dictionary and listbox
+        # Add to models dictionary and treeview
         self.fitting_models[new_name] = {
             "parameters": [("A", 1.0), ("B", 1.0)],
             "formula": "# formula here\ny = A * x + B",
@@ -5580,23 +5615,26 @@ class ExPlotApp:
         # Save to file
         self.save_fitting_models()
         
-        listbox.insert(tk.END, new_name)
+        # Add to treeview and select it
+        tree.insert('', 'end', text=new_name, values=(new_name,))
         self.model_dropdown['values'] = sorted(list(self.fitting_models.keys()))
         
         # Select the new model
-        idx = listbox.get(0, tk.END).index(new_name)
-        listbox.selection_clear(0, tk.END)
-        listbox.selection_set(idx)
-        listbox.event_generate('<<ListboxSelect>>')
+        for item in tree.get_children():
+            if tree.item(item, 'text') == new_name:
+                tree.selection_set(item)
+                tree.focus(item)
+                tree.see(item)
+                break
     
-    def remove_model(self, listbox, dialog):
+    def remove_model(self, tree, dialog):
         """Remove the selected model"""
-        selection = listbox.curselection()
+        selection = tree.selection()
         if not selection:
             messagebox.showwarning("No Selection", "Please select a model to remove.")
             return
             
-        model_name = listbox.get(selection[0])
+        model_name = tree.item(selection[0], 'text')
         
         # Prevent removing all models
         if len(self.fitting_models) <= 1:
@@ -5607,7 +5645,7 @@ class ExPlotApp:
         if messagebox.askyesno("Confirm Removal", f"Are you sure you want to remove the model '{model_name}'?"):
             # User confirmed removal
             self.fitting_models.pop(model_name, None)
-            listbox.delete(selection[0])
+            tree.delete(selection[0])
             
             # Save to file
             self.save_fitting_models()
@@ -5636,7 +5674,7 @@ class ExPlotApp:
             print(f"Error loading fitting models: {str(e)}")
             return {}
     
-    def restore_default_models(self, listbox=None):
+    def restore_default_models(self, tree=None):
         """Restore the default models while preserving custom models"""
         if messagebox.askyesno("Restore Default Models", 
                              "This will restore all default models while preserving your custom models. Continue?"):
@@ -5653,11 +5691,12 @@ class ExPlotApp:
             # Save to file
             self.save_fitting_models()
             
-            # Update UI if listbox is provided
-            if listbox is not None:
-                listbox.delete(0, tk.END)
+            # Update UI if tree is provided
+            if tree is not None:
+                for item in tree.get_children():
+                    tree.delete(item)
                 for model_name in sorted(self.fitting_models.keys()):
-                    listbox.insert(tk.END, model_name)
+                    tree.insert('', 'end', text=model_name, values=(model_name,))
             
             # Update any open model UI
             if hasattr(self, 'model_dropdown'):
@@ -5792,18 +5831,18 @@ class ExPlotApp:
     def setup_colors_tab(self):
         frame = self.colors_tab
         # --- Color management group ---
-        color_mgmt_grp = tk.LabelFrame(frame, text="Color Management", padx=6, pady=6)
+        color_mgmt_grp = ttk.LabelFrame(frame, text="Color Management", padding=6)
         color_mgmt_grp.pack(fill='x', padx=6, pady=(8,4))
-        tk.Button(color_mgmt_grp, text="Manage Colors & Palettes", command=self.manage_colors_palettes).pack(fill='x', pady=2)
+        ttk.Button(color_mgmt_grp, text="Manage Colors & Palettes", command=self.manage_colors_palettes).pack(fill='x', pady=2)
         # --- Single color group ---
-        single_grp = tk.LabelFrame(frame, text="Single Data Color", padx=6, pady=6)
+        single_grp = ttk.LabelFrame(frame, text="Single Data Color", padding=6)
         single_grp.pack(fill='x', padx=6, pady=4)
         # Don't reinitialize single_color_var which already exists and has been set with preferences
         tk.Label(single_grp, text="Single Data Color:").pack(anchor="w")
         self.single_color_dropdown = ttk.Combobox(single_grp, textvariable=self.single_color_var, values=list(self.custom_colors.keys()))
         self.single_color_dropdown.pack(fill='x', pady=2)
         # Add preview canvas for single color
-        self.single_color_preview = tk.Canvas(single_grp, width=60, height=20, bg='white', highlightthickness=0)
+        self.single_color_preview = tk.Canvas(single_grp, width=60, height=20, highlightthickness=0, bg='white')
         self.single_color_preview.pack(pady=(0, 8))
         def update_single_color_preview(event=None):
             self.single_color_preview.delete('all')
@@ -5814,14 +5853,14 @@ class ExPlotApp:
         self.single_color_dropdown.bind('<<ComboboxSelected>>', update_single_color_preview)
         update_single_color_preview()
         # --- Palette group ---
-        palette_grp = tk.LabelFrame(frame, text="Group Palette", padx=6, pady=6)
+        palette_grp = ttk.LabelFrame(frame, text="Group Palette", padding=6)
         palette_grp.pack(fill='x', padx=6, pady=4)
         # No need to re-initialize self.palette_var as it's already set in __init__
         tk.Label(palette_grp, text="Group Palette:").pack(anchor="w")
         self.palette_dropdown = ttk.Combobox(palette_grp, textvariable=self.palette_var, values=list(self.custom_palettes.keys()))
         self.palette_dropdown.pack(fill='x', pady=2)
         # Add preview canvas for palette
-        self.palette_preview = tk.Canvas(palette_grp, width=120, height=20, bg='white', highlightthickness=0)
+        self.palette_preview = tk.Canvas(palette_grp, width=120, height=20, highlightthickness=0, bg='white')
         self.palette_preview.pack(pady=(0, 8))
         def update_palette_preview(event=None):
             self.palette_preview.delete('all')
@@ -5835,7 +5874,7 @@ class ExPlotApp:
         update_palette_preview()
         
         # --- Outline color group ---
-        outline_grp = tk.LabelFrame(frame, text="Outline Color", padx=6, pady=6)
+        outline_grp = ttk.LabelFrame(frame, text="Outline Color", padding=6)
         outline_grp.pack(fill='x', padx=6, pady=4)
         tk.Label(outline_grp, text="Set the outline color for bar, box, and violin plots:").pack(anchor="w")
         
@@ -5843,10 +5882,10 @@ class ExPlotApp:
         outline_colors_frame = tk.Frame(outline_grp)
         outline_colors_frame.pack(fill='x', pady=4)
         
-        tk.Radiobutton(outline_colors_frame, text="Black", variable=self.outline_color_var, value="black").pack(anchor="w")
-        tk.Radiobutton(outline_colors_frame, text="Gray", variable=self.outline_color_var, value="gray").pack(anchor="w")
-        tk.Radiobutton(outline_colors_frame, text="As set", variable=self.outline_color_var, value="as_set").pack(anchor="w")
-        tk.Radiobutton(outline_colors_frame, text="White", variable=self.outline_color_var, value="white").pack(anchor="w")
+        ttk.Radiobutton(outline_colors_frame, text="Black", variable=self.outline_color_var, value="black").pack(anchor="w")
+        ttk.Radiobutton(outline_colors_frame, text="Gray", variable=self.outline_color_var, value="gray").pack(anchor="w")
+        ttk.Radiobutton(outline_colors_frame, text="As set", variable=self.outline_color_var, value="as_set").pack(anchor="w")
+        ttk.Radiobutton(outline_colors_frame, text="White", variable=self.outline_color_var, value="white").pack(anchor="w")
 
     def update_color_palette_dropdowns(self):
         self.single_color_dropdown['values'] = list(self.custom_colors.keys())
@@ -5872,7 +5911,7 @@ class ExPlotApp:
 
     def add_labeled_entry(self, parent, label):
         tk.Label(parent, text=label).pack()
-        entry = tk.Entry(parent)
+        entry = ttk.Entry(parent)
         entry.pack()
         return entry
 
@@ -5993,7 +6032,7 @@ class ExPlotApp:
         for col in columns:
             var = tk.BooleanVar()
             var.trace_add('write', lambda *args, c=col: self.update_y_axis_label(c))
-            cb = tk.Checkbutton(self.value_vars_inner_frame, text=col, variable=var)
+            cb = ttk.Checkbutton(self.value_vars_inner_frame, text=col, variable=var)
             cb.pack(anchor='w')
             self.value_vars.append((var, col))
             self.value_checkbuttons.append(cb)
@@ -6165,7 +6204,7 @@ class ExPlotApp:
         def on_include_change():
             update_listbox_item()
             
-        include_check = tk.Checkbutton(edit_frame, text="Include in plot", variable=include_var, command=on_include_change)
+        include_check = ttk.Checkbutton(edit_frame, text="Include in plot", variable=include_var, command=on_include_change)
         include_check.pack(anchor="w", pady=(0, 10))
         
         # Function to update the edit panel when a listbox item is selected
@@ -6222,12 +6261,12 @@ class ExPlotApp:
                 
             update_listbox_item()
         
-        tk.Button(edit_frame, text="Apply Edit", command=apply_current_edit).pack(pady=(5, 15))
+        ttk.Button(edit_frame, text="Apply Edit", command=apply_current_edit).pack(pady=(5, 15))
         
         # Add reordering buttons
-        tk.Label(button_frame, text="Reorder:").pack(anchor="w")
-        tk.Button(button_frame, text="Move Up", command=lambda: move_up()).pack(fill="x", pady=2)
-        tk.Button(button_frame, text="Move Down", command=lambda: move_down()).pack(fill="x", pady=2)
+        ttk.Label(button_frame, text="Reorder:").pack(anchor="w")
+        ttk.Button(button_frame, text="Move Up", command=lambda: move_up()).pack(fill="x", pady=2)
+        ttk.Button(button_frame, text="Move Down", command=lambda: move_down()).pack(fill="x", pady=2)
         
         # Function to move an item up in the list
         def move_up():
@@ -6375,8 +6414,8 @@ class ExPlotApp:
             modify_window.destroy()
         
         # Add save and cancel buttons
-        tk.Button(control_frame, text="Cancel", command=cancel).pack(side=tk.RIGHT, padx=5)
-        tk.Button(control_frame, text="Apply Changes", command=save_changes).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(control_frame, text="Cancel", command=cancel).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(control_frame, text="Apply Changes", command=save_changes).pack(side=tk.RIGHT, padx=5)
 
     def rename_x_labels(self):
         """Opens a dialog to rename X-axis labels using a listbox interface."""
@@ -6400,12 +6439,12 @@ class ExPlotApp:
         rename_window.resizable(True, True)
         
         # Add main frame with padding
-        main_frame = tk.Frame(rename_window, padx=10, pady=10)
+        main_frame = ttk.Frame(rename_window, padding=10)
         main_frame.pack(fill=tk.BOTH, expand=True)
         
         # Add explanation text
         explanation = "Select an item to edit its display name or to exclude it from the plot."
-        tk.Label(main_frame, text=explanation, justify=tk.LEFT).pack(anchor="w", pady=(0, 10))
+        ttk.Label(main_frame, text=explanation, justify=tk.LEFT).pack(anchor="w", pady=(0, 10))
         
         # Create frame for the listbox and edit panel
         list_frame = tk.Frame(main_frame)
@@ -6492,7 +6531,7 @@ class ExPlotApp:
         display_entry = tk.Entry(edit_frame, textvariable=display_value_var, width=20)
         display_entry.pack(anchor="w", pady=(0, 10))
         
-        include_check = tk.Checkbutton(edit_frame, text="Include in plot", variable=include_var, command=update_listbox_item)
+        include_check = ttk.Checkbutton(edit_frame, text="Include in plot", variable=include_var, command=update_listbox_item)
         include_check.pack(anchor="w", pady=(0, 10))
         
         # Function to update the edit panel when a listbox item is selected
@@ -6549,7 +6588,7 @@ class ExPlotApp:
                 
             update_listbox_item()
         
-        tk.Button(edit_frame, text="Apply Edit", command=apply_current_edit).pack(pady=(10, 0))
+        ttk.Button(edit_frame, text="Apply Edit", command=apply_current_edit).pack(pady=(10, 0))
         
         # Add control buttons at the bottom
         control_frame = tk.Frame(main_frame)
@@ -6601,7 +6640,7 @@ class ExPlotApp:
         
         # Add save and cancel buttons
         tk.Button(control_frame, text="Cancel", command=cancel).pack(side=tk.RIGHT, padx=5)
-        tk.Button(control_frame, text="Apply Changes", command=save_renames).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(control_frame, text="Apply Changes", command=save_renames).pack(side=tk.RIGHT, padx=5)
     
     def reorder_x_categories(self):
         """Opens a dialog to reorder X-axis categories using a listbox for more reliable reordering."""
@@ -6777,9 +6816,9 @@ class ExPlotApp:
                 listbox.see(new_idx)
         
         # Add buttons to move and delete items
-        tk.Button(button_frame, text="Move Up", command=move_up, width=10).pack(pady=5)
-        tk.Button(button_frame, text="Move Down", command=move_down, width=10).pack(pady=5)
-        tk.Button(button_frame, text="Delete", command=delete_item, width=10).pack(pady=5)
+        ttk.Button(button_frame, text="Move Up", command=move_up, width=10).pack(pady=5)
+        ttk.Button(button_frame, text="Move Down", command=move_down, width=10).pack(pady=5)
+        ttk.Button(button_frame, text="Delete", command=delete_item, width=10).pack(pady=5)
         
         # Add control buttons at the bottom
         control_frame = tk.Frame(main_frame)
@@ -6801,7 +6840,7 @@ class ExPlotApp:
         
         # Add save and cancel buttons
         tk.Button(control_frame, text="Cancel", command=cancel).pack(side=tk.RIGHT, padx=5)
-        tk.Button(control_frame, text="Apply Order", command=save_order).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(control_frame, text="Apply Order", command=save_order).pack(side=tk.RIGHT, padx=5)
     
     # The modify_dataframe method has been replaced by rename_x_labels and reorder_x_categories methods
 
@@ -8959,7 +8998,7 @@ class ExPlotApp:
             try:
                 import fitz
                 doc = fitz.open(self.temp_pdf)
-                pix = doc[0].get_pixmap(matrix=fitz.Matrix(2, 2))  # Higher resolution
+                pix = doc[0].get_pixmap(dpi=self.preview_dpi.get())  # Use user-specified DPI
                 image_data = pix.tobytes("ppm")
                 from io import BytesIO
                 buf = BytesIO(image_data)
@@ -9021,31 +9060,35 @@ class ExPlotApp:
         colors_frame = tk.Frame(window)
         colors_frame.pack()
 
-        color_listbox = tk.Listbox(colors_frame, height=7)
-        color_listbox.pack(side='left')
-        color_scrollbar = tk.Scrollbar(colors_frame)
+        # Create Treeview for color list with a single column
+        color_tree = ttk.Treeview(colors_frame, selectmode='browse', show='tree', height=7)
+        color_tree.column('#0', width=200, stretch=tk.YES)
+        color_tree.heading('#0', text='Colors', anchor='w')
+        color_tree.pack(side='left')
+        color_scrollbar = ttk.Scrollbar(colors_frame, orient='vertical', command=color_tree.yview)
         color_scrollbar.pack(side='right', fill='y')
-        color_listbox.config(yscrollcommand=color_scrollbar.set)
-        color_scrollbar.config(command=color_listbox.yview)
+        color_tree.configure(yscrollcommand=color_scrollbar.set)
 
         # Color preview canvas
-        color_preview = tk.Canvas(window, width=60, height=20, bg='white', highlightthickness=0)
+        color_preview = tk.Canvas(window, width=60, height=20, highlightthickness=0, bg='white')
         color_preview.pack(pady=(0, 8))
 
         def show_color_preview(event=None):
             color_preview.delete('all')
-            sel = color_listbox.curselection()
+            sel = color_tree.selection()
             if sel:
-                name = color_listbox.get(sel[0]).split(":")[0].strip()
+                item = color_tree.item(sel[0])
+                name = item['text'].split(":")[0].strip()
                 hexcode = self.custom_colors.get(name)
                 if hexcode:
                     color_preview.create_rectangle(10, 2, 50, 18, fill=hexcode, outline='black')
-        color_listbox.bind('<<ListboxSelect>>', show_color_preview)
+        color_tree.bind('<<TreeviewSelect>>', show_color_preview)
 
         def refresh_color_list():
-            color_listbox.delete(0, tk.END)
+            for item in color_tree.get_children():
+                color_tree.delete(item)
             for name, val in self.custom_colors.items():
-                color_listbox.insert(tk.END, f"{name}: {val}")
+                color_tree.insert('', 'end', text=f"{name}: {val}")
             show_color_preview()
         refresh_color_list()
 
@@ -9065,56 +9108,61 @@ class ExPlotApp:
                 self.update_color_palette_dropdowns()
                 popup.destroy()
             popup = tk.Toplevel(window)
-            tk.Label(popup, text="Color Name:").pack()
-            name_entry = tk.Entry(popup)
+            ttk.Label(popup, text="Color Name:").pack()
+            name_entry = ttk.Entry(popup)
             name_entry.pack()
-            tk.Button(popup, text="Pick Color and Save", command=save_color).pack()
-        tk.Button(window, text="Add Color", command=add_color).pack(pady=2)
+            ttk.Button(popup, text="Pick Color and Save", command=save_color).pack()
+        ttk.Button(window, text="Add Color", command=add_color).pack(pady=2)
 
         def remove_color():
-            selected = color_listbox.curselection()
+            selected = color_tree.selection()
             if not selected:
                 return
-            name = color_listbox.get(selected[0]).split(":")[0].strip()
+            item = color_tree.item(selected[0])
+            name = item['text'].split(":")[0].strip()
             if name in self.custom_colors:
                 del self.custom_colors[name]
                 refresh_color_list()
                 self.save_custom_colors_palettes()
                 self.update_color_palette_dropdowns()
-        tk.Button(window, text="Remove Selected Color", command=remove_color).pack(pady=2)
+        ttk.Button(window, text="Remove Selected Color", command=remove_color).pack(pady=2)
 
         tk.Label(window, text="Palettes:").pack(pady=(15,2))
         palettes_frame = tk.Frame(window)
         palettes_frame.pack()
 
-        palette_listbox = tk.Listbox(palettes_frame, height=7)
-        palette_listbox.pack(side='left')
-        palette_scrollbar = tk.Scrollbar(palettes_frame)
+        # Create Treeview for palette list with a single column
+        palette_tree = ttk.Treeview(palettes_frame, selectmode='browse', show='tree', height=7)
+        palette_tree.column('#0', width=200, stretch=tk.YES)
+        palette_tree.heading('#0', text='Palettes', anchor='w')
+        palette_tree.pack(side='left')
+        palette_scrollbar = ttk.Scrollbar(palettes_frame, orient='vertical', command=palette_tree.yview)
         palette_scrollbar.pack(side='right', fill='y')
-        palette_listbox.config(yscrollcommand=palette_scrollbar.set)
-        palette_scrollbar.config(command=palette_listbox.yview)
+        palette_tree.configure(yscrollcommand=palette_scrollbar.set)
 
         # Palette preview canvas
-        palette_preview = tk.Canvas(window, width=120, height=20, bg='white', highlightthickness=0)
+        palette_preview = tk.Canvas(window, width=120, height=20, highlightthickness=0, bg='white')
         palette_preview.pack(pady=(0, 8))
 
         def show_palette_preview(event=None):
             palette_preview.delete('all')
-            sel = palette_listbox.curselection()
+            sel = palette_tree.selection()
             if sel:
-                name = palette_listbox.get(sel[0]).split(":")[0].strip()
+                item = palette_tree.item(sel[0])
+                name = item['text'].split(":")[0].strip()
                 colors = self.custom_palettes.get(name, [])
                 for i, hexcode in enumerate(colors[:8]):
                     x0 = 10 + i*14
                     x1 = x0 + 12
                     palette_preview.create_rectangle(x0, 2, x1, 18, fill=hexcode, outline='black')
-        palette_listbox.bind('<<ListboxSelect>>', show_palette_preview)
+        palette_tree.bind('<<TreeviewSelect>>', show_palette_preview)
 
         def refresh_palette_list():
-            palette_listbox.delete(0, tk.END)
+            for item in palette_tree.get_children():
+                palette_tree.delete(item)
             for name, val in self.custom_palettes.items():
                 preview = ', '.join([self._to_hex(c) for c in val[:5]])
-                palette_listbox.insert(tk.END, f"{name}: {preview}...")
+                palette_tree.insert('', 'end', text=f"{name}: {preview}...")
             show_palette_preview()
         refresh_palette_list()
 
@@ -9132,28 +9180,29 @@ class ExPlotApp:
                 self.update_color_palette_dropdowns()
                 popup.destroy()
             popup = tk.Toplevel(window)
-            tk.Label(popup, text="Palette Name:").pack()
-            name_entry = tk.Entry(popup)
+            ttk.Label(popup, text="Palette Name:").pack()
+            name_entry = ttk.Entry(popup)
             name_entry.pack()
-            tk.Label(popup, text="Colors (comma separated hex codes):").pack()
-            colors_entry = tk.Entry(popup)
+            ttk.Label(popup, text="Colors (comma separated hex codes):").pack()
+            colors_entry = ttk.Entry(popup)
             colors_entry.pack()
-            tk.Button(popup, text="Save Palette", command=save_palette).pack()
-        tk.Button(window, text="Add Palette", command=add_palette).pack(pady=2)
+            ttk.Button(popup, text="Save Palette", command=save_palette).pack()
+        ttk.Button(window, text="Add Palette", command=add_palette).pack(pady=2)
 
         def remove_palette():
-            selected = palette_listbox.curselection()
+            selected = palette_tree.selection()
             if not selected:
                 return
-            name = palette_listbox.get(selected[0]).split(":")[0].strip()
+            item = palette_tree.item(selected[0])
+            name = item['text'].split(":")[0].strip()
             if name in self.custom_palettes:
                 del self.custom_palettes[name]
                 refresh_palette_list()
                 self.save_custom_colors_palettes()
                 self.update_color_palette_dropdowns()
-        tk.Button(window, text="Remove Selected Palette", command=remove_palette).pack(pady=2)
+        ttk.Button(window, text="Remove Selected Palette", command=remove_palette).pack(pady=2)
 
-        tk.Button(window, text="Close", command=window.destroy).pack(pady=10)
+        ttk.Button(window, text="Close", command=window.destroy).pack(pady=10)
 
 if __name__ == '__main__':
     root = tk.Tk()

@@ -15,7 +15,7 @@ python -m nuitka \
   --enable-plugin=tk-inter \
   --include-package=matplotlib.backends.backend_pdf \
   --output-dir=build \
-  explot.py
+  launch.py
 
 echo "Build complete. Application is in the build directory."
 echo "Manually copy pingouin and example_data.xlsx to build/ExPlot.app/Contents/MacOS."
