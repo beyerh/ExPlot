@@ -7,7 +7,12 @@ import os
 import tkinter as tk
 from tkinter import ttk
 from pathlib import Path
-from themes.ttkbootstrap_theme import setup_theme, get_available_themes
+
+# Import and disable ttkbootstrap localization to prevent msgcat errors
+import ttkbootstrap.localization
+ttkbootstrap.localization.initialize_localities = lambda *args, **kwargs: None
+
+from ttkbootstrap_theme import setup_theme, get_available_themes
 
 def main():
     """Launch the application with ttkbootstrap theming."""
@@ -78,6 +83,7 @@ def _add_theme_switcher(root, style, app):
         view_menu.add_cascade(label="Themes", menu=theme_submenu)
         
         # Define available themes (only include valid ttkbootstrap themes)
+        # Note: Custom themes (nord, nordic) are handled specially
         light_themes = [
             "cosmo", "flatly", "journal", "litera", "lumen", 
             "minty", "pulse", "sandstone", "united", "yeti", 
@@ -88,23 +94,40 @@ def _add_theme_switcher(root, style, app):
             "darkly", "solar", "superhero", "cyborg", "vapor"
         ]
         
+        custom_themes = [
+            ("nord", True),     # (name, is_dark)
+            ("nordic", True),
+        ]
+        
         # Add light themes
         light_menu = tk.Menu(theme_submenu, tearoff=0)
         theme_submenu.add_cascade(label="Light Themes", menu=light_menu)
-        for theme in light_themes:
+        for theme in sorted(light_themes):
             light_menu.add_radiobutton(
-                label=theme.title(),
+                label=theme.title().replace('_', ' '),
                 command=lambda t=theme: _change_theme(style, t, False, app)
             )
         
         # Add dark themes
         dark_menu = tk.Menu(theme_submenu, tearoff=0)
         theme_submenu.add_cascade(label="Dark Themes", menu=dark_menu)
-        for theme in dark_themes:
+        
+        # Add built-in dark themes
+        for theme in sorted(dark_themes):
             dark_menu.add_radiobutton(
-                label=theme.title(),
+                label=theme.title().replace('_', ' '),
                 command=lambda t=theme: _change_theme(style, t, True, app)
             )
+            
+        # Add custom themes
+        if custom_themes:
+            dark_menu.add_separator()
+            for theme_name, is_dark in custom_themes:
+                if is_dark:
+                    dark_menu.add_radiobutton(
+                        label=theme_name.title().replace('_', ' '),
+                        command=lambda t=theme_name, d=is_dark: _change_theme(style, t, d, app)
+                    )
         
         # Add auto-detect option
         theme_submenu.add_separator()
@@ -118,7 +141,9 @@ def _add_theme_switcher(root, style, app):
             if hasattr(app, 'theme_name') and hasattr(app, 'dark_mode'):
                 saved_theme = app.theme_name
                 dark_mode = app.dark_mode
-                if saved_theme in light_themes + dark_themes:
+                # Check if theme is in any of our theme lists
+                all_themes = light_themes + dark_themes + [t[0] for t in custom_themes]
+                if saved_theme in all_themes:
                     # Use silent=True to prevent save message during initialization
                     _change_theme(style, saved_theme, dark_mode, app, update_menu=False, silent=True)
         except Exception as e:
@@ -137,22 +162,49 @@ def _change_theme(style, theme_name, dark_mode, app, update_menu=True, silent=Fa
     
     Args:
         style: The ttkbootstrap.Style instance
-        theme_name: Name of the theme to switch to
+        theme_name: Name of the theme to switch to (case-insensitive for custom themes)
         dark_mode: Whether the theme is a dark theme
         app: The main application instance
         update_menu: Whether to update the menu checkmarks
         silent: If True, suppress save messages and dialogs
     """
     try:
-        # Get available themes
-        available_themes = style.theme_names()
+        # Define dark themes (all lowercase for comparison)
+        dark_themes = [
+            'solar', 'superhero', 'darkly', 'cyborg', 'vapor',
+            'sharish', 'hacker', 'nord', 'nordic'
+        ]
         
-        # Check if theme is available
-        if theme_name not in available_themes:
-            raise ValueError(f"Theme '{theme_name}' is not available. Available themes: {', '.join(available_themes)}")
+        # Normalize theme name for comparison (always use lowercase for custom themes)
+        theme_lower = theme_name.lower()
+        is_custom_theme = theme_lower in ['nord', 'nordic']
+        
+        # Special handling for custom themes
+        if is_custom_theme:
+            # For custom themes, we need to create them using our setup functions
+            from ttkbootstrap_theme import _setup_nord_theme
             
-        # Set the new theme
-        style.theme_use(theme_name)
+            # Use the normalized theme name (lowercase)
+            theme_name = theme_lower
+            
+            # Apply the appropriate theme
+            if theme_name == 'nord':
+                style = _setup_nord_theme(style, 'nord')
+            elif theme_name == 'nordic':
+                style = _setup_nord_theme(style, 'nordic')
+                
+            # Ensure the theme is set to use the correct name
+            style.theme_use(theme_name)
+            
+            # Set dark_mode based on the theme (both are dark themes)
+            dark_mode = True
+        else:
+            # For standard ttkbootstrap themes, switch normally
+            available_themes = style.theme_names()
+            if theme_name not in available_themes:
+                raise ValueError(f"Theme '{theme_name}' is not available. Available themes: {', '.join(available_themes)}")
+            style.theme_use(theme_name)
+            dark_mode = theme_lower in [t.lower() for t in dark_themes]
         
         # Update theme-dependent styles
         _update_theme_dependent_styles(style, dark_mode)
@@ -161,6 +213,9 @@ def _change_theme(style, theme_name, dark_mode, app, update_menu=True, silent=Fa
         if hasattr(app, 'save_user_preferences') and hasattr(app, 'theme_name'):
             app.theme_name = theme_name
             app.dark_mode = dark_mode
+            # Save theme settings to file
+            if hasattr(app, '_save_theme_settings'):
+                app._save_theme_settings(theme_name, dark_mode)
             # Only show save message if not in silent mode
             if silent:
                 # Save without showing message
@@ -185,41 +240,63 @@ def _update_theme_dependent_styles(style, dark_mode):
         style: The ttkbootstrap.Style instance
         dark_mode: Whether the current theme is a dark theme
     """
-    # Common colors
-    bg = style.colors.bg if hasattr(style, 'colors') else '#f0f0f0'
-    fg = style.colors.fg if hasattr(style, 'colors') else '#000000'
+    # Common padding values
+    padding = {'padding': 6}
+    padding_small = {'padding': 4}
     
-    # Configure common widget styles
-    style.configure('TButton', 
-                   padding=6,
-                   font=('Segoe UI', 10) if sys.platform == 'win32' else 
-                       ('SF Pro Text', 12) if sys.platform == 'darwin' else 
-                       ('Ubuntu', 10))
-                       
+    # Platform-specific font settings
+    if sys.platform == 'Windows':
+        default_font = ('Segoe UI', 9)
+    elif sys.platform == 'Darwin':  # macOS
+        default_font = ('SF Pro Text', 12)
+    else:  # Linux and others
+        default_font = ('DejaVu Sans', 10)
+    
+    # Get current theme colors
+    try:
+        bg = style.colors.bg if hasattr(style.colors, 'bg') else '#ffffff'
+        fg = style.colors.fg if hasattr(style.colors, 'fg') else '#000000'
+        select_bg = style.colors.selectbg if hasattr(style.colors, 'selectbg') else '#0078d7'
+        select_fg = style.colors.selectfg if hasattr(style.colors, 'selectfg') else '#ffffff'
+    except:
+        bg = '#ffffff' if not dark_mode else '#2e2e2e'
+        fg = '#000000' if not dark_mode else '#ffffff'
+        select_bg = '#0078d7'
+        select_fg = '#ffffff'
+    
+    # Configure button styles
+    style.configure('TButton', **padding)
+    style.configure('Accent.TButton', **padding)
+    
+    # Configure notebook tabs
     style.configure('TNotebook', padding=0)
-    style.configure('TNotebook.Tab', 
-                   padding=[12, 4],
-                   font=('Segoe UI', 9) if sys.platform == 'win32' else
-                       ('SF Pro Text', 11) if sys.platform == 'darwin' else
-                       ('Ubuntu', 10))
+    tab_style = padding_small.copy()
+    tab_style['font'] = default_font
+    style.configure('TNotebook.Tab', **tab_style)
                        
-    style.configure('TEntry', 
-                  padding=5,
-                  font=('Segoe UI', 10) if sys.platform == 'win32' else
-                      ('SF Pro Text', 12) if sys.platform == 'darwin' else
-                      ('Ubuntu', 10))
-                  
-    style.configure('TCombobox',
-                  padding=5,
-                  font=('Segoe UI', 10) if sys.platform == 'win32' else
-                      ('SF Pro Text', 12) if sys.platform == 'darwin' else
-                      ('Ubuntu', 10))
+    # Configure entry and combobox
+    entry_style = {
+        'padding': 5,
+        'font': ('Segoe UI', 10) if sys.platform == 'win32' else
+               ('SF Pro Text', 12) if sys.platform == 'darwin' else
+               ('Ubuntu', 10)
+    }
+    style.configure('TEntry', **entry_style)
+    style.configure('TCombobox', **entry_style)
     
     # Configure hover and active states
+    hover_bg = '#e0e0e0' if not dark_mode else '#404040'
+    pressed_bg = '#d0d0d0' if not dark_mode else '#505050'
+    
     style.map('TButton',
-             background=[('active', '!disabled', '#e0e0e0'),
-                       ('pressed', '#d0d0d0')],
-             relief=[('pressed', 'sunken'), ('!pressed', 'raised')])
+             background=[
+                 ('active', '!disabled', hover_bg),
+                 ('pressed', pressed_bg)
+             ],
+             relief=[
+                 ('pressed', 'sunken'),
+                 ('!pressed', 'raised')
+             ])
              
     style.map('TEntry',
              fieldbackground=[('readonly', '!disabled', bg)],
@@ -227,17 +304,16 @@ def _update_theme_dependent_styles(style, dark_mode):
              
     style.map('TCombobox',
              fieldbackground=[('readonly', '!disabled', bg)],
-             selectbackground=[('readonly', '!disabled', bg)],
-             selectforeground=[('readonly', '!disabled', fg)])
+             selectbackground=[('readonly', '!disabled', select_bg)],
+             selectforeground=[('readonly', '!disabled', select_fg)])
              
     # Configure scrollbars
-    style.configure('Vertical.TScrollbar',
-                  arrowsize=14,
-                  width=12)
-                  
-    style.configure('Horizontal.TScrollbar',
-                  arrowsize=14,
-                  width=12)
+    scrollbar_style = {
+        'arrowsize': 14,
+        'width': 12
+    }
+    style.configure('Vertical.TScrollbar', **scrollbar_style)
+    style.configure('Horizontal.TScrollbar', **scrollbar_style)
 
 def _auto_detect_theme(style, app):
     """Auto-detect the system theme and apply the appropriate theme.
@@ -247,73 +323,31 @@ def _auto_detect_theme(style, app):
         app: The main application instance
     """
     try:
-        if sys.platform == 'darwin':
-            # macOS
-            import subprocess
-            cmd = 'defaults read -g AppleInterfaceStyle'
-            dark_mode = subprocess.run(
-                cmd, shell=True, capture_output=True, text=True
-            ).stdout.strip().lower() == 'dark'
-            theme = 'darkly' if dark_mode else 'cosmo'
-        elif sys.platform == 'win32':
-            # Windows
-            import ctypes
-            dark_mode = not ctypes.windll.uxtheme.IsThemeActive()
-            theme = 'darkly' if dark_mode else 'cosmo'
-        else:
-            # Linux - try to detect dark mode from gsettings
-            try:
-                import subprocess
-                result = subprocess.run(
-                    ['gsettings', 'get', 'org.gnome.desktop.interface', 'gtk-theme'],
-                    capture_output=True, text=True
-                )
-                dark_mode = 'dark' in result.stdout.lower()
-                theme = 'darkly' if dark_mode else 'cosmo'
-            except:
-                # Fallback to light theme if detection fails
-                theme = 'cosmo'
-                dark_mode = False
-        
-        _change_theme(style, theme, dark_mode, app)
-        
+        # Check if we have a saved preference first
+        if hasattr(app, 'theme_name') and app.theme_name:
+            saved_theme = app.theme_name
+            dark_mode = app.dark_mode
+            _change_theme(style, saved_theme, dark_mode, app, silent=True)
+            return
+            
+        # No saved preference, try to detect system theme
+        try:
+            import darkdetect
+            if darkdetect.isDark():
+                # Default to Nord theme for dark mode
+                _change_theme(style, 'nord', True, app, silent=True)
+            else:
+                # Default to Cosmo for light mode
+                _change_theme(style, 'cosmo', False, app, silent=True)
+        except ImportError:
+            # Fallback if darkdetect is not available
+            _change_theme(style, 'cosmo', False, app, silent=True)
+            
     except Exception as e:
         print(f"Warning: Could not auto-detect theme: {e}")
         # Fall back to light theme
-        _change_theme(style, 'cosmo', False, app)
-        
-        # Tab style
-        tab_style = {
-            'padding': [10, 4],
-            'font': ('Segoe UI', 10) if platform.system() == 'Windows' else 
-                   ('SF Pro Text', 12) if platform.system() == 'Darwin' else 
-                   ('Ubuntu', 10) if 'ubuntu' in platform.version().lower() else ('DejaVu Sans', 10)
-        }
-        
-        # Apply notebook and tab styles
-        style.configure('TNotebook', **notebook_style)
-        style.configure('TNotebook.Tab', **tab_style)
-        
-        # Configure treeview colors
-        if hasattr(colors, 'bg') and hasattr(colors, 'fg'):
-            style.configure('Treeview', 
-                          background=colors.bg,
-                          foreground=colors.fg,
-                          fieldbackground=colors.bg,
-                          borderwidth=1)
-            
-            style.map('Treeview',
-                    background=[('selected', colors.selectbg if hasattr(colors, 'selectbg') else '#0078d7')],
-                    foreground=[('selected', colors.selectfg if hasattr(colors, 'selectfg') else 'white')])
-        
-        # Configure entry and combobox
-        style.configure('TEntry', fieldbackground=colors.inputbg if hasattr(colors, 'inputbg') else 'white')
-        style.configure('TCombobox', fieldbackground=colors.inputbg if hasattr(colors, 'inputbg') else 'white')
-        
-    except Exception as e:
-        print(f"Error updating theme-dependent styles: {e}")
-        import traceback
-        traceback.print_exc()
+        _change_theme(style, 'cosmo', False, app, silent=True)
+        return  # Exit after handling the error
 
 if __name__ == "__main__":
     main()

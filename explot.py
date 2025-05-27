@@ -1,6 +1,6 @@
 # ExPlot - Data visualization tool for Excel files
 
-VERSION = "0.6.6"
+VERSION = "0.6.8"
 # =====================================================================
 
 import tkinter as tk
@@ -4260,6 +4260,32 @@ class ExPlotApp:
     
     def _apply_user_preferences(self, preferences):
         """Apply the loaded preferences to UI elements."""
+        # Apply theme settings first, before other UI elements
+        if 'theme_name' in preferences and 'dark_mode' in preferences:
+            theme_name = preferences['theme_name']
+            dark_mode = preferences['dark_mode']
+            self.theme_name = theme_name
+            self.dark_mode = dark_mode
+            
+            # Apply the theme if the style object is available
+            if hasattr(self, 'style'):
+                try:
+                    # For custom themes (nord, nordic), use _change_theme to properly set them up
+                    if theme_name.lower() in ['nord', 'nordic']:
+                        from launch import _change_theme
+                        _change_theme(self.style, theme_name, dark_mode, self, update_menu=False, silent=True)
+                    else:
+                        # For standard ttkbootstrap themes
+                        self.style.theme_use(theme_name)
+                    
+                    # Update the theme-dependent styles
+                    self.update_theme_dependent_styles()
+                    
+                except Exception as e:
+                    print(f"Warning: Could not apply theme {theme_name}: {e}")
+                    import traceback
+                    traceback.print_exc()
+        
         # General tab settings
         if hasattr(self, 'plot_kind_var') and 'plot_kind' in preferences:
             self.plot_kind_var.set(preferences['plot_kind'])
@@ -4527,28 +4553,39 @@ class ExPlotApp:
         right_frame = ttk.Frame(main_frame)
         right_frame.pack(side='right', fill='both', expand=True)
         
-        # Create a top frame for action buttons
+        # Create a top frame for action buttons with fixed height
         top_button_frame = ttk.Frame(right_frame, padding=10)
         top_button_frame.pack(fill='x', padx=10, pady=(5, 10))
+        top_button_frame.columnconfigure(0, weight=1)
+        top_button_frame.columnconfigure(1, weight=1)
         
-        # Plot and Stats buttons side by side in the top frame
+        # Create a sub-frame to hold the buttons with fixed size
+        button_container = ttk.Frame(top_button_frame)
+        button_container.grid(row=0, column=0, sticky='w')
+        
+        # Plot and Stats buttons side by side with fixed positioning
+        button_style = {'style': 'Accent.TButton', 'width': 14, 'padding': (5, 4)}
+        
+        # First button (always visible)
         plot_button = ttk.Button(
-            top_button_frame, 
+            button_container, 
             text="Generate Plot", 
             command=self.plot_graph,
-            style='Accent.TButton',
-            width=15
+            **button_style
         )
-        plot_button.pack(side="left", padx=5, ipady=5)
+        plot_button.grid(row=0, column=0, padx=3, pady=2, sticky='nsew')
         
+        # Second button (toggled by stats checkbox)
         self.stats_details_btn = ttk.Button(
-            top_button_frame, 
-            text="Statistical Details", 
+            button_container, 
+            text="Stats Details", 
             command=self.show_statistical_details,
-            style='Accent.TButton',
-            width=15
+            **button_style
         )
-        self.stats_details_btn.pack(side="left", padx=5, ipady=5)
+        self.stats_details_btn.grid(row=0, column=1, padx=3, pady=2, sticky='nsew')
+        
+        # Store reference to the container for toggling
+        self.button_container = button_container
         
         # Canvas frame for the plot
         self.canvas_frame = ttk.Frame(right_frame)
@@ -9028,15 +9065,15 @@ class ExPlotApp:
             text = f"Preview not available\n{str(e)}"
             draw.text((10, height//2), text, fill=(0, 0, 0))
 
-        # Show the statistical details button if statistics were calculated
+        # Show or hide the statistical details button if statistics were calculated
         if self.use_stats_var.get() and hasattr(self, 'latest_stats') and self.latest_stats:
             try:
-                self.stats_details_btn.pack(pady=5)
+                self.stats_details_btn.grid()
             except Exception as e:
                 print(f"Error showing stats details button: {e}")
         else:
             try:
-                self.stats_details_btn.pack_forget()
+                self.stats_details_btn.grid_remove()
             except Exception as e:
                 print(f"Error hiding stats details button: {e}")
                 

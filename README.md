@@ -1,6 +1,8 @@
 # ExPlot
 A modern Python/Tkinter app to plot data from Excel sheets using *seaborn* and *matplotlib*, featuring beautiful theming with ttkbootstrap. Fully developed with Claude 3.7 Sonnet, Cascade Base, SWE-1, and GPT-4.1 using Windsurf.
 
+No warranty is given or implied. Use at your own risk and after testing and validation of functionality
+
 ![ExPlot](img/ExPlot.png)
 
 # Data structure
@@ -52,7 +54,7 @@ conda install --file requirements.txt
 pip install PyMuPDF ttkbootstrap
 ```
 
-## Using pip
+## Using pip (not tested)
 ```bash
 # Create and activate a virtual environment
 python -m venv venv
@@ -67,16 +69,20 @@ pip install PyMuPDF ttkbootstrap
 
 ## With ttkbootstrap Theme (recommended)
 ```bash
+conda activate explot # source venv/bin/activate with pip
 python launch.py
 ```
 
 ## With Default Theme
 ```bash
+conda activate explot # source venv/bin/activate with pip
 python explot.py
 ```
 
 # Packaging
 ```bash
+conda activate explot # source venv/bin/activate with pip
+chmod +x build.sh
 ./build.sh
 ```
 
