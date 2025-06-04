@@ -302,7 +302,7 @@ def setup_theme(root, dark_mode=None, theme_name=None):
     
     # Default theme selection
     DEFAULT_LIGHT_THEME = 'cosmo'
-    DEFAULT_DARK_THEME = 'nord'  # Changed default dark theme to nord
+    DEFAULT_DARK_THEME = 'darkly'  # Changed default dark theme to darkly, custom themes do not work here
     
     # Determine if we should use dark mode if not explicitly set
     if dark_mode is None:

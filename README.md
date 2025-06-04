@@ -43,6 +43,9 @@ File --> Load Example Data
 
 # Installation
 
+## Packaged App
+Packaged app for macOS and Windows can be downloaded from the [releases](releases) page.
+
 ## Using conda
 ```bash
 # Create and activate a conda environment
@@ -79,12 +82,17 @@ conda activate explot # source venv/bin/activate with pip
 python explot.py
 ```
 
-# Packaging
+# Packaging macOS, Linux using Nuitka
 ```bash
 conda activate explot # source venv/bin/activate with pip
+conda install nuitka
 chmod +x build.sh
 ./build.sh
 ```
 
-
-
+# Packaging Windows using PyInstaller
+```bash
+conda activate explot # source venv/bin/activate with pip
+conda install pyinstaller
+pyinstaller ExPlot.spec
+```

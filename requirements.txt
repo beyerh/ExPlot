@@ -16,8 +16,5 @@ xlrd>=2.0.1
 # Image and PDF handling
 Pillow>=10.0.0
 
-# Build and packaging
-nuitka>=1.3.0
-
 # Statistical annotations
 statannotations>=0.4.4
