@@ -4,7 +4,7 @@
 
 # Configuration
 APP_NAME="ExPlot"
-VERSION="0.6.8"
+VERSION="0.6.9"
 BUILD_DIR="build"
 
 # Create a clean build directory

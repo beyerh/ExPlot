@@ -14,6 +14,35 @@ ttkbootstrap.localization.initialize_localities = lambda *args, **kwargs: None
 
 from ttkbootstrap_theme import setup_theme, get_available_themes
 
+def cleanup(root, app):
+    """Clean up resources before exiting."""
+    try:
+        # Close any open matplotlib figures
+        import matplotlib.pyplot as plt
+        plt.close('all')
+        
+        # If the app has a cleanup method, call it
+        if hasattr(app, 'cleanup'):
+            app.cleanup()
+            
+        # Destroy all widgets
+        for widget in root.winfo_children():
+            try:
+                widget.destroy()
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"Error during cleanup: {e}")
+    finally:
+        # Ensure the process terminates
+        root.quit()
+        root.destroy()
+        import os
+        import sys
+        if sys.platform == 'win32':
+            # Force exit on Windows
+            os._exit(0)
+
 def main():
     """Launch the application with ttkbootstrap theming."""
     # Create the root window with ttkbootstrap
@@ -21,6 +50,12 @@ def main():
     
     # Set application title
     root.title("ExPlot")
+    
+    # Set up proper window close handling
+    def on_closing():
+        cleanup(root, app)
+    
+    root.protocol("WM_DELETE_WINDOW", on_closing)
     
     # Set up the theme (auto-detect dark/light mode)
     style = setup_theme(root)

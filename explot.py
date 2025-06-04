@@ -1,6 +1,6 @@
 # ExPlot - Data visualization tool for Excel files
 
-VERSION = "0.6.8"
+VERSION = "0.6.9"
 # =====================================================================
 
 import tkinter as tk
@@ -9241,7 +9241,72 @@ class ExPlotApp:
 
         ttk.Button(window, text="Close", command=window.destroy).pack(pady=10)
 
+    def cleanup(self):
+        """Clean up resources before exiting the application."""
+        try:
+            # Close any open matplotlib figures
+            if hasattr(self, 'figure'):
+                try:
+                    import matplotlib.pyplot as plt
+                    plt.close(self.figure)
+                except Exception as e:
+                    print(f"Error closing figure: {e}")
+            
+            # Clear any data
+            if hasattr(self, 'data'):
+                if isinstance(self.data, pd.DataFrame):
+                    self.data = pd.DataFrame()
+            
+            # Clear any cached data
+            if hasattr(self, 'cached_data'):
+                self.cached_data = {}
+                
+            # Clear any plot elements
+            if hasattr(self, 'canvas'):
+                try:
+                    self.canvas.get_tk_widget().destroy()
+                except Exception as e:
+                    print(f"Error destroying canvas: {e}")
+            
+            # Clear any other resources
+            if hasattr(self, 'temp_files'):
+                for temp_file in self.temp_files:
+                    try:
+                        if os.path.exists(temp_file):
+                            os.unlink(temp_file)
+                    except Exception as e:
+                        print(f"Error removing temp file {temp_file}: {e}")
+            
+            # Force garbage collection
+            import gc
+            gc.collect()
+            
+            # Destroy the root window if it exists
+            if hasattr(self, 'root') and self.root.winfo_exists():
+                self.root.quit()
+                self.root.destroy()
+            
+            # Force exit on macOS
+            import os
+            import sys
+            if sys.platform == 'darwin':
+                os._exit(0)
+                
+        except Exception as e:
+            print(f"Error during cleanup: {e}")
+            # Still try to exit even if cleanup fails
+            if hasattr(self, 'root') and self.root.winfo_exists():
+                self.root.quit()
+                self.root.destroy()
+            import os
+            os._exit(0)
+
+def on_closing(app):
+    """Handle window close event."""
+    app.cleanup()
+
 if __name__ == '__main__':
     root = tk.Tk()
     app = ExPlotApp(root)
+    root.protocol("WM_DELETE_WINDOW", lambda: on_closing(app))
     root.mainloop()
