@@ -1,9 +1,22 @@
 # ExPlot
-A modern Python/Tkinter app to plot data from Excel sheets using *seaborn* and *matplotlib*, featuring beautiful theming with ttkbootstrap. Fully developed with Claude 3.7 Sonnet, Cascade Base, SWE-1, and GPT-4.1 using Windsurf.
+A modern Python/Tkinter app to plot data from Excel sheets using *seaborn* and *matplotlib*, featuring theming with ttkbootstrap. Fully developed with Claude 3.7 Sonnet, Cascade Base, SWE-1, and GPT-4.1 using Windsurf.
 
-No warranty is given or implied. Use at your own risk and after testing and validation of functionality
+No warranty is given or implied. Use at your own risk and after testing and validation of functionality.
 
 ![ExPlot](img/ExPlot.png)
+
+# macOS error
+<img align="left" width="200" alt="macOS error" src="img/macOS_error.png">
+If you face this error on macOS, proceed as follows.
+
+
+Copy the ExPlot.app to the Desktop or navigate accordingly. Execute the following command to remove the app from quarantaine.
+```
+cd Desktop
+xattr -c ExPlot.app
+```
+
+You can move the app to the Applications folder.
 
 # Data structure
 Provide an Excel file with one or several sheets for different data sets to be plotted. The data should be in the following format:
