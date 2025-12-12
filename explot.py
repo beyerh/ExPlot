@@ -2514,54 +2514,187 @@ class ExPlotApp:
         # General guidelines
         general_text = create_text_widget(general_frame)
         general_text.insert('end', 'When to Use Which Statistical Test\n', 'heading')
-        general_text.insert('end', '\nThis guide will help you choose the appropriate statistical test for your data.\n\n', 'normal')
-        general_text.insert('end', '1. For comparing TWO groups:', 'subheading')
-        general_text.insert('end', '\n   • Use a t-test (Student\'s or Welch\'s for unpaired data, Paired for paired data)\n', 'normal')
-        general_text.insert('end', '2. For comparing THREE OR MORE groups:', 'subheading')
-        general_text.insert('end', '\n   • Use ANOVA followed by a post-hoc test to identify which specific groups differ\n', 'normal')
-        general_text.insert('end', '3. For non-parametric data (data that doesn\'t follow normal distribution):', 'subheading')
-        general_text.insert('end', '\n   • Consider using non-parametric alternatives like Dunn\'s test for post-hoc comparisons\n', 'normal')
-        general_text.insert('end', '\nThe ExPlot automatically selects appropriate tests based on your data structure.\n', 'normal')
+        general_text.insert('end', '\nThis guide helps you choose the appropriate statistical test for your data.\n\n', 'normal')
+        
+        general_text.insert('end', 'Quick Decision Guide:\n', 'subheading')
+        general_text.insert('end', '\n', 'normal')
+        general_text.insert('end', '1. Comparing TWO groups:\n', 'subheading')
+        general_text.insert('end', '   • Data normally distributed → t-test (Welch\'s recommended)\n', 'normal')
+        general_text.insert('end', '   • Data NOT normally distributed → Mann-Whitney U test\n', 'normal')
+        general_text.insert('end', '   • Paired/matched samples → Paired t-test or Wilcoxon signed-rank\n\n', 'normal')
+        
+        general_text.insert('end', '2. Comparing THREE OR MORE groups:\n', 'subheading')
+        general_text.insert('end', '   • Data normally distributed → ANOVA + post-hoc test\n', 'normal')
+        general_text.insert('end', '   • Data NOT normally distributed → Kruskal-Wallis + Dunn\'s test\n\n', 'normal')
+        
+        general_text.insert('end', 'Parametric vs. Non-parametric Tests:\n', 'subheading')
+        general_text.insert('end', '\n• Parametric tests (t-test, ANOVA) assume your data follows a normal distribution.\n', 'normal')
+        general_text.insert('end', '  They are more powerful when assumptions are met.\n\n', 'normal')
+        general_text.insert('end', '• Non-parametric tests (Mann-Whitney, Wilcoxon, Dunn\'s) make no assumptions about\n', 'normal')
+        general_text.insert('end', '  the distribution. Use them when:\n', 'normal')
+        general_text.insert('end', '  - Data is skewed or has outliers\n', 'normal')
+        general_text.insert('end', '  - Sample sizes are very small (n < 10)\n', 'normal')
+        general_text.insert('end', '  - Data is ordinal (ranked) rather than continuous\n\n', 'normal')
+        
+        general_text.insert('end', 'Important Notes on Small Sample Sizes:\n', 'subheading')
+        general_text.insert('end', '\n• Non-parametric tests with small samples have LIMITED resolution.\n', 'normal')
+        general_text.insert('end', '• Example: Mann-Whitney U with n=4 vs n=4 has a minimum p-value of 0.029.\n', 'normal')
+        general_text.insert('end', '  This means you cannot achieve p < 0.029 regardless of how different the groups are.\n', 'normal')
+        general_text.insert('end', '• If all your comparisons show identical p-values, this is likely because all\n', 'normal')
+        general_text.insert('end', '  groups show complete separation (the minimum possible p-value).\n', 'normal')
+        general_text.insert('end', '• Consider increasing sample size or using parametric tests if appropriate.\n', 'normal')
         general_text.configure(state='disabled')  # Make read-only
         
         # t-tests information
         t_test_text = create_text_widget(t_test_frame)
-        t_test_text.insert('end', 't-test Types\n', 'heading')
-        t_test_text.insert('end', '\nStudent\'s t-test (unpaired):', 'subheading')
-        t_test_text.insert('end', '\n• Use when: Comparing two independent groups with equal variances\n• Example: Control group vs. Treatment group with similar spread of data\n• Assumption: Equal variances between groups\n\n', 'normal')
-        t_test_text.insert('end', 'Welch\'s t-test (unpaired, unequal variances):', 'subheading')
-        t_test_text.insert('end', '\n• Use when: Comparing two independent groups with unequal variances\n• Example: Control group vs. Treatment group with different spread of data\n• More robust when variances differ\n• Recommended as default for most unpaired comparisons\n\n', 'normal')
-        t_test_text.insert('end', 'Paired t-test:', 'subheading')
-        t_test_text.insert('end', '\n• Use when: Comparing paired measurements (before/after, matched samples)\n• Example: Before treatment vs. After treatment in the same subjects\n• Requires equal number of data points in both groups\n\n', 'normal')
-        t_test_text.insert('end', 't-test Alternatives:', 'subheading')
-        t_test_text.insert('end', '\n• two-sided: Tests if groups are different (most common)\n• less: Tests if first group mean is less than second group mean\n• greater: Tests if first group mean is greater than second group mean\n', 'normal')
+        t_test_text.insert('end', 'Two-Group Comparison Tests\n', 'heading')
+        t_test_text.insert('end', '\nThese tests compare measurements between exactly two groups.\n\n', 'normal')
+        
+        t_test_text.insert('end', '═══ PARAMETRIC TESTS (assume normal distribution) ═══\n\n', 'subheading')
+        
+        t_test_text.insert('end', 'Student\'s t-test (unpaired, equal variances):\n', 'subheading')
+        t_test_text.insert('end', '• Best for: Two independent groups with similar spread (variance)\n', 'normal')
+        t_test_text.insert('end', '• Example: Comparing cell counts between two different cell lines\n', 'normal')
+        t_test_text.insert('end', '• Assumptions: Normal distribution, equal variances, independent samples\n', 'normal')
+        t_test_text.insert('end', '• Note: Rarely used in practice—Welch\'s is usually preferred\n\n', 'normal')
+        
+        t_test_text.insert('end', 'Welch\'s t-test (unpaired, unequal variances):\n', 'subheading')
+        t_test_text.insert('end', '• Best for: Two independent groups (default choice for most comparisons)\n', 'normal')
+        t_test_text.insert('end', '• Example: Control vs. Treatment groups with different variability\n', 'normal')
+        t_test_text.insert('end', '• Assumptions: Normal distribution, independent samples\n', 'normal')
+        t_test_text.insert('end', '• Advantage: Does NOT require equal variances—more robust\n', 'normal')
+        t_test_text.insert('end', '• ✓ RECOMMENDED as default for unpaired comparisons\n\n', 'normal')
+        
+        t_test_text.insert('end', 'Paired t-test:\n', 'subheading')
+        t_test_text.insert('end', '• Best for: Matched or repeated measurements on the same subjects\n', 'normal')
+        t_test_text.insert('end', '• Example: Before vs. After treatment in the same patients\n', 'normal')
+        t_test_text.insert('end', '• Example: Left eye vs. Right eye measurements\n', 'normal')
+        t_test_text.insert('end', '• Requirement: Equal number of data points in both groups\n', 'normal')
+        t_test_text.insert('end', '• Advantage: More powerful than unpaired tests for paired data\n\n', 'normal')
+        
+        t_test_text.insert('end', '═══ NON-PARAMETRIC TESTS (no distribution assumptions) ═══\n\n', 'subheading')
+        
+        t_test_text.insert('end', 'Mann-Whitney U test (unpaired):\n', 'subheading')
+        t_test_text.insert('end', '• Best for: Two independent groups when data is NOT normally distributed\n', 'normal')
+        t_test_text.insert('end', '• Also called: Wilcoxon rank-sum test (different from signed-rank!)\n', 'normal')
+        t_test_text.insert('end', '• Example: Comparing scores when data is skewed or has outliers\n', 'normal')
+        t_test_text.insert('end', '• How it works: Compares RANKS of values, not the values themselves\n', 'normal')
+        t_test_text.insert('end', '• ⚠ IMPORTANT: With small samples, p-values have limited resolution!\n', 'normal')
+        t_test_text.insert('end', '    - n=4 vs n=4: minimum p-value = 0.029 (cannot go lower)\n', 'normal')
+        t_test_text.insert('end', '    - n=5 vs n=5: minimum p-value = 0.008\n', 'normal')
+        t_test_text.insert('end', '    - n=10 vs n=10: minimum p-value = 0.00006\n\n', 'normal')
+        
+        t_test_text.insert('end', 'Wilcoxon signed-rank test (paired):\n', 'subheading')
+        t_test_text.insert('end', '• Best for: Paired/matched data when differences are NOT normally distributed\n', 'normal')
+        t_test_text.insert('end', '• Example: Before vs. After when the differences are skewed\n', 'normal')
+        t_test_text.insert('end', '• How it works: Ranks the absolute differences, then compares signed ranks\n', 'normal')
+        t_test_text.insert('end', '• Requirement: Equal number of data points in both groups\n', 'normal')
+        t_test_text.insert('end', '• ⚠ Same small-sample limitations as Mann-Whitney U\n\n', 'normal')
+        
+        t_test_text.insert('end', '═══ ALTERNATIVE HYPOTHESIS OPTIONS ═══\n\n', 'subheading')
+        
+        t_test_text.insert('end', '• two-sided: Are the groups different? (most common, use when unsure)\n', 'normal')
+        t_test_text.insert('end', '• greater: Is group 1 larger than group 2?\n', 'normal')
+        t_test_text.insert('end', '• less: Is group 1 smaller than group 2?\n', 'normal')
+        t_test_text.insert('end', '\nNote: One-sided tests are more powerful but require prior hypothesis.\n', 'normal')
         t_test_text.configure(state='disabled')  # Make read-only
         
         # ANOVA information
         anova_text = create_text_widget(anova_frame)
-        anova_text.insert('end', 'ANOVA Types\n', 'heading')
-        anova_text.insert('end', '\nOne-way ANOVA:', 'subheading')
-        anova_text.insert('end', '\n• Use when: Comparing three or more independent groups with equal variances\n• Example: Multiple treatment groups vs. control\n• Assumption: Equal variances across all groups\n\n', 'normal')
-        anova_text.insert('end', 'Welch\'s ANOVA:', 'subheading')
-        anova_text.insert('end', '\n• Use when: Comparing three or more independent groups with unequal variances\n• More robust than standard ANOVA when variances differ\n• Recommended as default for most multi-group comparisons\n\n', 'normal')
-        anova_text.insert('end', 'Repeated measures ANOVA:', 'subheading')
-        anova_text.insert('end', '\n• Use when: Comparing multiple measurements of the same subjects\n• Example: Measurements at different time points or conditions on the same samples\n• More powerful than independent ANOVA for paired data\n\n', 'normal')
-        anova_text.insert('end', 'Important Note:', 'subheading')
-        anova_text.insert('end', '\nANOVA only tells you that differences exist among groups, not which specific groups differ. For that, you need post-hoc tests.\n', 'normal')
+        anova_text.insert('end', 'Multi-Group Comparison Tests (ANOVA)\n', 'heading')
+        anova_text.insert('end', '\nANOVA (Analysis of Variance) tests whether means differ across 3+ groups.\n', 'normal')
+        anova_text.insert('end', 'It answers: "Is there ANY difference among these groups?"\n\n', 'normal')
+        
+        anova_text.insert('end', '═══ PARAMETRIC ANOVA TYPES ═══\n\n', 'subheading')
+        
+        anova_text.insert('end', 'One-way ANOVA:\n', 'subheading')
+        anova_text.insert('end', '• Best for: Comparing 3+ independent groups with similar variances\n', 'normal')
+        anova_text.insert('end', '• Example: Comparing expression levels across 4 different cell types\n', 'normal')
+        anova_text.insert('end', '• Assumptions: Normal distribution, equal variances, independent samples\n', 'normal')
+        anova_text.insert('end', '• Output: F-statistic and p-value for overall group difference\n\n', 'normal')
+        
+        anova_text.insert('end', 'Welch\'s ANOVA:\n', 'subheading')
+        anova_text.insert('end', '• Best for: Comparing 3+ independent groups with UNEQUAL variances\n', 'normal')
+        anova_text.insert('end', '• Example: Treatment groups where one group is more variable\n', 'normal')
+        anova_text.insert('end', '• Assumptions: Normal distribution, independent samples\n', 'normal')
+        anova_text.insert('end', '• Advantage: Does NOT require equal variances—more robust\n', 'normal')
+        anova_text.insert('end', '• ✓ RECOMMENDED as default for most multi-group comparisons\n\n', 'normal')
+        
+        anova_text.insert('end', 'Repeated Measures ANOVA:\n', 'subheading')
+        anova_text.insert('end', '• Best for: Multiple measurements on the SAME subjects\n', 'normal')
+        anova_text.insert('end', '• Example: Drug response measured at 0h, 6h, 12h, 24h in same patients\n', 'normal')
+        anova_text.insert('end', '• Example: Same mice tested under 3 different conditions\n', 'normal')
+        anova_text.insert('end', '• Advantage: Much more powerful because it accounts for within-subject variation\n', 'normal')
+        anova_text.insert('end', '• Requirement: Balanced design (same subjects in all conditions)\n\n', 'normal')
+        
+        anova_text.insert('end', '═══ NON-PARAMETRIC ALTERNATIVE ═══\n\n', 'subheading')
+        
+        anova_text.insert('end', 'Kruskal-Wallis test:\n', 'subheading')
+        anova_text.insert('end', '• Best for: 3+ groups when data is NOT normally distributed\n', 'normal')
+        anova_text.insert('end', '• How it works: Compares ranks instead of actual values\n', 'normal')
+        anova_text.insert('end', '• Follow with Dunn\'s test for pairwise comparisons\n\n', 'normal')
+        
+        anova_text.insert('end', '═══ IMPORTANT NOTES ═══\n\n', 'subheading')
+        
+        anova_text.insert('end', '⚠ ANOVA only tells you IF differences exist, not WHERE.\n', 'normal')
+        anova_text.insert('end', '  A significant ANOVA means at least one group differs from another,\n', 'normal')
+        anova_text.insert('end', '  but it does NOT tell you which specific groups are different.\n\n', 'normal')
+        anova_text.insert('end', '→ Always follow significant ANOVA with POST-HOC TESTS to identify\n', 'normal')
+        anova_text.insert('end', '  which specific pairs of groups differ (see Post-hoc Tests tab).\n', 'normal')
         anova_text.configure(state='disabled')  # Make read-only
         
         # Post-hoc tests information
         posthoc_text = create_text_widget(posthoc_frame)
-        posthoc_text.insert('end', 'Post-hoc Tests\n', 'heading')
-        posthoc_text.insert('end', '\nAfter finding significant differences with ANOVA, use post-hoc tests to identify which specific groups differ from each other.\n\n', 'normal')
-        posthoc_text.insert('end', 'Tukey\'s HSD (Honestly Significant Difference):', 'subheading')
-        posthoc_text.insert('end', '\n• Use when: Equal sample sizes and variances across groups\n• Controls family-wise error rate while conducting all pairwise comparisons\n• Balanced between conservative and liberal\n\n', 'normal')
-        posthoc_text.insert('end', 'Tamhane\'s T2:', 'subheading')
-        posthoc_text.insert('end', '\n• Use when: Unequal variances across groups\n• Conservative test that doesn\'t assume equal variances\n• Recommended default after Welch\'s ANOVA\n\n', 'normal')
-        posthoc_text.insert('end', 'Scheffe\'s test:', 'subheading')
-        posthoc_text.insert('end', '\n• Use when: Complex comparisons beyond simple pairwise comparisons\n• Very conservative test with strong control of Type I error\n• Flexible for examining various contrasts and combinations\n\n', 'normal')
-        posthoc_text.insert('end', 'Dunn\'s test:', 'subheading')
-        posthoc_text.insert('end', '\n• Use when: Data doesn\'t follow normal distribution\n• Non-parametric alternative for multiple comparisons\n• Often used after Kruskal-Wallis test (non-parametric equivalent of ANOVA)\n', 'normal')
+        posthoc_text.insert('end', 'Post-hoc Tests (Pairwise Comparisons)\n', 'heading')
+        posthoc_text.insert('end', '\nAfter ANOVA shows significant differences, post-hoc tests identify WHICH\n', 'normal')
+        posthoc_text.insert('end', 'specific pairs of groups differ from each other.\n\n', 'normal')
+        
+        posthoc_text.insert('end', '═══ WHY POST-HOC TESTS? ═══\n\n', 'subheading')
+        posthoc_text.insert('end', 'When comparing multiple groups, running many t-tests inflates false positive\n', 'normal')
+        posthoc_text.insert('end', 'rate (Type I error). Post-hoc tests correct for multiple comparisons.\n\n', 'normal')
+        posthoc_text.insert('end', 'Example: With 5 groups, there are 10 possible pairwise comparisons.\n', 'normal')
+        posthoc_text.insert('end', 'At α=0.05, you\'d expect ~0.5 false positives by chance alone!\n\n', 'normal')
+        
+        posthoc_text.insert('end', '═══ PARAMETRIC POST-HOC TESTS ═══\n\n', 'subheading')
+        
+        posthoc_text.insert('end', 'Tukey\'s HSD (Honestly Significant Difference):\n', 'subheading')
+        posthoc_text.insert('end', '• Best for: Balanced designs with equal sample sizes and variances\n', 'normal')
+        posthoc_text.insert('end', '• Tests ALL possible pairwise comparisons simultaneously\n', 'normal')
+        posthoc_text.insert('end', '• Controls family-wise error rate (probability of ANY false positive)\n', 'normal')
+        posthoc_text.insert('end', '• Good balance between power and Type I error control\n', 'normal')
+        posthoc_text.insert('end', '• Use after: Standard one-way ANOVA\n\n', 'normal')
+        
+        posthoc_text.insert('end', 'Games-Howell:\n', 'subheading')
+        posthoc_text.insert('end', '• Best for: Unequal sample sizes AND unequal variances\n', 'normal')
+        posthoc_text.insert('end', '• Does not assume equal variances or sample sizes\n', 'normal')
+        posthoc_text.insert('end', '• More powerful than Tamhane\'s T2 in most situations\n', 'normal')
+        posthoc_text.insert('end', '• ✓ RECOMMENDED after Welch\'s ANOVA\n\n', 'normal')
+        
+        posthoc_text.insert('end', 'Tamhane\'s T2:\n', 'subheading')
+        posthoc_text.insert('end', '• Best for: Unequal variances across groups\n', 'normal')
+        posthoc_text.insert('end', '• Very conservative—less likely to find significance\n', 'normal')
+        posthoc_text.insert('end', '• Good when you want to be extra careful about false positives\n', 'normal')
+        posthoc_text.insert('end', '• Use after: Welch\'s ANOVA when being conservative\n\n', 'normal')
+        
+        posthoc_text.insert('end', 'Scheffé\'s test:\n', 'subheading')
+        posthoc_text.insert('end', '• Best for: Complex contrasts beyond simple pairwise comparisons\n', 'normal')
+        posthoc_text.insert('end', '• Most conservative test—least likely to find significance\n', 'normal')
+        posthoc_text.insert('end', '• Can test ANY combination of group comparisons\n', 'normal')
+        posthoc_text.insert('end', '• Use when: You want to compare group combinations (e.g., A vs B+C)\n\n', 'normal')
+        
+        posthoc_text.insert('end', '═══ NON-PARAMETRIC POST-HOC TEST ═══\n\n', 'subheading')
+        
+        posthoc_text.insert('end', 'Dunn\'s test:\n', 'subheading')
+        posthoc_text.insert('end', '• Best for: Non-normally distributed data\n', 'normal')
+        posthoc_text.insert('end', '• Works on ranks, not raw values\n', 'normal')
+        posthoc_text.insert('end', '• Use after: Kruskal-Wallis test (non-parametric ANOVA)\n', 'normal')
+        posthoc_text.insert('end', '• Includes Bonferroni correction for multiple comparisons\n\n', 'normal')
+        
+        posthoc_text.insert('end', '═══ QUICK SELECTION GUIDE ═══\n\n', 'subheading')
+        posthoc_text.insert('end', '• Equal variances, equal n → Tukey\'s HSD\n', 'normal')
+        posthoc_text.insert('end', '• Unequal variances or unequal n → Games-Howell\n', 'normal')
+        posthoc_text.insert('end', '• Want to be very conservative → Tamhane\'s T2 or Scheffé\n', 'normal')
+        posthoc_text.insert('end', '• Non-normal data → Dunn\'s test\n', 'normal')
         posthoc_text.configure(state='disabled')  # Make read-only
         
         # Close button at bottom
