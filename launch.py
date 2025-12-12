@@ -14,8 +14,18 @@ ttkbootstrap.localization.initialize_localities = lambda *args, **kwargs: None
 
 from ttkbootstrap_theme import setup_theme, get_available_themes
 
+# Global flag to prevent multiple cleanup calls
+_cleanup_called = False
+
 def cleanup(root, app):
     """Clean up resources before exiting."""
+    global _cleanup_called
+    
+    # Prevent multiple cleanup calls
+    if _cleanup_called:
+        return
+    _cleanup_called = True
+    
     try:
         # Close any open matplotlib figures
         import matplotlib.pyplot as plt
@@ -25,23 +35,29 @@ def cleanup(root, app):
         if hasattr(app, 'cleanup'):
             app.cleanup()
             
-        # Destroy all widgets
-        for widget in root.winfo_children():
-            try:
-                widget.destroy()
-            except Exception:
-                pass
+        # Destroy all widgets (only if root still exists)
+        try:
+            if root.winfo_exists():
+                for widget in root.winfo_children():
+                    try:
+                        widget.destroy()
+                    except Exception:
+                        pass
+        except Exception:
+            # Root might already be destroyed
+            pass
+            
     except Exception as e:
         print(f"Error during cleanup: {e}")
     finally:
-        # Ensure the process terminates
-        root.quit()
-        root.destroy()
-        import os
-        import sys
-        if sys.platform == 'win32':
-            # Force exit on Windows
-            os._exit(0)
+        # Destroy the root window if it still exists
+        try:
+            if root.winfo_exists():
+                root.quit()
+                root.destroy()
+        except Exception:
+            # Window already destroyed, which is fine
+            pass
 
 def main():
     """Launch the application with ttkbootstrap theming."""

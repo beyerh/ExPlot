@@ -144,12 +144,27 @@ def run_anova(df, value_col, category_col, anova_type="One-way ANOVA", subject_c
             result = pg.welch_anova(data=df, dv=value_col, between=category_col)
         elif anova_type == "Repeated measures ANOVA" and subject_col:
             result = pg.rm_anova(data=df, dv=value_col, within=category_col, subject=subject_col)
+        elif anova_type == "Kruskal-Wallis H test (non-parametric)":
+            # Non-parametric alternative to one-way ANOVA
+            debug("Executing Kruskal-Wallis H test using pingouin")
+            result = pg.kruskal(data=df, dv=value_col, between=category_col)
+            # Rename columns to match ANOVA output format for consistency
+            if 'H' in result.columns:
+                result['F'] = result['H']  # Use H-statistic in place of F
+        elif anova_type == "Friedman test (non-parametric)" and subject_col:
+            # Non-parametric alternative to repeated measures ANOVA
+            debug("Executing Friedman test using pingouin")
+            result = pg.friedman(data=df, dv=value_col, within=category_col, subject=subject_col)
+            # Rename columns to match ANOVA output format for consistency
+            if 'Q' in result.columns:
+                result['F'] = result['Q']  # Use Q-statistic in place of F
         else:
             result = pg.anova(data=df, dv=value_col, between=category_col)
         
         return result
     except Exception as e:
         debug(f"Error running ANOVA: {e}")
+        traceback.print_exc()
         # Fall back to one-way ANOVA if other methods fail
         try:
             return pg.anova(data=df, dv=value_col, between=category_col)
@@ -199,6 +214,14 @@ def run_posthoc(df, value_col, category_col, posthoc_type="Tukey's HSD"):
             posthoc = sp.posthoc_scheffe(df, val_col=value_col, group_col=category_col)
         elif posthoc_type == "Dunn's test":
             posthoc = sp.posthoc_dunn(df, val_col=value_col, group_col=category_col)
+        elif posthoc_type == "Conover's test (non-parametric)":
+            # Non-parametric post-hoc test (alternative to Dunn's)
+            debug("Executing Conover's test using scikit-posthocs")
+            posthoc = sp.posthoc_conover(df, val_col=value_col, group_col=category_col)
+        elif posthoc_type == "Nemenyi test (non-parametric)":
+            # Non-parametric post-hoc test for Friedman
+            debug("Executing Nemenyi test using scikit-posthocs")
+            posthoc = sp.posthoc_nemenyi_friedman(df, val_col=value_col, group_col=category_col)
         else:  # Default to Tamhane's T2
             # For Tamhane's T2, we need to process the result similar to Tukey's HSD
             # Ensure we're working with a Series when calling unique()
@@ -330,6 +353,20 @@ def run_ttest(df, value_col, group1, group2, category_col, test_type="Welch's t-
             debug("Executing Mann-Whitney U test using pingouin")
             actual_test_used = "Mann-Whitney U test"
             result_df = pg.mwu(g1, g2, alternative=alternative)
+            p_val = result_df['p-val'].iloc[0]
+            result = result_df.to_dict('records')[0]
+            result["test_used"] = actual_test_used
+            
+        elif test_type == "Wilcoxon signed-rank test (non-parametric)":
+            if len(g1) != len(g2):
+                debug(f"Cannot run Wilcoxon signed-rank test: group sizes differ ({len(g1)} vs {len(g2)})")
+                actual_test_used = "Wilcoxon signed-rank test (failed - unequal samples)"
+                return 1.0, {"test_used": actual_test_used, "p-val": 1.0}
+                
+            # Use pingouin for Wilcoxon signed-rank test
+            debug("Executing Wilcoxon signed-rank test using pingouin")
+            actual_test_used = "Wilcoxon signed-rank test"
+            result_df = pg.wilcoxon(g1, g2, alternative=alternative)
             p_val = result_df['p-val'].iloc[0]
             result = result_df.to_dict('records')[0]
             result["test_used"] = actual_test_used

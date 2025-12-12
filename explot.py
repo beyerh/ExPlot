@@ -1229,7 +1229,9 @@ class ExPlotApp:
         ttest_options = [
             "Student's t-test (unpaired, equal variances)",
             "Welch's t-test (unpaired, unequal variances)",
-            "Paired t-test"
+            "Paired t-test",
+            "Mann-Whitney U test (non-parametric)",
+            "Wilcoxon signed-rank test (non-parametric)"
         ]
         ttest_dropdown = ttk.Combobox(frame, textvariable=self.ttest_type_var, values=ttest_options, state='readonly', width=30)
         ttest_dropdown.grid(row=1, column=1, sticky="ew", padx=8, pady=8)
@@ -1251,7 +1253,9 @@ class ExPlotApp:
         anova_options = [
             "One-way ANOVA",
             "Welch's ANOVA",
-            "Repeated measures ANOVA"
+            "Repeated measures ANOVA",
+            "Kruskal-Wallis H test (non-parametric)",
+            "Friedman test (non-parametric)"
         ]
         anova_dropdown = ttk.Combobox(frame, textvariable=self.anova_type_var, values=anova_options, state='readonly', width=30)
         anova_dropdown.grid(row=3, column=1, sticky="ew", padx=8, pady=8)
@@ -1269,7 +1273,9 @@ class ExPlotApp:
             "Tukey's HSD",
             "Tamhane's T2",
             "Scheffe's test",
-            "Dunn's test"
+            "Dunn's test",
+            "Conover's test (non-parametric)",
+            "Nemenyi test (non-parametric)"
         ]
         posthoc_dropdown = ttk.Combobox(frame, textvariable=self.posthoc_type_var, values=posthoc_options, state='readonly', width=30)
         posthoc_dropdown.grid(row=5, column=1, sticky="ew", padx=8, pady=8)
@@ -1974,7 +1980,7 @@ class ExPlotApp:
         ttk.Checkbutton(stats_tab, text="Use statistics by default", variable=self.settings_use_stats_var).grid(row=0, column=0, columnspan=2, sticky="w", padx=10, pady=5)
         
         ttk.Label(stats_tab, text="t-test type:", anchor="w").grid(row=1, column=0, sticky="w", padx=10, pady=10)
-        ttest_options = ["Student's t-test (unpaired, equal variances)", "Welch's t-test (unpaired, unequal variances)", "Paired t-test"]
+        ttest_options = ["Student's t-test (unpaired, equal variances)", "Welch's t-test (unpaired, unequal variances)", "Paired t-test", "Mann-Whitney U test (non-parametric)", "Wilcoxon signed-rank test (non-parametric)"]
         ttk.Combobox(stats_tab, textvariable=self.settings_ttest_type_var, values=ttest_options, width=35, state="readonly").grid(row=1, column=1, sticky="w", padx=10, pady=10)
         
         ttk.Label(stats_tab, text="T-test Alternative:", anchor="w").grid(row=2, column=0, sticky="w", padx=10, pady=10)
@@ -1982,7 +1988,7 @@ class ExPlotApp:
         ttk.Combobox(stats_tab, textvariable=self.settings_ttest_alternative_var, values=ttest_alternative_options, width=35, state="readonly").grid(row=2, column=1, sticky="w", padx=10, pady=10)
         
         ttk.Label(stats_tab, text="ANOVA type:", anchor="w").grid(row=3, column=0, sticky="w", padx=10, pady=10)
-        anova_options = ["One-way ANOVA", "Welch's ANOVA", "Repeated measures ANOVA"]
+        anova_options = ["One-way ANOVA", "Welch's ANOVA", "Repeated measures ANOVA", "Kruskal-Wallis H test (non-parametric)", "Friedman test (non-parametric)"]
         ttk.Combobox(stats_tab, textvariable=self.settings_anova_type_var, values=anova_options, width=35, state="readonly").grid(row=3, column=1, sticky="w", padx=10, pady=10)
         
         ttk.Label(stats_tab, text="Alpha level:", anchor="w").grid(row=4, column=0, sticky="w", padx=10, pady=10)
@@ -1990,7 +1996,7 @@ class ExPlotApp:
         ttk.Combobox(stats_tab, textvariable=self.settings_alpha_level_var, values=alpha_options, width=35, state="readonly").grid(row=4, column=1, sticky="w", padx=10, pady=10)
         
         ttk.Label(stats_tab, text="Post-hoc test:", anchor="w").grid(row=5, column=0, sticky="w", padx=10, pady=10)
-        posthoc_options = ["Tukey's HSD", "Tamhane's T2", "Scheffe's test", "Dunn's test"]
+        posthoc_options = ["Tukey's HSD", "Tamhane's T2", "Scheffe's test", "Dunn's test", "Conover's test (non-parametric)", "Nemenyi test (non-parametric)"]
         ttk.Combobox(stats_tab, textvariable=self.settings_posthoc_type_var, values=posthoc_options, width=35, state="readonly").grid(row=5, column=1, sticky="w", padx=10, pady=10)
         
         # Appearance Tab Content

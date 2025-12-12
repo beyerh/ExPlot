@@ -42,14 +42,17 @@ The *x_category* column contains the categories to be plotted on the x-axis, the
 Alternatively, provide several *y_value* columns, each with a different name.
 
 # Features
-- Bar graphs
-- Box plots
-- Strip plots
-- XY plots
-- XY Fitting with predefined or cutom models
-- t-tests, ANOVA, and post-hoc tests
-- Save and load data
-- App themes (`View > Themes`)
+- **Plot Types**: Bar graphs, Box plots, Violin plots, Strip plots, XY plots
+- **Curve Fitting**: Predefined and custom models with parameter estimation
+- **Statistical Tests**:
+  - **Parametric**: Student's t-test, Welch's t-test, Paired t-test
+  - **Non-parametric**: Mann-Whitney U, Wilcoxon signed-rank
+  - **ANOVA**: One-way, Welch's, Repeated measures
+  - **Non-parametric ANOVA**: Kruskal-Wallis H test, Friedman test
+  - **Post-hoc**: Tukey's HSD, Tamhane's T2, Scheffe's, Dunn's, Conover's, Nemenyi
+- **Data Management**: Save/load projects, Excel export, multi-sheet support
+- **Customization**: Custom colors, palettes, themes, LaTeX labels
+- **App themes** (`View > Themes`): Nord, Nordic, and standard light/dark themes
 
 # Examples
 File --> Load Example Data
@@ -73,8 +76,8 @@ pip install PyMuPDF ttkbootstrap
 ## Using pip (not tested)
 ```bash
 # Create and activate a virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+python -m venv .venv
+source .venv/bin/activate  # On Windows: venv\Scripts\activate
 
 # Install from requirements.txt
 pip install -r requirements.txt
