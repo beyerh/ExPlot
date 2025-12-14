@@ -1,6 +1,6 @@
 # ExPlot - Data visualization tool for Excel files
 
-VERSION = "0.6.9"
+VERSION = "0.7.0"
 # =====================================================================
 
 import tkinter as tk
@@ -888,8 +888,9 @@ class ExPlotApp:
         self.theme_name = 'light'  # Default theme
         self.dark_mode = False  # Track dark mode state
         
-        # Initialize preview_dpi early so it's available when loading preferences
-        self.preview_dpi = tk.IntVar(value=175)  # Default DPI value
+        # Initialize preview_scale early so it's available when loading preferences
+        # Scale factor as percentage (100 = 100% = 1x, 175 = 175% = 1.75x)
+        self.preview_dpi = tk.IntVar(value=175)  # Keep variable name for compatibility, but now means scale %
 
         self.root = root
         self.version = VERSION  # Use the global VERSION constant
@@ -944,6 +945,11 @@ class ExPlotApp:
         self.xy_show_mean_var = tk.BooleanVar(value=True)
         self.xy_show_mean_errorbars_var = tk.BooleanVar(value=True)
         self.xy_draw_band_var = tk.BooleanVar(value=False)
+        
+        # --- Legend settings ---
+        self.legend_visible_var = tk.BooleanVar(value=True)
+        self.legend_position_var = tk.StringVar(value="outside top")
+        self.legend_ncol_var = tk.IntVar(value=0)  # 0 = auto
         
         # --- XY Fitting variables ---
         self.use_fitting_var = tk.BooleanVar(value=False)
@@ -2009,7 +2015,7 @@ class ExPlotApp:
         ttk.Label(appearance_tab, text="Plot height (inches):", anchor="w").grid(row=2, column=0, sticky="w", padx=10, pady=10)
         tk.Spinbox(appearance_tab, from_=0.5, to=5.0, increment=0.1, textvariable=self.settings_plot_height_var, width=5).grid(row=2, column=1, sticky="w", padx=10, pady=10)
         
-        ttk.Label(appearance_tab, text="Preview size (DPI):", anchor="w").grid(row=3, column=0, sticky="w", padx=10, pady=10)
+        ttk.Label(appearance_tab, text="Preview DPI:", anchor="w").grid(row=3, column=0, sticky="w", padx=10, pady=10)
         tk.Spinbox(appearance_tab, from_=50, to=300, increment=25, textvariable=self.settings_preview_dpi_var, width=5).grid(row=3, column=1, sticky="w", padx=10, pady=10)
         
         # Bar Graph Tab Content
@@ -4726,9 +4732,53 @@ class ExPlotApp:
         # Store reference to the container for toggling
         self.button_container = button_container
         
-        # Canvas frame for the plot
-        self.canvas_frame = ttk.Frame(right_frame)
-        self.canvas_frame.pack(fill='both', expand=True, padx=10, pady=(0, 10))
+        # Scrollable canvas frame for the plot
+        # Outer frame holds canvas + scrollbars
+        self.preview_outer_frame = ttk.Frame(right_frame)
+        self.preview_outer_frame.pack(fill='both', expand=True, padx=10, pady=(0, 10))
+        
+        # Create canvas for scrolling (this is the viewport)
+        self.preview_scroll_canvas = tk.Canvas(self.preview_outer_frame, highlightthickness=0, bg='white')
+        
+        # Create scrollbars
+        self.preview_v_scrollbar = ttk.Scrollbar(self.preview_outer_frame, orient='vertical', 
+                                                  command=self.preview_scroll_canvas.yview)
+        self.preview_h_scrollbar = ttk.Scrollbar(self.preview_outer_frame, orient='horizontal', 
+                                                  command=self.preview_scroll_canvas.xview)
+        
+        # Configure canvas scrolling
+        self.preview_scroll_canvas.configure(yscrollcommand=self.preview_v_scrollbar.set, 
+                                             xscrollcommand=self.preview_h_scrollbar.set)
+        
+        # Grid layout
+        self.preview_scroll_canvas.grid(row=0, column=0, sticky='nsew')
+        self.preview_v_scrollbar.grid(row=0, column=1, sticky='ns')
+        self.preview_h_scrollbar.grid(row=1, column=0, sticky='ew')
+        
+        # Configure grid weights so canvas expands
+        self.preview_outer_frame.grid_rowconfigure(0, weight=1)
+        self.preview_outer_frame.grid_columnconfigure(0, weight=1)
+        
+        # Create inner frame for plot content - this frame will NOT be resized
+        self.canvas_frame = ttk.Frame(self.preview_scroll_canvas)
+        
+        # Create window at top-left, anchor to northwest
+        self.preview_window_id = self.preview_scroll_canvas.create_window(
+            (0, 0), window=self.canvas_frame, anchor='nw'
+        )
+        
+        # Update scroll region when content changes
+        def update_scrollregion(event=None):
+            self.preview_scroll_canvas.configure(scrollregion=self.preview_scroll_canvas.bbox('all'))
+        self.canvas_frame.bind('<Configure>', update_scrollregion)
+        
+        # Mouse wheel scrolling
+        def on_mousewheel(event):
+            self.preview_scroll_canvas.yview_scroll(int(-1 * (event.delta / 120)), 'units')
+        def on_shift_mousewheel(event):
+            self.preview_scroll_canvas.xview_scroll(int(-1 * (event.delta / 120)), 'units')
+        self.preview_scroll_canvas.bind_all('<MouseWheel>', on_mousewheel)
+        self.preview_scroll_canvas.bind_all('<Shift-MouseWheel>', on_shift_mousewheel)
         
         # Bottom frame (kept for potential future use)
         self.bottom_frame = ttk.Frame(self.root)
@@ -4768,7 +4818,7 @@ class ExPlotApp:
         # Scrollable frame for value checkbuttons
         value_vars_scroll_frame = ttk.Frame(col_grp)
         value_vars_scroll_frame.grid(row=2, column=1, sticky="ew", pady=(2,0))
-        value_vars_canvas = tk.Canvas(value_vars_scroll_frame, height=120)
+        value_vars_canvas = tk.Canvas(value_vars_scroll_frame, height=150)
         value_vars_scrollbar = ttk.Scrollbar(value_vars_scroll_frame, orient="vertical", command=value_vars_canvas.yview)
         self.value_vars_inner_frame = ttk.Frame(value_vars_canvas)
         self.value_vars_inner_frame.bind(
@@ -4783,8 +4833,6 @@ class ExPlotApp:
         # Options group
         opt_grp = ttk.LabelFrame(frame, text="Options", padding=6)
         opt_grp.pack(fill='x', padx=6, pady=4)
-
-
         
         # Statistics settings
         stats_frame = ttk.Frame(opt_grp)
@@ -4811,7 +4859,8 @@ class ExPlotApp:
         btn_fr = ttk.Frame(opt_grp)
         btn_fr.pack(fill='x', pady=(2,0))
         ttk.Button(btn_fr, text="Modify X categories", command=self.modify_x_categories, width=20).pack(side="left", padx=1)
-        # --- Plot type group (with horizontal layout for XY options, no tabs) ---
+        
+        # Plot Type group
         type_grp = ttk.LabelFrame(frame, text="Plot Type", padding=6)
         type_grp.pack(fill='x', padx=6, pady=4)
         # Frame for radio buttons (left)
@@ -4938,9 +4987,13 @@ class ExPlotApp:
         ttk.Checkbutton(strip_grp, text="Show stripplot with black dots", variable=self.strip_black_var).pack(anchor="w", pady=1)
         self.show_stripplot_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(strip_grp, text="Show stripplot", variable=self.show_stripplot_var).pack(anchor="w", pady=1)
-        # --- Display options group ---
-        disp_grp = ttk.LabelFrame(frame, text="Display Options", padding=6)
-        disp_grp.pack(fill='x', padx=6, pady=4)
+        # --- Display Options and Legend in same row ---
+        display_legend_row = ttk.Frame(frame)
+        display_legend_row.pack(fill='x', padx=6, pady=4)
+        
+        # Display options group (left side)
+        disp_grp = ttk.LabelFrame(display_legend_row, text="Display Options", padding=6)
+        disp_grp.pack(side='left', fill='both', expand=True, padx=(0,3))
         self.show_frame_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(disp_grp, text="Show graph frame", variable=self.show_frame_var).pack(anchor="w", pady=1)
         self.show_hgrid_var = tk.BooleanVar(value=False)
@@ -4951,11 +5004,36 @@ class ExPlotApp:
         # Preview DPI setting
         dpi_frame = ttk.Frame(disp_grp)
         dpi_frame.pack(anchor="w", pady=1, fill='x')
-        ttk.Label(dpi_frame, text="Preview size:").pack(side="left")
-        # Use the existing preview_dpi variable that was created in __init__
+        ttk.Label(dpi_frame, text="Preview DPI:").pack(side="left")
+        # DPI controls pixel size of preview (higher = larger preview, same layout)
         tk.Spinbox(dpi_frame, from_=50, to=300, increment=25, 
                   textvariable=self.preview_dpi, width=5).pack(side="left", padx=4)
         ttk.Label(dpi_frame, text="dpi").pack(side="left")
+        
+        # Legend settings group (right side)
+        legend_grp = ttk.LabelFrame(display_legend_row, text="Legend", padding=6)
+        legend_grp.pack(side='left', fill='both', expand=True, padx=(3,0))
+        
+        # Show/hide legend
+        ttk.Checkbutton(legend_grp, text="Show legend", variable=self.legend_visible_var).pack(anchor="w", pady=1)
+        
+        # Legend position
+        pos_frame = ttk.Frame(legend_grp)
+        pos_frame.pack(anchor="w", pady=1, fill='x')
+        ttk.Label(pos_frame, text="Position:").pack(side="left")
+        legend_positions = ["best", "upper right", "upper left", "lower left", "lower right", 
+                           "right", "center left", "center right", "lower center", "upper center", 
+                           "center", "outside right", "outside top"]
+        ttk.Combobox(pos_frame, textvariable=self.legend_position_var, 
+                    values=legend_positions, width=12, state="readonly").pack(side="left", padx=4)
+        
+        # Legend columns
+        col_frame = ttk.Frame(legend_grp)
+        col_frame.pack(anchor="w", pady=1, fill='x')
+        ttk.Label(col_frame, text="Columns:").pack(side="left")
+        tk.Spinbox(col_frame, from_=0, to=10, increment=1, 
+                  textvariable=self.legend_ncol_var, width=5).pack(side="left", padx=4)
+        ttk.Label(col_frame, text="(0 = auto)").pack(side="left")
         
         # Note: Swap axes setting moved to Axis tab
 
@@ -7150,12 +7228,42 @@ class ExPlotApp:
             # Default placement within the plot
             self.legend_outside = False
             
-        # Define a utility function for consistent legend placement
-        def place_legend(ax, handles, labels):
-            if self.legend_outside:
-                return ax.legend(handles, labels, bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0.)
+        # Get legend settings from UI
+        legend_visible = self.legend_visible_var.get()
+        legend_position = self.legend_position_var.get()
+        legend_ncol = self.legend_ncol_var.get()
+        
+        # Define a utility function for consistent legend placement with user settings
+        def place_legend(ax, handles, labels, draggable=True):
+            """Place legend based on user settings and make it draggable."""
+            # Check if legend should be shown
+            if not legend_visible:
+                return None
+            
+            # Determine number of columns (0 = auto)
+            ncol = legend_ncol if legend_ncol > 0 else self.optimize_legend_layout(ax, handles, labels, fontsize=fontsize)
+            
+            # Map position string to matplotlib loc and bbox_to_anchor
+            if legend_position == "outside right":
+                legend = ax.legend(handles, labels, bbox_to_anchor=(1.02, 1), loc='upper left', 
+                                  borderaxespad=0., frameon=False, fontsize=fontsize, ncol=ncol)
+            elif legend_position == "outside top":
+                legend = ax.legend(handles, labels, bbox_to_anchor=(0.5, 1.15), loc='upper center', 
+                                  borderaxespad=0., frameon=False, fontsize=fontsize, ncol=ncol)
+            elif self.legend_outside:
+                # Override for small XY plots with fitting
+                legend = ax.legend(handles, labels, bbox_to_anchor=(1.05, 1), loc='upper left', 
+                                  borderaxespad=0., frameon=False, fontsize=fontsize, ncol=ncol)
             else:
-                return ax.legend(handles, labels)
+                # Standard matplotlib positions
+                legend = ax.legend(handles, labels, loc=legend_position, frameon=False, 
+                                  fontsize=fontsize, ncol=ncol)
+            
+            # Make legend draggable so user can fine-tune position
+            if legend and draggable:
+                legend.set_draggable(True)
+            
+            return legend
                 
         # Add the function as an attribute of the class instance
         self.place_legend = place_legend
@@ -7174,8 +7282,16 @@ class ExPlotApp:
         })
 
         sns.set_theme(style='white', rc={"axes.grid": False})
-        # Create the figure and store it as a class attribute for later use in save_graph
-        self.fig, axes = plt.subplots(n_rows, 1, figsize=(fig_width, fig_height), squeeze=False)
+        # Store original figure size for PDF export
+        self.original_fig_width = fig_width
+        self.original_fig_height = fig_height
+        
+        # Preview scale controls DPI (pixel output) not figure size (layout)
+        # 100% = 100 DPI, 175% = 175 DPI, etc.
+        preview_dpi = self.preview_dpi.get()
+        
+        # Create figure at ORIGINAL size (controls layout) with preview DPI (controls pixels)
+        self.fig, axes = plt.subplots(n_rows, 1, figsize=(fig_width, fig_height), dpi=preview_dpi, squeeze=False)
         axes = axes.flatten()
 
         show_frame = self.show_frame_var.get()
@@ -7966,7 +8082,7 @@ class ExPlotApp:
                                         c = color_map[name]
                                         # Calculate means at each x value
                                         x_sorted = np.sort(group[x_col].unique())
-                                        means = [group[group[x_col] == x]['Value'].mean() for x in x_sorted]
+                                        means = [group[group[x_col] == x][value_col].mean() for x in x_sorted]
                                         x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
                                         means_numeric = pd.to_numeric(means, errors='coerce')
                                         ax.plot(x_sorted_numeric, means_numeric, color='black' if line_black else c, linewidth=linewidth, alpha=0.7, linestyle=line_style)
@@ -8552,7 +8668,7 @@ class ExPlotApp:
                                         c = color_map[name]
                                         # Calculate means at each x value
                                         x_sorted = np.sort(group[x_col].unique())
-                                        means = [group[group[x_col] == x]['Value'].mean() for x in x_sorted]
+                                        means = [group[group[x_col] == x][value_col].mean() for x in x_sorted]
                                         x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
                                         means_numeric = pd.to_numeric(means, errors='coerce')
                                         ax.plot(x_sorted_numeric, means_numeric, color='black' if line_black else c, linewidth=linewidth, alpha=0.7, linestyle=line_style)
@@ -8694,14 +8810,58 @@ class ExPlotApp:
                         ncol=self.optimize_legend_layout(ax, bar_handles, bar_labels, fontsize=fontsize)
                     )
             elif hue_col and plot_kind == "xy":
-                handles, labels = ax.get_legend_handles_labels()
-                by_label = dict(zip(labels, handles))
-                ax.legend(
-                    by_label.values(), by_label.keys(),
-                    loc="upper center", bbox_to_anchor=(0.5, 1.18), borderaxespad=0,
-                    frameon=False, fontsize=fontsize,
-                    ncol=self.optimize_legend_layout(ax, list(by_label.values()), list(by_label.keys()), fontsize=fontsize)
-                )
+                # Build legend with marker symbols using palette colors directly
+                from matplotlib.lines import Line2D
+                
+                # Get unique group names and their colors from custom palette (same as XY plot uses)
+                group_names = list(df_plot[hue_col].dropna().unique())
+                palette_name = self.palette_var.get()
+                palette_full = self.custom_palettes.get(palette_name, ["#333333"])
+                if len(palette_full) < len(group_names):
+                    palette_full = (palette_full * ((len(group_names) // len(palette_full)) + 1))[:len(group_names)]
+                
+                marker_symbol = self.xy_marker_symbol_var.get()
+                marker_size = self.xy_marker_size_var.get()
+                filled = self.xy_filled_var.get()
+                connect = self.xy_connect_var.get()
+                line_style = self.xy_line_style_var.get()
+                line_black = self.xy_line_black_var.get()
+                
+                # Create legend handles with markers (and lines if connecting)
+                legend_handles = []
+                legend_labels = []
+                for i, name in enumerate(group_names):
+                    color = palette_full[i]
+                    line_color = 'black' if line_black else color
+                    
+                    if connect:
+                        # Show both marker and line
+                        marker_handle = Line2D([0], [0], marker=marker_symbol,
+                                              color=line_color,
+                                              markerfacecolor=color if filled else 'none',
+                                              markeredgecolor=color,
+                                              markersize=marker_size * 0.8,
+                                              markeredgewidth=linewidth,
+                                              linestyle=line_style,
+                                              linewidth=linewidth)
+                    else:
+                        # Show only marker
+                        marker_handle = Line2D([0], [0], marker=marker_symbol, color='none',
+                                              markerfacecolor=color if filled else 'none',
+                                              markeredgecolor=color,
+                                              markersize=marker_size * 0.8,
+                                              markeredgewidth=linewidth,
+                                              linestyle='none')
+                    legend_handles.append(marker_handle)
+                    legend_labels.append(str(name))
+                
+                if legend_handles:
+                    ax.legend(
+                        legend_handles, legend_labels,
+                        loc="upper center", bbox_to_anchor=(0.5, 1.18), borderaxespad=0,
+                        frameon=False, fontsize=fontsize,
+                        ncol=self.optimize_legend_layout(ax, legend_handles, legend_labels, fontsize=fontsize)
+                    )
 
             # Set X-axis tick labels for bar, box, and violin plots using categorical mapping
             if plot_kind in ["bar", "box", "violin"] and hasattr(self, 'x_categorical_reverse_map'):
@@ -9161,49 +9321,61 @@ class ExPlotApp:
             ax.tick_params(axis='both', which='both', width=linewidth)
             # (grid lines already set above)
 
-        self.fig.savefig(self.temp_pdf, format='pdf', bbox_inches='tight')
+        # Apply legend settings from UI to all axes
+        legend_visible = self.legend_visible_var.get()
+        legend_position = self.legend_position_var.get()
+        legend_ncol = self.legend_ncol_var.get()
+        
+        for ax in self.fig.axes:
+            old_legend = ax.get_legend()
+            if old_legend:
+                # Get handles and labels from existing legend
+                handles = old_legend.legend_handles
+                labels = [t.get_text() for t in old_legend.get_texts()]
+                
+                # Remove old legend
+                old_legend.remove()
+                
+                if not legend_visible or not handles:
+                    continue
+                
+                # Determine number of columns
+                if legend_ncol > 0:
+                    ncol = legend_ncol
+                else:
+                    ncol = self.optimize_legend_layout(ax, handles, labels, fontsize=fontsize)
+                
+                # Create new legend with user settings
+                if legend_position == "outside right":
+                    new_legend = ax.legend(handles, labels, bbox_to_anchor=(1.02, 1), loc='upper left',
+                                          borderaxespad=0., frameon=False, fontsize=fontsize, ncol=ncol)
+                elif legend_position == "outside top":
+                    new_legend = ax.legend(handles, labels, bbox_to_anchor=(0.5, 1.15), loc='upper center',
+                                          borderaxespad=0., frameon=False, fontsize=fontsize, ncol=ncol)
+                else:
+                    # Standard matplotlib positions
+                    new_legend = ax.legend(handles, labels, loc=legend_position, frameon=False,
+                                          fontsize=fontsize, ncol=ncol)
+                
+                # Make legend draggable
+                if new_legend:
+                    new_legend.set_draggable(True)
+        
+        # Display interactive preview (before saving, to preserve figure state)
         self.display_preview()
 
     def display_preview(self):
-        """Display a preview of the figure using PyMuPDF if available, or directly from matplotlib"""
+        """Display an interactive preview using matplotlib's native tkinter widget.
+        
+        This allows draggable legends - drag the legend to reposition it,
+        then click 'Save PDF' to export with the new legend position.
+        """
+        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+        
+        # Clear existing widgets
         for widget in self.canvas_frame.winfo_children():
             widget.destroy()
             
-        try:
-            # Try using PyMuPDF (fitz) for better rendering if available
-            try:
-                import fitz
-                doc = fitz.open(self.temp_pdf)
-                pix = doc[0].get_pixmap(dpi=self.preview_dpi.get())  # Use user-specified DPI
-                image_data = pix.tobytes("ppm")
-                from io import BytesIO
-                buf = BytesIO(image_data)
-                image = Image.open(buf)
-                doc.close()
-                print("Using PyMuPDF for preview")
-            except ImportError:
-                # Fall back to matplotlib direct rendering
-                print("PyMuPDF not available, using matplotlib for preview")
-                if hasattr(self, 'fig') and self.fig is not None:
-                    # Use tight_layout and bbox_inches to reduce whitespace
-                    self.fig.tight_layout(pad=0.1)  # Reduce padding
-                    from io import BytesIO
-                    buf = BytesIO()
-                    self.fig.savefig(buf, format='png', dpi=300, bbox_inches='tight', pad_inches=0.1)
-                    buf.seek(0)
-                    image = Image.open(buf)
-                else:
-                    raise Exception("No figure available for preview")
-        except Exception as e:
-            print(f"Error creating preview: {e}")
-            # Create a placeholder image if rendering fails
-            width, height = 800, 600
-            image = Image.new('RGB', (width, height), color=(240, 240, 240))
-            from PIL import ImageDraw
-            draw = ImageDraw.Draw(image)
-            text = f"Preview not available\n{str(e)}"
-            draw.text((10, height//2), text, fill=(0, 0, 0))
-
         # Show or hide the statistical details button if statistics were calculated
         if self.use_stats_var.get() and hasattr(self, 'latest_stats') and self.latest_stats:
             try:
@@ -9215,18 +9387,92 @@ class ExPlotApp:
                 self.stats_details_btn.grid_remove()
             except Exception as e:
                 print(f"Error hiding stats details button: {e}")
-                
-        # Display the image
-        photo = ImageTk.PhotoImage(image)
-        self.preview_label = tk.Label(self.canvas_frame, image=photo)
-        self.preview_label.image = photo  # Keep a reference to prevent garbage collection
-        self.preview_label.pack()
+        
+        if not hasattr(self, 'fig') or self.fig is None:
+            # No figure available - show placeholder
+            placeholder = ttk.Label(self.canvas_frame, text="No plot generated yet")
+            placeholder.pack(pady=50)
+            return
+            
+        try:
+            # Get figure size and DPI (use figure's native DPI - don't modify it)
+            fig_width_inches, fig_height_inches = self.fig.get_size_inches()
+            fig_dpi = self.fig.dpi
+            
+            # Calculate canvas size in pixels
+            canvas_width = int(fig_width_inches * fig_dpi)
+            canvas_height = int(fig_height_inches * fig_dpi)
+            
+            # Create the matplotlib canvas widget (keeps figure at native DPI)
+            self.mpl_canvas = FigureCanvasTkAgg(self.fig, master=self.canvas_frame)
+            canvas_widget = self.mpl_canvas.get_tk_widget()
+            
+            # Set fixed size on canvas widget to prevent tkinter from resizing it
+            canvas_widget.configure(width=canvas_width, height=canvas_height)
+            
+            # Pack the canvas widget (anchor to top-left)
+            canvas_widget.pack(fill='none', expand=False, anchor='nw')
+            
+            # Draw the canvas
+            self.mpl_canvas.draw()
+            
+            # Scroll to bottom-left after content is added (content appears at bottom due to figure padding)
+            self.root.after(50, lambda: (
+                self.preview_scroll_canvas.xview_moveto(0),
+                self.preview_scroll_canvas.yview_moveto(1.0)
+            ))
+            
+            # Make legends draggable
+            for ax in self.fig.axes:
+                legend = ax.get_legend()
+                if legend:
+                    legend.set_draggable(True)
+            
+            # Add hint about draggable legends
+            hint_label = ttk.Label(
+                self.canvas_frame,
+                text="💡 Drag legends to reposition, then Save PDF",
+                font=('TkDefaultFont', 9)
+            )
+            hint_label.pack(pady=(2, 0))
+            
+            # Store reference
+            self.preview_label = canvas_widget
+            
+            print(f"Preview: {canvas_width}x{canvas_height}px @ {fig_dpi}dpi (draggable legends enabled)")
+            
+        except Exception as e:
+            print(f"Error creating interactive preview: {e}")
+            import traceback
+            traceback.print_exc()
+            # Fallback to static image
+            placeholder = ttk.Label(self.canvas_frame, text=f"Preview error: {e}")
+            placeholder.pack(pady=50)
 
     def save_pdf(self):
-        if os.path.exists(self.temp_pdf):
-            file_path = filedialog.asksaveasfilename(defaultextension='.pdf', filetypes=[("PDF files", "*.pdf")], initialfile='plot_output.pdf')
-            if file_path:
-                os.replace(self.temp_pdf, file_path)
+        """Save the current figure to PDF at original dimensions, including any legend repositioning done by the user."""
+        file_path = filedialog.asksaveasfilename(
+            defaultextension='.pdf', 
+            filetypes=[("PDF files", "*.pdf")], 
+            initialfile='plot_output.pdf'
+        )
+        if file_path:
+            try:
+                if hasattr(self, 'fig') and self.fig is not None:
+                    # Save directly from the current figure state (preserves dragged legend positions)
+                    # PDF is vector format so DPI doesn't affect output quality
+                    self.fig.savefig(file_path, format='pdf', bbox_inches='tight')
+                    if hasattr(self, 'original_fig_width') and hasattr(self, 'original_fig_height'):
+                        print(f"PDF saved to: {file_path} (size: {self.original_fig_width}\" x {self.original_fig_height}\")")
+                    else:
+                        print(f"PDF saved to: {file_path}")
+                elif os.path.exists(self.temp_pdf):
+                    # Fallback to temp PDF if figure not available
+                    os.replace(self.temp_pdf, file_path)
+            except Exception as e:
+                print(f"Error saving PDF: {e}")
+                from tkinter import messagebox
+                messagebox.showerror("Save Error", f"Could not save PDF: {e}")
 
     def manage_colors_palettes(self):
         window = tk.Toplevel(self.root)
