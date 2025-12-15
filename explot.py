@@ -1,6 +1,6 @@
 # ExPlot - Data visualization tool for Excel files
 
-VERSION = "0.7.0"
+VERSION = "0.7.1"
 # =====================================================================
 
 import tkinter as tk
@@ -13,12 +13,13 @@ os.environ['MPLCONFIGDIR'] = str(Path.home())+"/.matplotlib/"
 import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib
-from matplotlib.ticker import AutoMinorLocator, MultipleLocator, LogLocator, NullLocator
+from matplotlib.ticker import AutoMinorLocator, MultipleLocator, LogLocator, NullLocator, FixedLocator, FuncFormatter
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from PIL import Image, ImageTk
 import json
 import time
 import numpy as np
+import copy
 from scipy import stats
 import sys
 import tempfile
@@ -142,7 +143,805 @@ class ExPlotApp:
             
     def debug(self, message):
         """Print debug message with prefix"""
-        print(f"[DEBUG] {message}")
+        if getattr(self, '_debug', False):
+            print(f"[DEBUG] {message}")
+
+    def _parse_custom_marks(self, text, axis):
+        if text is None:
+            return []
+        items = []
+        for raw in str(text).split(','):
+            spec = raw.strip()
+            if not spec:
+                continue
+
+            parts = [p.strip() for p in spec.split('|')]
+            while len(parts) < 3:
+                parts.append('')
+
+            pos_str, label, flags = parts[0], parts[1], parts[2]
+            # Backward compatibility:
+            # - old format may omit flags entirely -> treat as minor tick
+            # - tick flags: t=minor tick, T=major tick, n=no tick
+            # - line flag: l=line
+            # - major label flag: c=use custom text as major tick label (no numeric)
+            if flags is None:
+                flags = ''
+            flags_raw = str(flags)
+            if not flags_raw.strip():
+                flags_raw = 't'
+            flags_norm = ''
+            for c in flags_raw:
+                if c in ('T',):
+                    flags_norm += 'T'
+                elif c in ('t', 'l', 'n', 'c'):
+                    flags_norm += c
+            if not flags_norm:
+                flags_norm = 't'
+
+            tick_type = 'none' if 'n' in flags_norm else ('major' if 'T' in flags_norm else ('minor' if 't' in flags_norm else 'none'))
+            line = 'l' in flags_norm
+            label_mode = 'custom' if ('c' in flags_norm and tick_type == 'major') else 'number'
+
+            pos = None
+            try:
+                pos = float(pos_str)
+            except Exception:
+                if axis == 'x' and hasattr(self, 'x_categorical_map'):
+                    try:
+                        pos = float(self.x_categorical_map[pos_str])
+                    except Exception:
+                        pos = None
+
+            if pos is None:
+                continue
+
+            items.append({'pos': pos, 'label': label, 'tick_type': tick_type, 'line': line, 'label_mode': label_mode})
+        return items
+
+    def _apply_custom_marks_to_axis(self, ax, axis, marks, linewidth, fontsize, draw_labels=True):
+        if not marks:
+            return
+
+        if axis == 'x':
+            lo, hi = ax.get_xlim()
+            in_view = [m for m in marks if min(lo, hi) <= m['pos'] <= max(lo, hi)]
+        else:
+            lo, hi = ax.get_ylim()
+            in_view = [m for m in marks if min(lo, hi) <= m['pos'] <= max(lo, hi)]
+
+        if not in_view:
+            return
+
+        major_positions = [m['pos'] for m in in_view if m.get('tick_type') == 'major']
+        minor_positions = [m['pos'] for m in in_view if m.get('tick_type') == 'minor']
+
+        major_custom_label_map = {
+            m['pos']: (m.get('label') or '')
+            for m in in_view
+            if (m.get('tick_type') == 'major' and m.get('label_mode') == 'custom' and (m.get('label') or '').strip())
+        }
+
+        # Major ticks: merge into existing major ticks so they look identical
+        if major_positions:
+            try:
+                if axis == 'x':
+                    current = list(ax.get_xticks())
+                    merged = sorted(set([*current, *major_positions]))
+                    ax.xaxis.set_major_locator(FixedLocator(merged))
+                else:
+                    current = list(ax.get_yticks())
+                    merged = sorted(set([*current, *major_positions]))
+                    ax.yaxis.set_major_locator(FixedLocator(merged))
+            except Exception:
+                pass
+
+        # If any major ticks have custom labels, override the major formatter to replace numeric text
+        if major_custom_label_map:
+            try:
+                if axis == 'x':
+                    base_formatter = ax.xaxis.get_major_formatter()
+                else:
+                    base_formatter = ax.yaxis.get_major_formatter()
+
+                keys = list(major_custom_label_map.keys())
+                def _fmt(x, pos=None):
+                    try:
+                        for k in keys:
+                            if abs(float(x) - float(k)) <= 1e-9 * max(1.0, abs(float(k))):
+                                return major_custom_label_map[k]
+                    except Exception:
+                        pass
+                    try:
+                        return base_formatter(x, pos)
+                    except Exception:
+                        return str(x)
+
+                if axis == 'x':
+                    ax.xaxis.set_major_formatter(FuncFormatter(_fmt))
+                else:
+                    ax.yaxis.set_major_formatter(FuncFormatter(_fmt))
+            except Exception:
+                pass
+
+        # Minor ticks: merge into existing minor ticks (and ensure minor tick params are visible)
+        if minor_positions:
+            try:
+                if axis == 'x':
+                    current = list(ax.xaxis.get_minorticklocs())
+                    merged = sorted(set([*current, *minor_positions]))
+                    ax.xaxis.set_minor_locator(FixedLocator(merged))
+                    ax.tick_params(axis='x', which='minor', direction='in', length=2, width=linewidth, color='black', bottom=True)
+                else:
+                    current = list(ax.yaxis.get_minorticklocs())
+                    merged = sorted(set([*current, *minor_positions]))
+                    ax.yaxis.set_minor_locator(FixedLocator(merged))
+                    ax.tick_params(axis='y', which='minor', direction='in', length=2, width=linewidth, color='black', left=True)
+            except Exception:
+                pass
+
+        for m in in_view:
+            pos = m['pos']
+            label = m.get('label') or ''
+            tick_type = m.get('tick_type')
+            line = bool(m.get('line'))
+            label_mode = m.get('label_mode') or 'number'
+
+            if line:
+                try:
+                    if axis == 'x':
+                        ax.axvline(pos, color='black', linewidth=max(linewidth, 0.5), alpha=1.0, zorder=1, label='_nolegend_')
+                    else:
+                        ax.axhline(pos, color='black', linewidth=max(linewidth, 0.5), alpha=1.0, zorder=1, label='_nolegend_')
+                except Exception:
+                    pass
+
+            # Avoid overlapping with major tick labels.
+            # - major+custom is handled by formatter
+            # - major+number should not draw a second label
+            if draw_labels and label and tick_type != 'major':
+                try:
+                    if axis == 'x':
+                        ax.text(pos, -0.04, label, transform=ax.get_xaxis_transform(), ha='center', va='top', fontsize=fontsize, clip_on=False)
+                    else:
+                        ax.text(-0.04, pos, label, transform=ax.get_yaxis_transform(), ha='right', va='center', fontsize=fontsize, clip_on=False)
+                except Exception:
+                    pass
+
+    def _serialize_custom_marks_from_tree(self, tree):
+        try:
+            items = []
+            for iid in tree.get_children():
+                pos, label, tick_type, label_mode, line = tree.item(iid, 'values')
+                flags = ''
+                tick_type_s = str(tick_type).strip().lower()
+                if tick_type_s == 'major':
+                    flags += 'T'
+                elif tick_type_s == 'minor':
+                    flags += 't'
+                else:
+                    flags += 'n'
+                if str(label_mode).strip().lower() == 'custom' and tick_type_s == 'major':
+                    flags += 'c'
+                if str(line).strip().upper() == 'Y':
+                    flags += 'l'
+                items.append(f"{pos}|{label}|{flags}")
+            return ', '.join(items)
+        except Exception:
+            return ''
+
+    def _load_custom_marks_into_tree(self, tree, text, axis):
+        try:
+            for iid in tree.get_children():
+                tree.delete(iid)
+            marks = self._parse_custom_marks(text, axis=axis)
+            for m in marks:
+                pos = m.get('pos')
+                label = m.get('label') or ''
+                tick_type = m.get('tick_type') or 'minor'
+                label_mode = m.get('label_mode') or 'number'
+                line = 'Y' if m.get('line') else 'N'
+                tree.insert('', 'end', values=(pos, label, tick_type, label_mode, line))
+        except Exception:
+            pass
+
+    def _sync_custom_marks_vars_from_ui(self):
+        try:
+            if hasattr(self, 'custom_x_marks_tree') and hasattr(self, 'custom_x_marks_var'):
+                self.custom_x_marks_var.set(self._serialize_custom_marks_from_tree(self.custom_x_marks_tree))
+            if hasattr(self, 'custom_y_marks_tree') and hasattr(self, 'custom_y_marks_var'):
+                self.custom_y_marks_var.set(self._serialize_custom_marks_from_tree(self.custom_y_marks_tree))
+        except Exception:
+            pass
+
+    def open_custom_marks_editor(self):
+        if not hasattr(self, 'custom_x_marks_var'):
+            self.custom_x_marks_var = tk.StringVar(value="")
+        if not hasattr(self, 'custom_y_marks_var'):
+            self.custom_y_marks_var = tk.StringVar(value="")
+
+        win = tk.Toplevel(self.root)
+        win.title("Custom Marks")
+        win.transient(self.root)
+
+        container = ttk.Frame(win, padding=8)
+        container.pack(fill='both', expand=True)
+
+        xgrp = ttk.LabelFrame(container, text="X marks", padding=6)
+        xgrp.pack(fill='x', padx=2, pady=(0, 8))
+        x_tree = ttk.Treeview(xgrp, columns=('pos', 'label', 'tick', 'label_mode', 'line'), show='headings', height=5)
+        x_tree.heading('pos', text='Position')
+        x_tree.heading('label', text='Label')
+        x_tree.heading('tick', text='Tick')
+        x_tree.heading('label_mode', text='Label')
+        x_tree.heading('line', text='Line')
+        x_tree.column('pos', width=110, anchor='w')
+        x_tree.column('label', width=220, anchor='w')
+        x_tree.column('tick', width=70, anchor='center')
+        x_tree.column('label_mode', width=80, anchor='center')
+        x_tree.column('line', width=55, anchor='center')
+        x_tree.pack(fill='x', padx=2, pady=2)
+        self._load_custom_marks_into_tree(x_tree, self.custom_x_marks_var.get(), axis='x')
+
+        x_form = ttk.Frame(xgrp)
+        x_form.pack(fill='x', padx=2, pady=2)
+        ttk.Label(x_form, text="Pos:").grid(row=0, column=0, sticky='w')
+        x_pos = ttk.Entry(x_form, width=12)
+        x_pos.grid(row=0, column=1, sticky='w', padx=(4, 10))
+        ttk.Label(x_form, text="Label:").grid(row=0, column=2, sticky='w')
+        x_label = ttk.Entry(x_form, width=22)
+        x_label.grid(row=0, column=3, sticky='w', padx=(4, 10))
+        x_tick_type_var = tk.StringVar(value='minor')
+        x_label_mode_var = tk.StringVar(value='number')
+        x_line_var = tk.BooleanVar(value=False)
+        ttk.Combobox(x_form, textvariable=x_tick_type_var, values=['none', 'minor', 'major'], width=7, state='readonly').grid(row=0, column=4, padx=(0, 6))
+        ttk.Combobox(x_form, textvariable=x_label_mode_var, values=['number', 'custom'], width=8, state='readonly').grid(row=0, column=5, padx=(0, 10))
+        ttk.Checkbutton(x_form, text="Line", variable=x_line_var).grid(row=0, column=6, padx=(0, 10))
+
+        def _add_x():
+            pos = x_pos.get().strip()
+            if not pos:
+                return
+            tick_type = x_tick_type_var.get()
+            label_mode = x_label_mode_var.get()
+            line = 'Y' if x_line_var.get() else 'N'
+            x_tree.insert('', 'end', values=(pos, x_label.get().strip(), tick_type, label_mode, line))
+            x_pos.delete(0, tk.END)
+            x_label.delete(0, tk.END)
+
+        def _load_x_selection(*_args):
+            sel = x_tree.selection()
+            if not sel:
+                return
+            pos_v, label_v, tick_v, label_mode_v, line_v = x_tree.item(sel[0], 'values')
+            x_pos.delete(0, tk.END)
+            x_pos.insert(0, str(pos_v))
+            x_label.delete(0, tk.END)
+            x_label.insert(0, str(label_v))
+            x_tick_type_var.set(str(tick_v).lower() if tick_v else 'minor')
+            x_label_mode_var.set(str(label_mode_v).lower() if label_mode_v else 'number')
+            x_line_var.set(str(line_v).strip().upper() == 'Y')
+
+        def _update_x():
+            sel = x_tree.selection()
+            if not sel:
+                return
+            pos = x_pos.get().strip()
+            if not pos:
+                return
+            tick_type = x_tick_type_var.get()
+            label_mode = x_label_mode_var.get()
+            line = 'Y' if x_line_var.get() else 'N'
+            x_tree.item(sel[0], values=(pos, x_label.get().strip(), tick_type, label_mode, line))
+
+        def _remove_x():
+            for iid in x_tree.selection():
+                x_tree.delete(iid)
+
+        ttk.Button(x_form, text="Add", command=_add_x, width=10).grid(row=0, column=7, padx=(0, 4))
+        ttk.Button(x_form, text="Update", command=_update_x, width=10).grid(row=0, column=8, padx=(0, 4))
+        ttk.Button(x_form, text="Remove", command=_remove_x, width=10).grid(row=0, column=9)
+        x_tree.bind('<<TreeviewSelect>>', _load_x_selection)
+
+        ygrp = ttk.LabelFrame(container, text="Y marks", padding=6)
+        ygrp.pack(fill='x', padx=2, pady=(0, 8))
+        y_tree = ttk.Treeview(ygrp, columns=('pos', 'label', 'tick', 'label_mode', 'line'), show='headings', height=5)
+        y_tree.heading('pos', text='Position')
+        y_tree.heading('label', text='Label')
+        y_tree.heading('tick', text='Tick')
+        y_tree.heading('label_mode', text='Label')
+        y_tree.heading('line', text='Line')
+        y_tree.column('pos', width=110, anchor='w')
+        y_tree.column('label', width=220, anchor='w')
+        y_tree.column('tick', width=70, anchor='center')
+        y_tree.column('label_mode', width=80, anchor='center')
+        y_tree.column('line', width=55, anchor='center')
+        y_tree.pack(fill='x', padx=2, pady=2)
+        self._load_custom_marks_into_tree(y_tree, self.custom_y_marks_var.get(), axis='y')
+
+        y_form = ttk.Frame(ygrp)
+        y_form.pack(fill='x', padx=2, pady=2)
+        ttk.Label(y_form, text="Pos:").grid(row=0, column=0, sticky='w')
+        y_pos = ttk.Entry(y_form, width=12)
+        y_pos.grid(row=0, column=1, sticky='w', padx=(4, 10))
+        ttk.Label(y_form, text="Label:").grid(row=0, column=2, sticky='w')
+        y_label = ttk.Entry(y_form, width=22)
+        y_label.grid(row=0, column=3, sticky='w', padx=(4, 10))
+        y_tick_type_var = tk.StringVar(value='minor')
+        y_label_mode_var = tk.StringVar(value='number')
+        y_line_var = tk.BooleanVar(value=False)
+        ttk.Combobox(y_form, textvariable=y_tick_type_var, values=['none', 'minor', 'major'], width=7, state='readonly').grid(row=0, column=4, padx=(0, 6))
+        ttk.Combobox(y_form, textvariable=y_label_mode_var, values=['number', 'custom'], width=8, state='readonly').grid(row=0, column=5, padx=(0, 10))
+        ttk.Checkbutton(y_form, text="Line", variable=y_line_var).grid(row=0, column=6, padx=(0, 10))
+
+        def _add_y():
+            pos = y_pos.get().strip()
+            if not pos:
+                return
+            tick_type = y_tick_type_var.get()
+            label_mode = y_label_mode_var.get()
+            line = 'Y' if y_line_var.get() else 'N'
+            y_tree.insert('', 'end', values=(pos, y_label.get().strip(), tick_type, label_mode, line))
+            y_pos.delete(0, tk.END)
+            y_label.delete(0, tk.END)
+
+        def _load_y_selection(*_args):
+            sel = y_tree.selection()
+            if not sel:
+                return
+            pos_v, label_v, tick_v, label_mode_v, line_v = y_tree.item(sel[0], 'values')
+            y_pos.delete(0, tk.END)
+            y_pos.insert(0, str(pos_v))
+            y_label.delete(0, tk.END)
+            y_label.insert(0, str(label_v))
+            y_tick_type_var.set(str(tick_v).lower() if tick_v else 'minor')
+            y_label_mode_var.set(str(label_mode_v).lower() if label_mode_v else 'number')
+            y_line_var.set(str(line_v).strip().upper() == 'Y')
+
+        def _update_y():
+            sel = y_tree.selection()
+            if not sel:
+                return
+            pos = y_pos.get().strip()
+            if not pos:
+                return
+            tick_type = y_tick_type_var.get()
+            label_mode = y_label_mode_var.get()
+            line = 'Y' if y_line_var.get() else 'N'
+            y_tree.item(sel[0], values=(pos, y_label.get().strip(), tick_type, label_mode, line))
+
+        def _remove_y():
+            for iid in y_tree.selection():
+                y_tree.delete(iid)
+
+        ttk.Button(y_form, text="Add", command=_add_y, width=10).grid(row=0, column=7, padx=(0, 4))
+        ttk.Button(y_form, text="Update", command=_update_y, width=10).grid(row=0, column=8, padx=(0, 4))
+        ttk.Button(y_form, text="Remove", command=_remove_y, width=10).grid(row=0, column=9)
+        y_tree.bind('<<TreeviewSelect>>', _load_y_selection)
+
+        button_row = ttk.Frame(container)
+        button_row.pack(fill='x', pady=(4, 0))
+
+        def _save_and_close():
+            self.custom_x_marks_var.set(self._serialize_custom_marks_from_tree(x_tree))
+            self.custom_y_marks_var.set(self._serialize_custom_marks_from_tree(y_tree))
+            win.destroy()
+
+        ttk.Button(button_row, text="Cancel", command=win.destroy, width=12).pack(side='right', padx=(4, 0))
+        ttk.Button(button_row, text="Save", command=_save_and_close, width=12).pack(side='right')
+
+    def _plot_xy_base(self, ax, df_plot, x_col, value_col, hue_col, value_cols, errorbar_black, linewidth, allow_legend=True):
+        marker_size = self.xy_marker_size_var.get()
+        marker_symbol = self.xy_marker_symbol_var.get()
+        connect = self.xy_connect_var.get()
+        draw_band = self.xy_draw_band_var.get()
+        show_mean = self.xy_show_mean_var.get()
+        show_mean_errorbars = self.xy_show_mean_errorbars_var.get()
+        filled = self.xy_filled_var.get()
+        line_style = self.xy_line_style_var.get()
+        line_black = self.xy_line_black_var.get()
+
+        if len(value_cols) == 1:
+            color = self.custom_colors.get(self.single_color_var.get(), 'black')
+            palette = [color]
+        else:
+            palette_name = self.palette_var.get()
+            palette_full = self.custom_palettes.get(palette_name, ["#333333"])
+            if hue_col and hue_col in df_plot.columns:
+                hue_groups = df_plot[hue_col].dropna().unique()
+                if len(palette_full) < len(hue_groups):
+                    palette_full = (palette_full * ((len(hue_groups) // len(palette_full)) + 1))
+                palette = palette_full[:len(hue_groups)]
+            else:
+                palette = palette_full[:len(value_cols)]
+
+        if show_mean:
+            groupers = [x_col]
+            if hue_col:
+                groupers.append(hue_col)
+            grouped = df_plot.groupby(groupers)[value_col]
+            means = grouped.mean().reset_index()
+            if self.errorbar_type_var.get() == "SEM":
+                errors = grouped.apply(lambda x: np.std(x.dropna().astype(float), ddof=1) / np.sqrt(len(x.dropna())) if len(x.dropna()) > 1 else 0).reset_index(name='err')
+            else:
+                errors = grouped.std(ddof=1).reset_index(name='err')
+            means = means.merge(errors, on=groupers)
+
+            if hue_col:
+                group_names = list(df_plot[hue_col].dropna().unique())
+                palette_name = self.palette_var.get()
+                palette_full = self.custom_palettes.get(palette_name, ["#333333"])
+                if len(palette_full) < len(group_names):
+                    palette_full = (palette_full * ((len(group_names) // len(palette_full)) + 1))[:len(group_names)]
+                color_map = {name: palette_full[i] for i, name in enumerate(group_names)}
+                for name in group_names:
+                    group = means[means[hue_col] == name]
+                    if group.empty:
+                        continue
+                    c = color_map[name]
+                    x = group[x_col]
+                    y = group[value_col]
+                    yerr = group['err']
+                    ecolor = 'black' if errorbar_black else c
+                    mfc = c if filled else 'none'
+                    mec = c
+
+                    if show_mean_errorbars:
+                        ax.errorbar(x, y, yerr=yerr, fmt=marker_symbol, color=c, markerfacecolor=mfc, markeredgecolor=mec,
+                                    markersize=marker_size, linewidth=linewidth, capsize=3, ecolor=ecolor,
+                                    label=str(name) if allow_legend else '_nolegend_')
+                    else:
+                        ax.plot(x, y, marker=marker_symbol, color=c, markerfacecolor=mfc, markeredgecolor=mec,
+                                markersize=marker_size, linewidth=linewidth, linestyle='None',
+                                label=str(name) if allow_legend else '_nolegend_')
+
+                    if draw_band:
+                        df_band = pd.DataFrame({
+                            'x': pd.to_numeric(x, errors='coerce'),
+                            'y': pd.to_numeric(y, errors='coerce'),
+                            'yerr': pd.to_numeric(yerr, errors='coerce')
+                        }).dropna().sort_values('x')
+                        if not df_band.empty:
+                            ax.fill_between(df_band['x'], df_band['y'] - df_band['yerr'], df_band['y'] + df_band['yerr'],
+                                            color=c, alpha=0.18, zorder=1)
+
+                    if connect:
+                        ax.plot(x, y, color='black' if line_black else c, linewidth=linewidth, alpha=0.7,
+                                linestyle=line_style, label='_nolegend_')
+
+                if allow_legend:
+                    handles, labels = ax.get_legend_handles_labels()
+                    if handles and len(handles) > 0:
+                        self.place_legend(ax, handles, labels)
+            else:
+                c = palette[0]
+                x_sorted = np.sort(df_plot[x_col].unique())
+                y_means = [df_plot[df_plot[x_col] == x][value_col].mean() for x in x_sorted]
+                y_errors = [df_plot[df_plot[x_col] == x][value_col].std(ddof=1) if self.errorbar_type_var.get() == 'SD' else
+                            df_plot[df_plot[x_col] == x][value_col].std(ddof=1) / np.sqrt(len(df_plot[df_plot[x_col] == x]))
+                            for x in x_sorted]
+
+                x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
+                y_means_numeric = pd.to_numeric(y_means, errors='coerce')
+                y_errors_numeric = pd.to_numeric(y_errors, errors='coerce')
+
+                mfc = c if filled else 'none'
+                mec = c
+                ecolor = 'black' if errorbar_black else c
+
+                if show_mean_errorbars:
+                    ax.errorbar(x_sorted_numeric, y_means_numeric, yerr=y_errors_numeric, fmt=marker_symbol,
+                                color=c, markerfacecolor=mfc, markeredgecolor=mec,
+                                markersize=marker_size, linewidth=linewidth, capsize=3, ecolor=ecolor)
+                else:
+                    ax.plot(x_sorted_numeric, y_means_numeric, marker=marker_symbol,
+                            color=c, markerfacecolor=mfc, markeredgecolor=mec,
+                            markersize=marker_size, linewidth=linewidth, linestyle='None')
+
+                if draw_band:
+                    df_band = pd.DataFrame({
+                        'x': pd.to_numeric(x_sorted_numeric, errors='coerce'),
+                        'y': pd.to_numeric(y_means_numeric, errors='coerce'),
+                        'yerr': pd.to_numeric(y_errors_numeric, errors='coerce')
+                    }).dropna().sort_values('x')
+                    if not df_band.empty:
+                        ax.fill_between(df_band['x'], df_band['y'] - df_band['yerr'], df_band['y'] + df_band['yerr'],
+                                        color=c, alpha=0.18, zorder=1)
+                if connect:
+                    ax.plot(x_sorted_numeric, y_means_numeric,
+                            color='black' if line_black else c,
+                            linewidth=linewidth, alpha=0.7, linestyle=line_style)
+        else:
+            if hue_col:
+                group_names = list(df_plot[hue_col].dropna().unique())
+                palette_name = self.palette_var.get()
+                palette_full = self.custom_palettes.get(palette_name, ["#333333"])
+                if len(palette_full) < len(group_names):
+                    palette_full = (palette_full * ((len(group_names) // len(palette_full)) + 1))[:len(group_names)]
+                color_map = {name: palette_full[i] for i, name in enumerate(group_names)}
+                for name in group_names:
+                    group = df_plot[df_plot[hue_col] == name]
+                    if group.empty:
+                        continue
+                    c = color_map[name]
+                    edge = c
+                    face = c if filled else 'none'
+                    ax.scatter(group[x_col], group[value_col], marker=marker_symbol, s=marker_size**2, color=c,
+                               label=str(name) if allow_legend else '_nolegend_', edgecolors=edge, facecolors=face,
+                               linewidth=linewidth)
+                    if draw_band:
+                        x_sorted = np.sort(group[x_col].unique())
+                        min_vals = [group[group[x_col] == x][value_col].min() for x in x_sorted]
+                        max_vals = [group[group[x_col] == x][value_col].max() for x in x_sorted]
+                        x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
+                        min_vals_numeric = pd.to_numeric(min_vals, errors='coerce')
+                        max_vals_numeric = pd.to_numeric(max_vals, errors='coerce')
+                        ax.fill_between(x_sorted_numeric, min_vals_numeric, max_vals_numeric, color=c, alpha=0.18, zorder=1)
+                    if connect:
+                        x_sorted = np.sort(group[x_col].unique())
+                        means = [group[group[x_col] == x][value_col].mean() for x in x_sorted]
+                        x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
+                        means_numeric = pd.to_numeric(means, errors='coerce')
+                        ax.plot(x_sorted_numeric, means_numeric, color='black' if line_black else c,
+                                linewidth=linewidth, alpha=0.7, linestyle=line_style)
+                if allow_legend:
+                    handles, labels = ax.get_legend_handles_labels()
+                    if handles and len(handles) > 0:
+                        self.place_legend(ax, handles, labels)
+            else:
+                c = palette[0]
+                edge = c
+                face = c if filled else 'none'
+                ax.scatter(df_plot[x_col], df_plot[value_col], marker=marker_symbol, s=marker_size**2, color=c,
+                           edgecolors=edge, facecolors=face, linewidth=linewidth)
+                if draw_band:
+                    x_sorted = np.sort(df_plot[x_col].unique())
+                    min_vals = [df_plot[df_plot[x_col] == x][value_col].min() for x in x_sorted]
+                    max_vals = [df_plot[df_plot[x_col] == x][value_col].max() for x in x_sorted]
+                    x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
+                    min_vals_numeric = pd.to_numeric(min_vals, errors='coerce')
+                    max_vals_numeric = pd.to_numeric(max_vals, errors='coerce')
+                    ax.fill_between(x_sorted_numeric, min_vals_numeric, max_vals_numeric, color=c, alpha=0.18, zorder=1)
+                if connect:
+                    x_sorted = np.sort(df_plot[x_col].unique())
+                    means = [df_plot[df_plot[x_col] == x][value_col].mean() for x in x_sorted]
+                    x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
+                    means_numeric = pd.to_numeric(means, errors='coerce')
+                    ax.plot(x_sorted_numeric, means_numeric, color='black' if line_black else c,
+                            linewidth=linewidth, alpha=0.7, linestyle=line_style)
+
+    def _plot_xy_fitting(self, ax, df_plot, x_col, value_col, hue_col, palette, linewidth, update_results=True, allow_legend=True):
+        if not (hasattr(self, 'use_fitting_var') and self.use_fitting_var.get()):
+            return
+
+        try:
+            model_name = self.fitting_model_var.get()
+            model_func = self.generate_model_function(model_name)
+            model_info = self.fitting_models.get(model_name, {})
+            parameters = model_info.get("parameters", [])
+            param_names = [p[0] for p in parameters]
+            p0 = [var.get() for _, var in self.param_entries]
+
+            ci_option = self.fitting_ci_var.get()
+            if ci_option == "68% (1σ)":
+                sigma = 1.0
+            elif ci_option == "95% (2σ)":
+                sigma = 2.0
+            else:
+                sigma = 1.0
+
+            if update_results:
+                self.result_text.delete(1.0, tk.END)
+                self.result_text.insert(tk.END, f"=== {model_name} Fitting Results ===\n\n")
+
+            if hue_col and hue_col in df_plot.columns and len(df_plot[hue_col].unique()) > 1:
+                group_names = df_plot[hue_col].unique()
+                palette_name = self.palette_var.get()
+                palette_full = self.custom_palettes.get(palette_name, ["#333333"])
+                if len(palette_full) < len(group_names):
+                    palette_full = (palette_full * ((len(group_names) // len(palette_full)) + 1))[:len(group_names)]
+                color_map = {name: palette_full[i] for i, name in enumerate(group_names)}
+
+                any_fit = False
+                for group_name in group_names:
+                    group_df = df_plot[df_plot[hue_col] == group_name]
+                    x_fit = pd.to_numeric(group_df[x_col], errors='coerce')
+                    y_fit = pd.to_numeric(group_df[value_col], errors='coerce')
+                    mask = ~(np.isnan(x_fit) | np.isnan(y_fit))
+                    x_fit = x_fit[mask].values
+                    y_fit = y_fit[mask].values
+                    if len(x_fit) < len(p0) + 1:
+                        continue
+                    if len(x_fit) == 0 or model_func is None or len(p0) == 0:
+                        continue
+
+                    try:
+                        x_smooth = np.linspace(min(x_fit), max(x_fit), 1000)
+                        c = color_map.get(group_name, palette_full[0])
+                        with warnings.catch_warnings():
+                            warnings.simplefilter("ignore")
+                            popt, pcov = curve_fit(model_func, x_fit, y_fit, p0=p0)
+                            perr = np.sqrt(np.diag(pcov))
+
+                        with np.errstate(divide='ignore', invalid='ignore', over='ignore', under='ignore'):
+                            y_fit_curve = model_func(x_smooth, *popt)
+                        finite_mask = np.isfinite(x_smooth) & np.isfinite(y_fit_curve)
+                        x_smooth_plot = x_smooth[finite_mask]
+                        y_fit_curve_plot = y_fit_curve[finite_mask]
+                        if self.fitting_use_black_lines_var.get():
+                            fit_color = 'black'
+                        elif self.fitting_use_group_colors_var.get():
+                            fit_color = c
+                        else:
+                            fit_color = 'red'
+
+                        ax.plot(x_smooth_plot, y_fit_curve_plot, color=fit_color, linewidth=linewidth * 1.5,
+                                linestyle='solid', label=f'Fit: {group_name}' if allow_legend else '_nolegend_')
+
+                        if ci_option != "None":
+                            y_lower = []
+                            y_upper = []
+                            x_ci = []
+                            for x_val in x_smooth_plot:
+                                with np.errstate(divide='ignore', invalid='ignore', over='ignore', under='ignore'):
+                                    y_val = model_func(x_val, *popt)
+                                if not np.isfinite(y_val):
+                                    continue
+                                y_err = 0
+                                for i, param in enumerate(popt):
+                                    delta = param * 0.001 if param != 0 else 0.001
+                                    params_plus = popt.copy()
+                                    params_plus[i] += delta
+                                    with np.errstate(divide='ignore', invalid='ignore', over='ignore', under='ignore'):
+                                        y_plus = model_func(x_val, *params_plus)
+                                    if not np.isfinite(y_plus):
+                                        continue
+                                    partial_deriv = (y_plus - y_val) / delta
+                                    y_err += (partial_deriv * perr[i]) ** 2
+                                y_err = np.sqrt(y_err) * sigma
+                                if not np.isfinite(y_err):
+                                    continue
+                                x_ci.append(x_val)
+                                y_lower.append(y_val - y_err)
+                                y_upper.append(y_val + y_err)
+
+                            if self.fitting_use_black_bands_var.get():
+                                band_color = 'black'
+                            else:
+                                band_color = fit_color
+                            if len(x_ci) > 1:
+                                ax.fill_between(x_ci, y_lower, y_upper, alpha=0.2, color=band_color,
+                                            label=f'{group_name} {ci_option} CI' if allow_legend else '_nolegend_')
+
+                        y_pred = model_func(x_fit, *popt)
+                        ss_res = np.sum((y_fit - y_pred) ** 2)
+                        ss_tot = np.sum((y_fit - np.mean(y_fit)) ** 2)
+                        r_squared = 1 - (ss_res / ss_tot)
+
+                        if update_results:
+                            self.result_text.insert(tk.END, f"Group: {group_name}\n")
+                            for i, param_name in enumerate(param_names):
+                                if i < len(popt):
+                                    self.result_text.insert(tk.END, f"  {param_name} = {popt[i]:.6f} ± {perr[i]:.6f}\n")
+                            self.result_text.insert(tk.END, f"  R² = {r_squared:.6f}\n\n")
+                            equation = model_info.get("formula", "")
+                            for line in equation.split('\n'):
+                                if line.strip().startswith('y ='):
+                                    eq = line.strip()
+                                    for i, param_name in enumerate(param_names):
+                                        if i < len(popt):
+                                            eq = eq.replace(param_name, f"{popt[i]:.4f}")
+                                    self.result_text.insert(tk.END, f"  {eq}\n")
+                            self.result_text.insert(tk.END, "\n")
+
+                        any_fit = True
+                    except Exception as e:
+                        if update_results:
+                            self.result_text.insert(tk.END, f"Group: {group_name} - Fitting failed: {str(e)}\n\n")
+
+                if update_results and not any_fit:
+                    self.result_text.insert(tk.END, "No groups could be successfully fitted.\n")
+                    self.result_text.insert(tk.END, "Check that your data has enough points per group and try different initial parameters.")
+
+                if allow_legend:
+                    handles, labels = ax.get_legend_handles_labels()
+                    if handles and len(handles) > 0:
+                        self.place_legend(ax, handles, labels)
+
+            else:
+                x_fit = pd.to_numeric(df_plot[x_col], errors='coerce')
+                y_fit = pd.to_numeric(df_plot[value_col], errors='coerce')
+                mask = ~(np.isnan(x_fit) | np.isnan(y_fit))
+                x_fit = x_fit[mask].values
+                y_fit = y_fit[mask].values
+                if len(x_fit) == 0 or model_func is None or len(p0) == 0:
+                    return
+
+                x_smooth = np.linspace(min(x_fit), max(x_fit), 1000)
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    popt, pcov = curve_fit(model_func, x_fit, y_fit, p0=p0)
+                    perr = np.sqrt(np.diag(pcov))
+
+                with np.errstate(divide='ignore', invalid='ignore', over='ignore', under='ignore'):
+                    y_fit_curve = model_func(x_smooth, *popt)
+                finite_mask = np.isfinite(x_smooth) & np.isfinite(y_fit_curve)
+                x_smooth_plot = x_smooth[finite_mask]
+                y_fit_curve_plot = y_fit_curve[finite_mask]
+                if self.fitting_use_black_lines_var.get():
+                    fit_color = 'black'
+                elif self.fitting_use_group_colors_var.get():
+                    fit_color = palette[0] if palette else 'black'
+                else:
+                    fit_color = 'red'
+
+                ax.plot(x_smooth_plot, y_fit_curve_plot, color=fit_color, linewidth=linewidth * 1.5,
+                        linestyle='solid', label=f'Fit: {model_name}' if allow_legend else '_nolegend_')
+
+                if ci_option != "None":
+                    y_lower = []
+                    y_upper = []
+                    x_ci = []
+                    for x_val in x_smooth_plot:
+                        with np.errstate(divide='ignore', invalid='ignore', over='ignore', under='ignore'):
+                            y_val = model_func(x_val, *popt)
+                        if not np.isfinite(y_val):
+                            continue
+                        y_err = 0
+                        for i, param in enumerate(popt):
+                            delta = param * 0.001 if param != 0 else 0.001
+                            params_plus = popt.copy()
+                            params_plus[i] += delta
+                            with np.errstate(divide='ignore', invalid='ignore', over='ignore', under='ignore'):
+                                y_plus = model_func(x_val, *params_plus)
+                            if not np.isfinite(y_plus):
+                                continue
+                            partial_deriv = (y_plus - y_val) / delta
+                            y_err += (partial_deriv * perr[i]) ** 2
+                        y_err = np.sqrt(y_err) * sigma
+                        if not np.isfinite(y_err):
+                            continue
+                        x_ci.append(x_val)
+                        y_lower.append(y_val - y_err)
+                        y_upper.append(y_val + y_err)
+
+                    if self.fitting_use_black_bands_var.get():
+                        band_color = 'black'
+                    else:
+                        band_color = fit_color
+                    if len(x_ci) > 1:
+                        ax.fill_between(x_ci, y_lower, y_upper, alpha=0.2, color=band_color,
+                                    label=f'{ci_option} Confidence' if allow_legend else '_nolegend_')
+
+                if update_results:
+                    for i, param_name in enumerate(param_names):
+                        if i < len(popt):
+                            self.result_text.insert(tk.END, f"{param_name} = {popt[i]:.6f} ± {perr[i]:.6f}\n")
+                    y_pred = model_func(x_fit, *popt)
+                    ss_res = np.sum((y_fit - y_pred) ** 2)
+                    ss_tot = np.sum((y_fit - np.mean(y_fit)) ** 2)
+                    r_squared = 1 - (ss_res / ss_tot)
+                    self.result_text.insert(tk.END, f"\nR² = {r_squared:.6f}\n")
+                    self.result_text.insert(tk.END, f"\nFitted equation:\n")
+                    equation = model_info.get("formula", "")
+                    for line in equation.split('\n'):
+                        if line.strip().startswith('y ='):
+                            eq = line.strip()
+                            for i, param_name in enumerate(param_names):
+                                if i < len(popt):
+                                    eq = eq.replace(param_name, f"{popt[i]:.4f}")
+                            self.result_text.insert(tk.END, f"{eq}\n")
+
+                if allow_legend:
+                    handles, labels = ax.get_legend_handles_labels()
+                    if handles and len(handles) > 0:
+                        self.place_legend(ax, handles, labels)
+
+        except Exception as e:
+            if update_results:
+                self.result_text.delete(1.0, tk.END)
+                self.result_text.insert(tk.END, f"Error in model fitting: {str(e)}\n")
+                self.result_text.insert(tk.END, "Make sure you've selected numeric data columns for XY plotting.")
         
     def _add_significance_legend(self, details_text):
         """Add the significance level legend to the details panel"""
@@ -2103,9 +2902,9 @@ class ExPlotApp:
         
         # Create a frame for the palette preview
         palette_preview_frame = ttk.Frame(colors_tab)
-        palette_preview_frame.grid(row=5, column=0, sticky="w", padx=10, pady=5)
-        self.settings_palette_preview = tk.Canvas(palette_preview_frame, width=120, height=20, highlightthickness=1, bg='white')
-        self.settings_palette_preview.pack()
+        palette_preview_frame.grid(row=5, column=0, sticky="ew", padx=10, pady=5)
+        self.settings_palette_preview = tk.Canvas(palette_preview_frame, height=20, highlightthickness=1, bg='white')
+        self.settings_palette_preview.pack(fill='x')
         
         # Function to update palette preview
         def update_settings_palette_preview(event=None):
@@ -2113,8 +2912,8 @@ class ExPlotApp:
             name = self.settings_palette_var.get()
             colors = self.custom_palettes.get(name, [])
             if colors:
-                for i, hexcode in enumerate(colors[:8]):
-                    x0 = 10 + i*14
+                for i, hexcode in enumerate(colors):
+                    x0 = 5 + i*14
                     x1 = x0 + 12
                     self.settings_palette_preview.create_rectangle(x0, 2, x1, 18, fill=hexcode, outline='black')
             else:
@@ -5156,6 +5955,65 @@ class ExPlotApp:
                                           values=["10", "2"], state="disabled", width=5)
         self.ylog_base_dropdown.grid(row=2, column=3, sticky="w", pady=2)
 
+        if not hasattr(self, 'custom_x_marks_var'):
+            self.custom_x_marks_var = tk.StringVar(value="")
+        if not hasattr(self, 'custom_y_marks_var'):
+            self.custom_y_marks_var = tk.StringVar(value="")
+
+        custom_row = ttk.Frame(frame)
+        custom_row.pack(fill='x', padx=4, pady=(6, 1))
+        ttk.Label(custom_row, text="Custom marks:", width=14, anchor='w').pack(side='left')
+        ttk.Button(custom_row, text="Edit…", command=self.open_custom_marks_editor, width=10).pack(side='left')
+        
+        # --- Y-Axis Break settings ---
+        ybreak_grp = ttk.LabelFrame(frame, text="Y-Axis Break", padding=4)
+        ybreak_grp.pack(fill='x', padx=4, pady=4)
+        
+        # Enable axis break checkbox
+        self.yaxis_break_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(ybreak_grp, text="Enable Y-axis break", variable=self.yaxis_break_var,
+                       command=self.update_ybreak_options).pack(anchor="w", pady=2)
+        
+        # Break range settings with grid layout
+        ybreak_grid = tk.Frame(ybreak_grp)
+        ybreak_grid.pack(fill='x', padx=2, pady=1)
+        
+        tk.Label(ybreak_grid, text="Break from:", width=12, anchor="w").grid(row=0, column=0, sticky="w", pady=2)
+        self.ybreak_min_entry = ttk.Entry(ybreak_grid, width=10, state="disabled")
+        self.ybreak_min_entry.grid(row=0, column=1, sticky="w", pady=2)
+        tk.Label(ybreak_grid, text="to:", width=4, anchor="w").grid(row=0, column=2, sticky="w", padx=(10,0), pady=2)
+        self.ybreak_max_entry = ttk.Entry(ybreak_grid, width=10, state="disabled")
+        self.ybreak_max_entry.grid(row=0, column=3, sticky="w", pady=2)
+        
+        # Height ratio for upper/lower sections
+        tk.Label(ybreak_grid, text="Upper ratio:", width=12, anchor="w").grid(row=1, column=0, sticky="w", pady=2)
+        self.ybreak_ratio_var = tk.DoubleVar(value=0.5)
+        self.ybreak_ratio_entry = ttk.Entry(ybreak_grid, width=10, state="disabled")
+        self.ybreak_ratio_entry.grid(row=1, column=1, sticky="w", pady=2)
+        self.ybreak_ratio_entry.insert(0, "0.5")
+        tk.Label(ybreak_grid, text="(0.1-0.9)", width=10, anchor="w").grid(row=1, column=2, columnspan=2, sticky="w", padx=(10,0), pady=2)
+
+        tk.Label(ybreak_grid, text="Gap:", width=12, anchor="w").grid(row=2, column=0, sticky="w", pady=2)
+        self.ybreak_gap_entry = ttk.Entry(ybreak_grid, width=10, state="disabled")
+        self.ybreak_gap_entry.grid(row=2, column=1, sticky="w", pady=2)
+        self.ybreak_gap_entry.insert(0, "0.05")
+        tk.Label(ybreak_grid, text="(0-0.3)", width=10, anchor="w").grid(row=2, column=2, columnspan=2, sticky="w", padx=(10,0), pady=2)
+
+    def update_ybreak_options(self):
+        """Enable or disable Y-axis break options based on checkbox state"""
+        if self.yaxis_break_var.get():
+            self.ybreak_min_entry.config(state="normal")
+            self.ybreak_max_entry.config(state="normal")
+            self.ybreak_ratio_entry.config(state="normal")
+            if hasattr(self, 'ybreak_gap_entry'):
+                self.ybreak_gap_entry.config(state="normal")
+        else:
+            self.ybreak_min_entry.config(state="disabled")
+            self.ybreak_max_entry.config(state="disabled")
+            self.ybreak_ratio_entry.config(state="disabled")
+            if hasattr(self, 'ybreak_gap_entry'):
+                self.ybreak_gap_entry.config(state="disabled")
+
     def update_xlog_options(self):
         """Enable or disable X-axis log options based on checkbox state"""
         if self.xlogscale_var.get():
@@ -5180,10 +6038,10 @@ class ExPlotApp:
         # Set up a function to handle enabling/disabling fitting
         def toggle_fitting():
             if self.use_fitting_var.get():
-                print("[DEBUG] Fitting enabled, setting plot type to XY")
+                self.debug("Fitting enabled, setting plot type to XY")
                 self.plot_kind_var.set("xy")
             else:
-                print("[DEBUG] Fitting disabled")
+                self.debug("Fitting disabled")
 
         self.use_fitting_cb = ttk.Checkbutton(fit_enable_frame, text="Enable Model Fitting", 
                                              variable=self.use_fitting_var, 
@@ -5421,7 +6279,9 @@ class ExPlotApp:
                 'x_log': self.xlogscale_var.get() if hasattr(self, 'xlogscale_var') else False,
                 'y_log': self.logscale_var.get() if hasattr(self, 'logscale_var') else False,
                 'x_log_base': self.xlog_base_var.get() if hasattr(self, 'xlog_base_var') else '10',
-                'y_log_base': self.ylog_base_var.get() if hasattr(self, 'ylog_base_var') else '10'
+                'y_log_base': self.ylog_base_var.get() if hasattr(self, 'ylog_base_var') else '10',
+                'custom_x_marks': self.custom_x_marks_var.get() if hasattr(self, 'custom_x_marks_var') else '',
+                'custom_y_marks': self.custom_y_marks_var.get() if hasattr(self, 'custom_y_marks_var') else ''
             },
             'statistics': {
                 'use_stats': self.use_stats_var.get() if hasattr(self, 'use_stats_var') else False,
@@ -5595,6 +6455,10 @@ class ExPlotApp:
                     self.xlog_base_var.set(axis['x_log_base'])
                 if 'y_log_base' in axis and hasattr(self, 'ylog_base_var'):
                     self.ylog_base_var.set(axis['y_log_base'])
+                if 'custom_x_marks' in axis and hasattr(self, 'custom_x_marks_var'):
+                    self.custom_x_marks_var.set(axis['custom_x_marks'])
+                if 'custom_y_marks' in axis and hasattr(self, 'custom_y_marks_var'):
+                    self.custom_y_marks_var.set(axis['custom_y_marks'])
             
             # Statistics settings
             if 'statistics' in settings:
@@ -6114,14 +6978,14 @@ class ExPlotApp:
         self.palette_dropdown = ttk.Combobox(palette_grp, textvariable=self.palette_var, values=list(self.custom_palettes.keys()))
         self.palette_dropdown.pack(fill='x', pady=2)
         # Add preview canvas for palette
-        self.palette_preview = tk.Canvas(palette_grp, width=120, height=20, highlightthickness=0, bg='white')
-        self.palette_preview.pack(pady=(0, 8))
+        self.palette_preview = tk.Canvas(palette_grp, height=20, highlightthickness=0, bg='white')
+        self.palette_preview.pack(fill='x', pady=(0, 8))
         def update_palette_preview(event=None):
             self.palette_preview.delete('all')
             name = self.palette_var.get()
             colors = self.custom_palettes.get(name, [])
-            for i, hexcode in enumerate(colors[:8]):
-                x0 = 10 + i*14
+            for i, hexcode in enumerate(colors):
+                x0 = 5 + i*14
                 x1 = x0 + 12
                 self.palette_preview.create_rectangle(x0, 2, x1, 18, fill=hexcode, outline='black')
         self.palette_dropdown.bind('<<ComboboxSelected>>', update_palette_preview)
@@ -7104,6 +7968,13 @@ class ExPlotApp:
         If 'Use statistics' is enabled, statistics will be calculated and annotated on the plot
         based on the 'Show statistical annotations on plot' setting.
         """
+        try:
+            if hasattr(self, 'fig') and self.fig is not None:
+                plt.close(self.fig)
+                self.fig = None
+        except Exception:
+            pass
+
         # Robustly initialize show_errorbars at the very top
         show_errorbars = getattr(self, 'show_errorbars_var', None)
         if show_errorbars is not None:
@@ -7115,7 +7986,6 @@ class ExPlotApp:
         if hasattr(self, 'use_fitting_var') and self.use_fitting_var.get():
             current_plot_kind = self.plot_kind_var.get()
             if current_plot_kind != "xy":
-                print(f"[DEBUG] Forcing plot type to XY since fitting is enabled (was {current_plot_kind})")
                 self.plot_kind_var.set("xy")
 
         # Clear any existing statistics when generating a new plot
@@ -7146,7 +8016,9 @@ class ExPlotApp:
         n_rows = 1  # No longer supporting split Y-axis
 
         # Get plot type early for margin calculations
-        plot_kind = self.plot_kind_var.get()  # "bar", "box", or "xy"
+        plot_kind = self.plot_kind_var.get()  # "bar", "box", "violin", or "xy"
+
+        swap_axes_enabled = self.swap_axes_var.get() if plot_kind in ["bar", "box", "violin"] else False
         
         # Store the original X column for reference
         original_x_col = x_col
@@ -7154,66 +8026,58 @@ class ExPlotApp:
             original_x_col = self.xaxis_var.get()
             
         # Handle categorical vs numeric X values
-        # Always treat X as categories for bar and box plots, numerical for xy plots
-        if plot_kind in ["bar", "box", "violin"]:
-            # For bar and box plots with categorical X, create a mapping of values to categories
-            # Get unique values and filter out NaN/None values
+        # For non-swapped categorical plots, create a numeric mapping for consistent spacing.
+        # For swapped plots, keep categories as strings (seaborn expects categorical y; numeric y breaks badly).
+        if plot_kind in ["bar", "box", "violin"] and not swap_axes_enabled:
             unique_vals = df_work[x_col].unique()
-            # Filter out NaN values (pd.isna handles both np.nan and None)
             unique_vals = [val for val in unique_vals if not pd.isna(val)]
-            
-            # Use xaxis_order if available, otherwise sort
+
             if self.xaxis_order:
-                # Filter out any xaxis_order values that don't exist in the data
                 x_values = [val for val in self.xaxis_order if val in unique_vals]
-                # Add any values that might be in the data but not in xaxis_order
                 x_values.extend([val for val in unique_vals if val not in self.xaxis_order])
             else:
-                # Sort using string conversion for consistent handling of mixed types
                 x_values = sorted(unique_vals, key=lambda x: str(x))
-                
-            # Create the categorical mapping
+
             self.x_categorical_map = {val: i for i, val in enumerate(x_values)}
-            # Reverse mapping from indices to original labels (for tick labels)
             self.x_categorical_reverse_map = {i: val for val, i in self.x_categorical_map.items()}
-            # Create a temporary column for plotting
             df_work['_x_plot'] = df_work[x_col].map(self.x_categorical_map)
-            # Use the temporary column for plotting
             x_col = '_x_plot'
-            
-            # Replace the original dataframe with our working copy
+            self.df = df_work
+        else:
+            if hasattr(self, 'x_categorical_map'):
+                try:
+                    delattr(self, 'x_categorical_map')
+                except Exception:
+                    pass
+            if hasattr(self, 'x_categorical_reverse_map'):
+                try:
+                    delattr(self, 'x_categorical_reverse_map')
+                except Exception:
+                    pass
+            if '_x_plot' in df_work.columns:
+                try:
+                    df_work = df_work.drop('_x_plot', axis=1)
+                except Exception:
+                    pass
+            if plot_kind in ["bar", "box", "violin"] and swap_axes_enabled and self.xaxis_order:
+                try:
+                    df_work[x_col] = pd.Categorical(df_work[x_col], categories=self.xaxis_order, ordered=True)
+                except Exception:
+                    pass
             self.df = df_work
         
         # Scale margins based on plot size - smaller plots need relatively larger margins
         plot_height_val = self.plot_height_var.get()  # User-specified plot height
         
-        # Base margins with size-dependent scaling
+        # Base margins - keep these modest, tight_layout handles the rest for export
         left_margin = 1.0
         right_margin = 0.5
+        top_margin = 0.8  # Base top margin
+        bottom_margin = 1.5  # Bottom margin for rotated x-tick labels and axis title
         
-        # Scale top margin inversely with plot height (smaller plots need relatively larger margins)
-        top_margin = 1.5  # Base margin for legend
-        if plot_height_val < 3.0:  # For smaller plots
-            size_factor = max(1.0, 3.0 / plot_height_val)  # Scaling factor increases as plot height decreases
-            top_margin *= size_factor  # Scale the top margin based on plot size
-        
-        # Add extra top margin for complex plot types
-        if plot_kind == "xy":  # XY plots have legends and potential fit lines
-            # XY plots with fitting need substantial extra space for legends
-            if self.use_fitting_var.get():
-                top_margin += min(2.0, 2.5 / plot_height_val)  # Proportionally more space for smaller plots
-            else:
-                top_margin += 0.5  # Standard XY plots need some extra room too
-        
-        # Add a little extra top margin for plots with a group column that might later get statistics
-        if group_col:
-            # Scale based on plot size - smaller plots need relatively more space for annotations
-            stat_margin = 0.5
-            if plot_height_val < 2.0:
-                stat_margin = 1.0  # Double the margin for very small plots
-            top_margin += stat_margin
-            
-        bottom_margin = 1.0 + fontsize * 0.1
+        # Add modest extra margin for statistics annotations if using statistics
+        if group_col and self.use_stats_var.get():
+            top_margin += 0.4
 
         fig_width = plot_width + left_margin + right_margin
         fig_height = plot_height * n_rows + top_margin + bottom_margin
@@ -7233,6 +8097,13 @@ class ExPlotApp:
         legend_position = self.legend_position_var.get()
         legend_ncol = self.legend_ncol_var.get()
         
+        # Add extra figure space for outside legend positions
+        if legend_visible:
+            if legend_position == "outside right":
+                fig_width += 2.0  # Extra width for legend on the right
+            elif legend_position == "outside top":
+                fig_height += 1.0  # Extra height for legend on top
+        
         # Define a utility function for consistent legend placement with user settings
         def place_legend(ax, handles, labels, draggable=True):
             """Place legend based on user settings and make it draggable."""
@@ -7241,7 +8112,13 @@ class ExPlotApp:
                 return None
             
             # Determine number of columns (0 = auto)
-            ncol = legend_ncol if legend_ncol > 0 else self.optimize_legend_layout(ax, handles, labels, fontsize=fontsize)
+            if legend_ncol > 0:
+                ncol = legend_ncol
+            elif legend_position == "outside right":
+                # For outside right, default to 1 column (vertical layout) for better fit
+                ncol = 1
+            else:
+                ncol = self.optimize_legend_layout(ax, handles, labels, fontsize=fontsize)
             
             # Map position string to matplotlib loc and bbox_to_anchor
             if legend_position == "outside right":
@@ -7290,19 +8167,137 @@ class ExPlotApp:
         # 100% = 100 DPI, 175% = 175 DPI, etc.
         preview_dpi = self.preview_dpi.get()
         
-        # Create figure at ORIGINAL size (controls layout) with preview DPI (controls pixels)
-        self.fig, axes = plt.subplots(n_rows, 1, figsize=(fig_width, fig_height), dpi=preview_dpi, squeeze=False)
-        axes = axes.flatten()
+        # Check if Y-axis break is enabled
+        use_yaxis_break = self.yaxis_break_var.get() if hasattr(self, 'yaxis_break_var') else False
+        ybreak_min = None
+        ybreak_max = None
+        ybreak_ratio = None
+        ybreak_gap = None
+
+        if swap_axes_enabled and use_yaxis_break:
+            use_yaxis_break = False
+            try:
+                messagebox.showwarning("Y-axis break disabled", "Y-axis break is not supported when 'Swap X and Y axes' is enabled. Disable swap to use Y-axis break.")
+            except Exception:
+                pass
+        
+        self.debug(f"Y-axis break checkbox: {use_yaxis_break}")
+        
+        if use_yaxis_break:
+            try:
+                ybreak_min_str = self.ybreak_min_entry.get().strip()
+                ybreak_max_str = self.ybreak_max_entry.get().strip()
+                ybreak_ratio_str = self.ybreak_ratio_entry.get().strip()
+                ybreak_gap_str = self.ybreak_gap_entry.get().strip() if hasattr(self, 'ybreak_gap_entry') else ''
+                self.debug(f"Break values from UI: min='{ybreak_min_str}', max='{ybreak_max_str}', ratio='{ybreak_ratio_str}', gap='{ybreak_gap_str}'")
+                
+                if not ybreak_min_str or not ybreak_max_str:
+                    raise ValueError("Break from/to values are required")
+                
+                ybreak_min = float(ybreak_min_str)
+                ybreak_max = float(ybreak_max_str)
+                
+                # Handle ratio
+                if ybreak_ratio_str:
+                    # Handle case where user enters a range like "0.2-0.8" - take first number
+                    if '-' in ybreak_ratio_str and not ybreak_ratio_str.startswith('-'):
+                        ybreak_ratio_str = ybreak_ratio_str.split('-')[0]
+                    ybreak_ratio = float(ybreak_ratio_str)
+                    ybreak_ratio = max(0.1, min(0.9, ybreak_ratio))  # Clamp to valid range
+
+                if ybreak_gap_str:
+                    if '-' in ybreak_gap_str and not ybreak_gap_str.startswith('-'):
+                        ybreak_gap_str = ybreak_gap_str.split('-')[0]
+                    ybreak_gap = float(ybreak_gap_str)
+                    ybreak_gap = max(0.0, min(0.3, ybreak_gap))
+                
+                
+                if ybreak_min >= ybreak_max:
+                    use_yaxis_break = False
+                    print("Warning: Break min must be less than break max. Axis break disabled.")
+            except (ValueError, AttributeError) as e:
+                use_yaxis_break = False
+                print(f"Warning: Invalid axis break values (min='{ybreak_min_str}', max='{ybreak_max_str}', ratio='{ybreak_ratio_str}'): {e}. Axis break disabled.")
+        
+        # Create figure - with or without axis break
+        if use_yaxis_break and n_rows == 1:
+            # Calculate height ratios from DATA RANGES before creating figure
+            # This ensures consistent figure sizing
+            try:
+                # Get user-specified y-limits if any
+                user_ymin = float(self.ymin_entry.get()) if self.ymin_entry.get().strip() else 0
+                user_ymax = float(self.ymax_entry.get()) if self.ymax_entry.get().strip() else None
+            except ValueError:
+                user_ymin = 0
+                user_ymax = None
+            
+            # Calculate data max from dataframe using value_cols (already defined above)
+            data_max = max(self.df[col].max() for col in value_cols) * 1.05
+            upper_ymax = user_ymax if user_ymax is not None else data_max
+            
+            # Calculate height ratios based on actual data ranges
+            lower_range = ybreak_min - user_ymin  # e.g., 50 - 0 = 50
+            upper_range = upper_ymax - ybreak_max  # e.g., 200 - 70 = 130
+            total_range = lower_range + upper_range
+            
+            if total_range > 0:
+                calc_lower_ratio = lower_range / total_range
+                calc_upper_ratio = upper_range / total_range
+            else:
+                calc_lower_ratio = 0.5
+                calc_upper_ratio = 0.5
+            
+            
+            # First create a reference 1-subplot figure to get its default margins
+            ref_fig, ref_ax = plt.subplots(1, 1, figsize=(fig_width, fig_height), dpi=preview_dpi)
+            ref_params = ref_fig.subplotpars
+            ref_left, ref_right = ref_params.left, ref_params.right
+            ref_bottom, ref_top = ref_params.bottom, ref_params.top
+
+            # Store the exact axes position of the reference plot.
+            # We'll reuse this bbox for the broken-axis layout so the graph area matches exactly.
+            self._ybreak_ref_ax_pos = ref_ax.get_position().frozen()
+            plt.close(ref_fig)
+            
+            # Create 2-subplot figure with SAME margins as 1-subplot figure
+            self.ybreak_ratio = ybreak_ratio
+            if ybreak_ratio is not None:
+                height_ratios = [ybreak_ratio, 1.0 - ybreak_ratio]
+            else:
+                height_ratios = [calc_upper_ratio, calc_lower_ratio]
+            self.fig, (ax_upper, ax_lower) = plt.subplots(
+                2, 1, figsize=(fig_width, fig_height), dpi=preview_dpi,
+                gridspec_kw={'height_ratios': height_ratios, 'hspace': 0,
+                            'left': ref_left, 'right': ref_right, 'bottom': ref_bottom, 'top': ref_top},
+                sharex=True
+            )
+            axes = [ax_lower]  # Use lower axis as the "main" axis for compatibility
+            self.ax_upper = ax_upper
+            self.ax_lower = ax_lower
+            self.ybreak_enabled = True
+            self.ybreak_min = ybreak_min
+            self.ybreak_max = ybreak_max
+            self.ybreak_gap = ybreak_gap
+        else:
+            # Standard figure creation
+            self.fig, axes = plt.subplots(n_rows, 1, figsize=(fig_width, fig_height), dpi=preview_dpi, squeeze=False)
+            axes = axes.flatten()
+            self.ybreak_enabled = False
+            self.ax_upper = None
+            self.ax_lower = None
+            self.ybreak_gap = None
 
         show_frame = self.show_frame_var.get()
         show_hgrid = self.show_hgrid_var.get()
         show_vgrid = self.show_vgrid_var.get()
         # Only apply swap_axes to supported plot types (bar, box, violin)
         plot_kind = self.plot_kind_var.get()  # "bar", "box", "violin", or "xy"
-        swap_axes = self.swap_axes_var.get() if plot_kind in ["bar", "box", "violin"] else False
+        swap_axes = swap_axes_enabled
         strip_black = self.strip_black_var.get()
         show_stripplot = self.show_stripplot_var.get()
         errorbar_black = self.errorbar_black_var.get()
+
+        disable_plot_stat_annotations = False
 
         # Default initialization of show_mean
         show_mean = False
@@ -7462,12 +8457,9 @@ class ExPlotApp:
                                 ecolor = 'black' if errorbar_black else c
                                 mfc = c if filled else 'none'
                                 mec = c
-                                # Draw errorbars only if requested
                                 if show_mean_errorbars:
                                     ax.errorbar(x, y, yerr=yerr, fmt=marker_symbol, color=c, markerfacecolor=mfc, markeredgecolor=mec, markersize=marker_size, linewidth=linewidth, capsize=3, ecolor=ecolor, label=str(name))
-                                # Always plot the mean points
                                 ax.plot(x, y, marker=marker_symbol, color=c, markerfacecolor=mfc, markeredgecolor=mec, markersize=marker_size, linewidth=linewidth, linestyle='None', label=None if show_mean_errorbars else str(name))
-                                # Always draw error bands if requested (independent of errorbars)
                                 if draw_band:
                                     df_band = pd.DataFrame({
                                         'x': pd.to_numeric(x, errors='coerce'),
@@ -7737,305 +8729,6 @@ class ExPlotApp:
                             y_means_numeric = pd.to_numeric(y_means, errors='coerce')
                             ax.plot(x_sorted_numeric, y_means_numeric, color='black' if line_black else c, linewidth=linewidth, alpha=0.7, linestyle=line_style)
                         
-                    # Apply model fitting if enabled for XY plots - dedicated block to handle fitting
-                    if plot_kind == "xy" and self.use_fitting_var.get():
-                        print(f"\n[DEBUG] XY Plot fitting should be enabled")
-                        print(f"[DEBUG] plot_kind: {plot_kind}")
-                        print(f"[DEBUG] use_fitting_var: {self.use_fitting_var.get()}")
-                        print(f"[DEBUG] x_col: {x_col}, value_col: {value_col}, hue_col: {hue_col}")
-                        print(f"[DEBUG] model: {self.fitting_model_var.get()}")
-                        
-                        try:
-                            # Get selected model information first - this is common for all fits
-                            model_name = self.fitting_model_var.get()
-                            print(f"[DEBUG] Selected model: {model_name}")
-                            model_func = self.generate_model_function(model_name)
-                            model_info = self.fitting_models.get(model_name, {})
-                            parameters = model_info.get("parameters", [])
-                            param_names = [p[0] for p in parameters]
-                            print(f"[DEBUG] Parameters: {param_names}")
-                            
-                            # Get starting parameter values from UI
-                            p0 = [var.get() for _, var in self.param_entries]
-                            print(f"[DEBUG] Starting parameters: {p0}")
-                            
-                            # Get the confidence interval setting
-                            ci_option = self.fitting_ci_var.get()
-                            if ci_option == "68% (1σ)":
-                                sigma = 1.0
-                            elif ci_option == "95% (2σ)":
-                                sigma = 2.0
-                            
-                            # Clear the results text box initially
-                            self.result_text.delete(1.0, tk.END)
-                            self.result_text.insert(tk.END, f"=== {model_name} Fitting Results ===\n\n")
-                            
-                            # Process the data differently based on whether we have groups (hue_col)
-                            if hue_col and len(df_plot[hue_col].unique()) > 1:
-                                print(f"[DEBUG] Performing separate fits for {len(df_plot[hue_col].unique())} groups")
-                                group_names = df_plot[hue_col].unique()
-                                
-                                # Get color mapping for the groups
-                                palette_name = self.palette_var.get()
-                                palette_full = self.custom_palettes.get(palette_name, ["#333333"])
-                                if len(palette_full) < len(group_names):
-                                    palette_full = (palette_full * ((len(group_names) // len(palette_full)) + 1))[:len(group_names)]
-                                color_map = {name: palette_full[i] for i, name in enumerate(group_names)}
-                                
-                                # Keep track of all fit parameters for each group
-                                all_fit_results = {}
-                                
-                                # Fit each group separately
-                                for group_idx, group_name in enumerate(group_names):
-                                    group_df = df_plot[df_plot[hue_col] == group_name]
-                                    print(f"[DEBUG] Fitting group: {group_name} with {len(group_df)} points")
-                                    
-                                    # Get numeric data for this group
-                                    x_fit = pd.to_numeric(group_df[x_col], errors='coerce')
-                                    y_fit = pd.to_numeric(group_df[value_col], errors='coerce')
-                                    
-                                    # Drop NaN values
-                                    mask = ~(np.isnan(x_fit) | np.isnan(y_fit))
-                                    x_fit = x_fit[mask].values
-                                    y_fit = y_fit[mask].values
-                                    
-                                    if len(x_fit) < len(p0) + 1:
-                                        print(f"[DEBUG] Skipping group {group_name}: not enough data points for fitting ({len(x_fit)} points)")
-                                        continue
-                                    
-                                    if len(x_fit) > 0 and model_func is not None and len(p0) > 0:
-                                        try:
-                                            # Create smooth x values for this group's range
-                                            x_smooth = np.linspace(min(x_fit), max(x_fit), 1000)
-                                            
-                                            # Get the color for this group
-                                            c = color_map.get(group_name, palette_full[0])
-                                            
-                                            # Perform the fit with warnings suppressed
-                                            with warnings.catch_warnings():
-                                                warnings.simplefilter("ignore")
-                                                popt, pcov = curve_fit(model_func, x_fit, y_fit, p0=p0)
-                                                perr = np.sqrt(np.diag(pcov))
-                                            
-                                            # Store results for this group
-                                            all_fit_results[group_name] = {
-                                                'popt': popt,
-                                                'perr': perr,
-                                                'x_smooth': x_smooth,
-                                                'color': c
-                                            }
-                                            
-                                            # Calculate fitted curve
-                                            y_fit_curve = model_func(x_smooth, *popt)
-                                            
-                                            # Plot the fitted curve with color based on user settings
-                                            if self.fitting_use_black_lines_var.get():
-                                                # Use black for all fitted curves
-                                                fit_color = 'black'
-                                            elif self.fitting_use_group_colors_var.get():
-                                                # Use the same color as the group data points
-                                                fit_color = c
-                                            else:
-                                                # Default to red if neither option is selected
-                                                fit_color = 'red'
-                                                
-                                            ax.plot(x_smooth, y_fit_curve, color=fit_color, linewidth=linewidth*1.5, 
-                                                    linestyle='solid', label=f'Fit: {group_name}')
-                                            
-                                            # Calculate and plot confidence intervals if requested
-                                            if ci_option != "None":
-                                                y_lower = []
-                                                y_upper = []
-                                                
-                                                # Calculate prediction uncertainty for each x value
-                                                for x_val in x_smooth:
-                                                    y_val = model_func(x_val, *popt)
-                                                    y_err = 0
-                                                    
-                                                    # Calculate error propagation
-                                                    for i, param in enumerate(popt):
-                                                        delta = param * 0.001 if param != 0 else 0.001
-                                                        params_plus = popt.copy()
-                                                        params_plus[i] += delta
-                                                        y_plus = model_func(x_val, *params_plus)
-                                                        partial_deriv = (y_plus - y_val) / delta
-                                                        y_err += (partial_deriv * perr[i])**2
-                                                    
-                                                    y_err = np.sqrt(y_err) * sigma
-                                                    y_lower.append(y_val - y_err)
-                                                    y_upper.append(y_val + y_err)
-                                                
-                                                # Determine color for the confidence interval band
-                                                if self.fitting_use_black_bands_var.get():
-                                                    # Use black for confidence intervals
-                                                    band_color = 'black'
-                                                else:
-                                                    # Otherwise use the same color as the fit line
-                                                    band_color = fit_color
-                                                    
-                                                # Plot confidence interval
-                                                ax.fill_between(x_smooth, y_lower, y_upper, alpha=0.2, color=band_color,
-                                                              label=f'{group_name} {ci_option} CI')
-                                            
-                                            # Calculate R² for this group
-                                            y_pred = model_func(x_fit, *popt)
-                                            ss_res = np.sum((y_fit - y_pred)**2)
-                                            ss_tot = np.sum((y_fit - np.mean(y_fit))**2)
-                                            r_squared = 1 - (ss_res / ss_tot)
-                                            
-                                            # Add this group's results to the text area
-                                            self.result_text.insert(tk.END, f"Group: {group_name}\n")
-                                            for i, param_name in enumerate(param_names):
-                                                if i < len(popt):
-                                                    self.result_text.insert(tk.END, f"  {param_name} = {popt[i]:.6f} ± {perr[i]:.6f}\n")
-                                            self.result_text.insert(tk.END, f"  R² = {r_squared:.6f}\n\n")
-                                            
-                                            # Add the equation with the fitted parameters
-                                            equation = model_info.get("formula", "")
-                                            for line in equation.split('\n'):
-                                                if line.strip().startswith('y ='): 
-                                                    eq = line.strip()
-                                                    for i, param_name in enumerate(param_names):
-                                                        if i < len(popt):
-                                                            eq = eq.replace(param_name, f"{popt[i]:.4f}")
-                                                    self.result_text.insert(tk.END, f"  {eq}\n")
-                                            self.result_text.insert(tk.END, "\n")
-                                            
-                                        except Exception as e:
-                                            print(f"Fitting error for group {group_name}: {str(e)}")
-                                            self.result_text.insert(tk.END, f"Group: {group_name} - Fitting failed: {str(e)}\n\n")
-                                
-                                # If we didn't successfully fit any groups, show an error
-                                if not all_fit_results:
-                                    self.result_text.insert(tk.END, "No groups could be successfully fitted.\n")
-                                    self.result_text.insert(tk.END, "Check that your data has enough points per group and try different initial parameters.")
-                            
-                            else:
-                                # Single fit for all data points (no groups or only one group)
-                                print(f"[DEBUG] Performing a single fit for all data points")
-                                
-                                # Get data for fitting (ensure numeric)
-                                x_fit = pd.to_numeric(df_plot[x_col], errors='coerce')
-                                y_fit = pd.to_numeric(df_plot[value_col], errors='coerce')
-                                print(f"[DEBUG] Data shape: x={x_fit.shape}, y={y_fit.shape}")
-                                
-                                # Drop any NaN values
-                                mask = ~(np.isnan(x_fit) | np.isnan(y_fit))
-                                x_fit = x_fit[mask].values
-                                y_fit = y_fit[mask].values
-                                print(f"[DEBUG] After removing NaN values: x={len(x_fit)}, y={len(y_fit)}")
-                                
-                                if len(x_fit) > 0 and model_func is not None and len(p0) > 0:
-                                    # Smooth x values for curve plotting
-                                    x_smooth = np.linspace(min(x_fit), max(x_fit), 1000)
-                                    
-                                    # Suppress warnings during curve_fit
-                                    with warnings.catch_warnings():
-                                        warnings.simplefilter("ignore")
-                                        
-                                        try:
-                                            # Perform the fit
-                                            popt, pcov = curve_fit(model_func, x_fit, y_fit, p0=p0)
-                                            perr = np.sqrt(np.diag(pcov))
-                                            print(f"[DEBUG] Fit successful! Parameters: {popt}")
-                                            
-                                            # Calculate the fitted curve
-                                            y_fit_curve = model_func(x_smooth, *popt)
-                                            
-                                            # Determine color for the fitted curve based on user settings
-                                            if self.fitting_use_black_lines_var.get():
-                                                # Use black for fitted curve
-                                                fit_color = 'black'
-                                            elif self.fitting_use_group_colors_var.get():
-                                                # Use the first color from the palette
-                                                fit_color = palette[0]
-                                            else:
-                                                # Default to red
-                                                fit_color = 'red'
-                                                
-                                            # Plot the fitted curve
-                                            ax.plot(x_smooth, y_fit_curve, color=fit_color, linewidth=linewidth*1.5, 
-                                                    linestyle='solid', label=f'Fit: {model_name}')
-                                            
-                                            # Calculate confidence intervals if requested
-                                            if ci_option != "None":
-                                                # Calculate confidence intervals using error propagation
-                                                y_lower = []
-                                                y_upper = []
-                                                
-                                                # Calculate prediction for each x plus/minus the uncertainty
-                                                for x_val in x_smooth:
-                                                    y_val = model_func(x_val, *popt)
-                                                    
-                                                    # Calculate uncertainty
-                                                    y_err = 0
-                                                    for i, param in enumerate(popt):
-                                                        # Small perturbation to calculate partial derivative
-                                                        delta = param * 0.001 if param != 0 else 0.001
-                                                        params_plus = popt.copy()
-                                                        params_plus[i] += delta
-                                                        y_plus = model_func(x_val, *params_plus)
-                                                        partial_deriv = (y_plus - y_val) / delta
-                                                        y_err += (partial_deriv * perr[i])**2
-                                                    
-                                                    y_err = np.sqrt(y_err) * sigma
-                                                    y_lower.append(y_val - y_err)
-                                                    y_upper.append(y_val + y_err)
-                                                
-                                                # Determine color for the confidence interval band
-                                                if self.fitting_use_black_bands_var.get():
-                                                    # Use black for confidence intervals
-                                                    band_color = 'black'
-                                                else:
-                                                    # Otherwise use the same color as the fit line
-                                                    band_color = fit_color
-                                                    
-                                                # Plot confidence interval band
-                                                ax.fill_between(x_smooth, y_lower, y_upper, alpha=0.2, color=band_color,
-                                                                label=f'{ci_option} Confidence')
-                                            
-                                            # Display fitting results in the result text area
-                                            for i, param_name in enumerate(param_names):
-                                                if i < len(popt):
-                                                    self.result_text.insert(tk.END, f"{param_name} = {popt[i]:.6f} ± {perr[i]:.6f}\n")
-                                            
-                                            # Calculate R² (coefficient of determination)
-                                            y_pred = model_func(x_fit, *popt)
-                                            ss_res = np.sum((y_fit - y_pred)**2)
-                                            ss_tot = np.sum((y_fit - np.mean(y_fit))**2)
-                                            r_squared = 1 - (ss_res / ss_tot)
-                                            self.result_text.insert(tk.END, f"\nR² = {r_squared:.6f}\n")
-                                            
-                                            # Also add the equation with the fitted parameters
-                                            self.result_text.insert(tk.END, f"\nFitted equation:\n")
-                                            equation = model_info.get("formula", "")
-                                            for line in equation.split('\n'):
-                                                if line.strip().startswith('y ='): 
-                                                    eq = line.strip()
-                                                    for i, param_name in enumerate(param_names):
-                                                        if i < len(popt):
-                                                            eq = eq.replace(param_name, f"{popt[i]:.4f}")
-                                                    self.result_text.insert(tk.END, f"{eq}\n")
-                                            print(f"[DEBUG] Updated fitting results with equation: {eq}")
-                                            
-                                        except Exception as e:
-                                            print(f"Fitting error: {str(e)}")
-                                            traceback_info = traceback.format_exc()
-                                            print(f"[DEBUG] Traceback: {traceback_info}")
-                                            self.result_text.delete(1.0, tk.END)
-                                            self.result_text.insert(tk.END, f"Fitting error: {str(e)}\n")
-                                            self.result_text.insert(tk.END, "Try adjusting the initial parameter values or selecting a different model.\n")
-                                            self.result_text.insert(tk.END, "Make sure your X and Y columns contain valid numeric data.")
-                        except Exception as e:
-                            print(f"Error in model fitting: {str(e)}")
-                            traceback_info = traceback.format_exc()
-                            print(f"[DEBUG] Traceback: {traceback_info}")
-                            self.result_text.delete(1.0, tk.END)
-                            self.result_text.insert(tk.END, f"Error in model fitting: {str(e)}\n")
-                            self.result_text.insert(tk.END, "Make sure you've selected numeric data columns for XY plotting.")
-                                            
-                    
-                    
                     if hue_col:
                         handles, labels = ax.get_legend_handles_labels()
                         
@@ -8194,35 +8887,20 @@ class ExPlotApp:
                 try:
                     if hasattr(self, 'errorbar_type_var'):
                         errorbar_type = self.errorbar_type_var.get().lower()
-                        print(f"Using errorbar_type_var: {errorbar_type}")
                     elif hasattr(self, 'settings_errorbar_type_var'):
                         errorbar_type = self.settings_errorbar_type_var.get().lower()
-                        print(f"Using settings_errorbar_type_var: {errorbar_type}")
                     else:
                         errorbar_type = 'sd'
-                        print("No errorbar type variable found, using default 'sd'")
-                except Exception as e:
-                    print(f"Error getting errorbar type: {e}")
+                except Exception:
                     errorbar_type = 'sd'
 
                 # Map to Seaborn errorbar parameter
                 if errorbar_type == 'sem':
                     # Standard error of the mean
                     bar_args['errorbar'] = 'se'
-                    print(f"Using Standard Error of Mean (SEM) for error bars")
                 else:
                     # Standard deviation
                     bar_args['errorbar'] = 'sd'
-                    print(f"Using Standard Deviation (SD) for error bars")
-                
-                # Ensure errorbar parameter is correctly set
-                print(f"Bar args for errorbar: {bar_args.get('errorbar')}")
-                
-                # Make sure it's not being overridden elsewhere
-                if 'err_style' in bar_args:
-                    print(f"Warning: err_style is already set to {bar_args['err_style']}")
-                if 'ci' in bar_args:
-                    print(f"Warning: ci is already set to {bar_args['ci']}")
 
                 # Get error bar styling preferences
                 try:
@@ -8320,6 +8998,15 @@ class ExPlotApp:
                 # Create barplot with completely isolated parameters
                 ax = sns.barplot(**bar_args)
                 
+                # If axis break is enabled, also plot on upper axis with same parameters
+                if self.ybreak_enabled and self.ax_upper is not None:
+                    bar_args_upper = bar_args.copy()
+                    bar_args_upper['ax'] = self.ax_upper
+                    sns.barplot(**bar_args_upper)
+                    # Remove legend from upper (will be handled in apply_yaxis_break)
+                    if self.ax_upper.get_legend():
+                        self.ax_upper.get_legend().remove()
+                
                 # Remove duplicate legend entries for all bar graphs
                 if plot_kind == "bar":
                     # Get the current handles and labels
@@ -8354,15 +9041,34 @@ class ExPlotApp:
                     
                     # Adjust each bar's width to create gaps
                     for bar in ax.patches:
-                        # Get current bar position and width
-                        current_width = bar.get_width()
-                        current_x = bar.get_x()
-                        # Calculate the center of this bar
-                        center = current_x + current_width / 2
-                        # Set the new width (narrower)
-                        bar.set_width(bar_width)
-                        # Recenter the bar at the same position
-                        bar.set_x(center - bar_width / 2)
+                        if swap_axes:
+                            current_height = bar.get_height()
+                            current_y = bar.get_y()
+                            center = current_y + current_height / 2
+                            bar.set_height(bar_width)
+                            bar.set_y(center - bar_width / 2)
+                        else:
+                            current_width = bar.get_width()
+                            current_x = bar.get_x()
+                            center = current_x + current_width / 2
+                            bar.set_width(bar_width)
+                            bar.set_x(center - bar_width / 2)
+                    
+                    # Apply same bar width adjustment to upper axis when axis break is enabled
+                    if self.ybreak_enabled and self.ax_upper is not None:
+                        for bar in self.ax_upper.patches:
+                            if swap_axes:
+                                current_height = bar.get_height()
+                                current_y = bar.get_y()
+                                center = current_y + current_height / 2
+                                bar.set_height(bar_width)
+                                bar.set_y(center - bar_width / 2)
+                            else:
+                                current_width = bar.get_width()
+                                current_x = bar.get_x()
+                                center = current_x + current_width / 2
+                                bar.set_width(bar_width)
+                                bar.set_x(center - bar_width / 2)
                 
                 # Fix axis element visibility by bringing them to the front
                 for spine in ax.spines.values():
@@ -8407,6 +9113,34 @@ class ExPlotApp:
                                     # Use the explicit outline color
                                     bar.set_edgecolor(outline_color)
                                     bar.set_linewidth(max(linewidth, 0.5))
+                
+                # Apply same outline settings to upper axis bars when axis break is enabled
+                if self.ybreak_enabled and hasattr(self, 'ax_upper') and self.ax_upper is not None:
+                    if not self.bar_outline_var.get():
+                        for bar in self.ax_upper.patches:
+                            bar.set_edgecolor(bar.get_facecolor())
+                    else:
+                        if hue_col and hue_col in df_plot.columns:
+                            outline_color = self.get_outline_color(None)
+                            if self.outline_color_var.get() == "as_set":
+                                for bar in self.ax_upper.patches:
+                                    bar.set_edgecolor(bar.get_facecolor())
+                                    bar.set_linewidth(max(linewidth, 0.5))
+                            else:
+                                for bar in self.ax_upper.patches:
+                                    bar.set_edgecolor(outline_color)
+                                    bar.set_linewidth(max(linewidth, 0.5))
+                        else:
+                            single_color_name = self.single_color_var.get()
+                            single_color = self.custom_colors.get(single_color_name, 'black')
+                            outline_color = self.get_outline_color(single_color)
+                            for bar in self.ax_upper.patches:
+                                if self.outline_color_var.get() == "as_set":
+                                    bar.set_edgecolor(bar.get_facecolor())
+                                    bar.set_linewidth(max(linewidth, 0.5))
+                                else:
+                                    bar.set_edgecolor(outline_color)
+                                    bar.set_linewidth(max(linewidth, 0.5))
             elif plot_kind == "box":
                 # For ungrouped data, we need to adjust the boxplot parameters
                 # to ensure proper centering over X-values
@@ -8433,6 +9167,15 @@ class ExPlotApp:
                     box_args['capprops'] = {'color': outline_color}
                     
                     sns.boxplot(**box_args)
+
+                    # If axis break is enabled, also plot on upper axis with same parameters
+                    if self.ybreak_enabled and self.ax_upper is not None:
+                        box_args_upper = box_args.copy()
+                        box_args_upper['ax'] = self.ax_upper
+                        sns.boxplot(**box_args_upper)
+                        # Remove legend from upper (will be handled in apply_yaxis_break)
+                        if self.ax_upper.get_legend():
+                            self.ax_upper.get_legend().remove()
                 else:
                     # Adjust parameters for grouped data to add spacing
                     if 'hue' in plot_args and plot_args['hue'] is not None:
@@ -8458,6 +9201,15 @@ class ExPlotApp:
                         plot_args['capprops'] = {'color': outline_color, 'linewidth': max(linewidth, 0.5)}
                     
                     sns.boxplot(**plot_args)
+
+                    # If axis break is enabled, also plot on upper axis with same parameters
+                    if self.ybreak_enabled and self.ax_upper is not None:
+                        plot_args_upper = plot_args.copy()
+                        plot_args_upper['ax'] = self.ax_upper
+                        sns.boxplot(**plot_args_upper)
+                        # Remove legend from upper (will be handled in apply_yaxis_break)
+                        if self.ax_upper.get_legend():
+                            self.ax_upper.get_legend().remove()
                     
                 ax.tick_params(axis='x', which='both', direction='in', length=4, width=linewidth, top=False, bottom=True, labeltop=False, labelbottom=True)
                 
@@ -8513,6 +9265,15 @@ class ExPlotApp:
                 
                 # Create the violin plot with completely isolated parameters
                 sns.violinplot(**violin_args)
+
+                # If axis break is enabled, also plot on upper axis with same parameters
+                if self.ybreak_enabled and self.ax_upper is not None:
+                    violin_args_upper = violin_args.copy()
+                    violin_args_upper['ax'] = self.ax_upper
+                    sns.violinplot(**violin_args_upper)
+                    # Remove legend from upper (will be handled in apply_yaxis_break)
+                    if self.ax_upper.get_legend():
+                        self.ax_upper.get_legend().remove()
                 
                 # Ensure axis ticks are properly formatted
                 ax.tick_params(axis='x', which='both', direction='in', length=4, width=linewidth, top=False, bottom=True, labeltop=False, labelbottom=True)
@@ -8524,190 +9285,48 @@ class ExPlotApp:
                     delattr(self, 'x_categorical_map')
                     if '_x_plot' in self.df.columns:
                         self.df = self.df.drop('_x_plot', axis=1)
-                
-                marker_size = self.xy_marker_size_var.get()
-                marker_symbol = self.xy_marker_symbol_var.get()
-                connect = self.xy_connect_var.get()
-                draw_band = self.xy_draw_band_var.get()
-                show_mean = self.xy_show_mean_var.get()
-                show_mean_errorbars = self.xy_show_mean_errorbars_var.get()
-                filled = self.xy_filled_var.get()
-                line_style = self.xy_line_style_var.get()
-                line_black = self.xy_line_black_var.get()
-                # Choose color logic for XY plot
+
                 if len(value_cols) == 1:
                     color = self.custom_colors.get(self.single_color_var.get(), 'black')
                     palette = [color]
                 else:
-                    # Set up palette based on hue groups
                     palette_name = self.palette_var.get()
                     palette_full = self.custom_palettes.get(palette_name, ["#333333"])
-                    
-                    # If we have a hue column, size palette to match number of hue groups
                     if hue_col and hue_col in df_plot.columns:
                         hue_groups = df_plot[hue_col].dropna().unique()
                         if len(palette_full) < len(hue_groups):
-                            # Repeat the palette to ensure we have enough colors
                             palette_full = (palette_full * ((len(hue_groups) // len(palette_full)) + 1))
                         palette = palette_full[:len(hue_groups)]
                     else:
-                        # Otherwise use value columns for palette
                         palette = palette_full[:len(value_cols)]
-                # --- Always use full palette for grouped XY means ---
-                if show_mean:
-                    groupers = [x_col]
-                    if hue_col:
-                        groupers.append(hue_col)
-                    grouped = df_plot.groupby(groupers)[value_col]
-                    means = grouped.mean().reset_index()
-                    if self.errorbar_type_var.get() == "SEM":
-                        errors = grouped.apply(lambda x: np.std(x.dropna().astype(float), ddof=1) / np.sqrt(len(x.dropna())) if len(x.dropna()) > 1 else 0).reset_index(name='err')
-                    else:
-                        errors = grouped.std(ddof=1).reset_index(name='err')
-                    means = means.merge(errors, on=groupers)
-                    if hue_col:
-                        group_names = list(df_plot[hue_col].dropna().unique())
-                        palette_name = self.palette_var.get()
-                        palette_full = self.custom_palettes.get(palette_name, ["#333333"])
-                        if len(palette_full) < len(group_names):
-                            palette_full = (palette_full * ((len(group_names) // len(palette_full)) + 1))[:len(group_names)]
-                        color_map = {name: palette_full[i] for i, name in enumerate(group_names)}
-                        for name in group_names:
-                            group = means[means[hue_col] == name]
-                            if group.empty:
-                                continue
-                            c = color_map[name]
-                            x = group[x_col]
-                            y = group[value_col]
-                            yerr = group['err']
-                            ecolor = 'black' if errorbar_black else c
-                            mfc = c if filled else 'none'
-                            mec = c
-                            if show_mean_errorbars:
-                                ax.errorbar(x, y, yerr=yerr, fmt=marker_symbol, color=c, markerfacecolor=mfc, markeredgecolor=mec, markersize=marker_size, linewidth=linewidth, capsize=3, ecolor=ecolor, label=str(name))
-                                if draw_band:
-                                    x_numeric = pd.to_numeric(x, errors='coerce')
-                                    y_numeric = pd.to_numeric(y, errors='coerce')
-                                    yerr_numeric = pd.to_numeric(yerr, errors='coerce')
-                                    ax.fill_between(x_numeric, y_numeric - yerr_numeric, y_numeric + yerr_numeric, color=c, alpha=0.18, zorder=1)
-                            else:
-                                ax.plot(x, y, marker=marker_symbol, color=c, markerfacecolor=mfc, markeredgecolor=mec, markersize=marker_size, linewidth=linewidth, linestyle='None', label=str(name))
-                            if connect:
-                                ax.plot(x, y, color='black' if line_black else c, linewidth=linewidth, alpha=0.7, linestyle=line_style)
-                        if hue_col:
-                            handles, labels = ax.get_legend_handles_labels()
-                            if handles and len(handles) > 0:
-                                self.place_legend(ax, handles, labels)
-                    else:
-                        # Ungrouped mean plot
-                        c = palette[0]
-                        x_sorted = np.sort(df_plot[x_col].unique())
-                        y_means = [df_plot[df_plot[x_col] == x][value_col].mean() for x in x_sorted]
-                        y_errors = [df_plot[df_plot[x_col] == x][value_col].std(ddof=1) if self.errorbar_type_var.get() == 'SD' else 
-                                    df_plot[df_plot[x_col] == x][value_col].std(ddof=1) / np.sqrt(len(df_plot[df_plot[x_col] == x])) for x in x_sorted]
-                        
-                        x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
-                        y_means_numeric = pd.to_numeric(y_means, errors='coerce')
-                        y_errors_numeric = pd.to_numeric(y_errors, errors='coerce')
-                        
-                        mfc = c if filled else 'none'
-                        mec = c
-                        ecolor = 'black' if errorbar_black else c
-                        
-                        if show_mean_errorbars:
-                            ax.errorbar(x_sorted_numeric, y_means_numeric, yerr=y_errors_numeric, fmt=marker_symbol, 
-                                         color=c, markerfacecolor=mfc, markeredgecolor=mec, 
-                                         markersize=marker_size, linewidth=linewidth, capsize=3, ecolor=ecolor)
-                            if draw_band:
-                                ax.fill_between(x_sorted_numeric, 
-                                                y_means_numeric - y_errors_numeric, 
-                                                y_means_numeric + y_errors_numeric, 
-                                                color=c, alpha=0.18, zorder=1)
-                        else:
-                            ax.plot(x_sorted_numeric, y_means_numeric, marker=marker_symbol, 
-                                    color=c, markerfacecolor=mfc, markeredgecolor=mec, 
-                                    markersize=marker_size, linewidth=linewidth, linestyle='None')
-                        
-                        if connect:
-                            ax.plot(x_sorted_numeric, y_means_numeric, 
-                                    color='black' if line_black else c, 
-                                    linewidth=linewidth, alpha=0.7, linestyle=line_style)
-                else:
-                    # Plot raw data points (scatter) when show_mean is False
-                    if hue_col:
-                        group_names = list(df_plot[hue_col].dropna().unique())
-                        palette_name = self.palette_var.get()
-                        palette_full = self.custom_palettes.get(palette_name, ["#333333"])
-                        if len(palette_full) < len(group_names):
-                            palette_full = (palette_full * ((len(group_names) // len(palette_full)) + 1))[:len(group_names)]
-                        color_map = {name: palette_full[i] for i, name in enumerate(group_names)}
-                        for name in group_names:
-                            group = df_plot[df_plot[hue_col] == name]
-                            if group.empty:
-                                continue
-                            c = color_map[name]
-                            # Always show marker edge in group color if not filled
-                            edge = c
-                            face = c if filled else 'none'
-                            scatter = ax.scatter(group[x_col], group[value_col], marker=marker_symbol, s=marker_size**2, color=c, label=str(name), edgecolors=edge, facecolors=face, linewidth=linewidth)
-                            if draw_band:
-                                x_sorted = np.sort(group[x_col].unique())
-                                min_vals = [group[group[x_col] == x][value_col].min() for x in x_sorted]
-                                max_vals = [group[group[x_col] == x][value_col].max() for x in x_sorted]
-                                x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
-                                min_vals_numeric = pd.to_numeric(min_vals, errors='coerce')
-                                max_vals_numeric = pd.to_numeric(max_vals, errors='coerce')
-                                ax.fill_between(x_sorted_numeric, min_vals_numeric, max_vals_numeric, color=c, alpha=0.18, zorder=1)
-                            if connect:
-                                # Connect means of raw data at each x value
-                                if hue_col:
-                                    for name in group_names:
-                                        group = df_plot[df_plot[hue_col] == name]
-                                        if group.empty:
-                                            continue
-                                        c = color_map[name]
-                                        # Calculate means at each x value
-                                        x_sorted = np.sort(group[x_col].unique())
-                                        means = [group[group[x_col] == x][value_col].mean() for x in x_sorted]
-                                        x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
-                                        means_numeric = pd.to_numeric(means, errors='coerce')
-                                        ax.plot(x_sorted_numeric, means_numeric, color='black' if line_black else c, linewidth=linewidth, alpha=0.7, linestyle=line_style)
-                                else:
-                                    c = palette[0]
-                                    x_sorted = np.sort(df_plot[x_col].unique())
-                                    means = [df_plot[df_plot[x_col] == x][value_col].mean() for x in x_sorted]
-                                    x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
-                                    means_numeric = pd.to_numeric(means, errors='coerce')
-                                    ax.plot(x_sorted_numeric, means_numeric, color='black' if line_black else c, linewidth=linewidth, alpha=0.7, linestyle=line_style)
-                        handles, labels = ax.get_legend_handles_labels()
-                        if handles and len(handles) > 0:
-                            ax.legend()
-                    else:
-                        c = palette[0]
-                        # Always show marker edge in group color if not filled
-                        edge = c
-                        face = c if filled else 'none'
-                        ax.scatter(df_plot[x_col], df_plot[value_col], marker=marker_symbol, s=marker_size**2, color=c, edgecolors=edge, facecolors=face, linewidth=linewidth)
-                        if draw_band:
-                            x_sorted = np.sort(df_plot[x_col].unique())
-                            min_vals = [df_plot[df_plot[x_col] == x][value_col].min() for x in x_sorted]
-                            max_vals = [df_plot[df_plot[x_col] == x][value_col].max() for x in x_sorted]
-                            x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
-                            min_vals_numeric = pd.to_numeric(min_vals, errors='coerce')
-                            max_vals_numeric = pd.to_numeric(max_vals, errors='coerce')
-                            ax.fill_between(x_sorted_numeric, min_vals_numeric, max_vals_numeric, color=c, alpha=0.18, zorder=1)
-                        if connect:
-                            # Connect means of raw data at each x value
-                            c = palette[0]
-                            x_sorted = np.sort(df_plot[x_col].unique())
-                            means = [df_plot[df_plot[x_col] == x][value_col].mean() for x in x_sorted]
-                            x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
-                            means_numeric = pd.to_numeric(means, errors='coerce')
-                            ax.plot(x_sorted_numeric, means_numeric, color='black' if line_black else c, linewidth=linewidth, alpha=0.7, linestyle=line_style)
+
+                self._plot_xy_base(ax, df_plot, x_col, value_col, hue_col, value_cols, errorbar_black, linewidth, allow_legend=True)
+                self._plot_xy_fitting(ax, df_plot, x_col, value_col, hue_col, palette, linewidth, update_results=True, allow_legend=True)
+
+                if self.ybreak_enabled and self.ax_upper is not None:
+                    self._plot_xy_base(self.ax_upper, df_plot, x_col, value_col, hue_col, value_cols, errorbar_black, linewidth, allow_legend=False)
+                    self._plot_xy_fitting(self.ax_upper, df_plot, x_col, value_col, hue_col, palette, linewidth, update_results=False, allow_legend=False)
+                    if self.ax_upper.get_legend():
+                        self.ax_upper.get_legend().remove()
+
                 ax.tick_params(axis='x', which='both', direction='in', length=4, width=linewidth, top=False, bottom=True, labeltop=False, labelbottom=True)
 
             # --- Stripplot (if enabled and not XY plot) ---
             if show_stripplot and plot_kind != "xy":
+                # Rebuild stripplot args here so swap_axes is always applied consistently
+                if swap_axes:
+                    stripplot_args = dict(
+                        data=df_plot, y=x_col, x=value_col, hue=hue_col, dodge=True,
+                        jitter=True, marker='o', alpha=0.55,
+                        ax=ax
+                    )
+                else:
+                    stripplot_args = dict(
+                        data=df_plot, x=x_col, y=value_col, hue=hue_col, dodge=True,
+                        jitter=True, marker='o', alpha=0.55,
+                        ax=ax
+                    )
+
                 # First, prepare all the parameters for a single stripplot call
                 
                 # Check if "Show stripplot with black dots" option is selected
@@ -8748,6 +9367,12 @@ class ExPlotApp:
                 
                 # Make a single call to stripplot with all parameters set properly
                 sns.stripplot(**stripplot_args)
+                
+                # If axis break is enabled, also plot stripplot on upper axis
+                if self.ybreak_enabled and self.ax_upper is not None:
+                    stripplot_args_upper = stripplot_args.copy()
+                    stripplot_args_upper['ax'] = self.ax_upper
+                    sns.stripplot(**stripplot_args_upper)
 
             # --- Always rebuild legend after all plotting ---
             if hue_col and (plot_kind == "box" or plot_kind == "violin"):
@@ -8863,15 +9488,20 @@ class ExPlotApp:
                         ncol=self.optimize_legend_layout(ax, legend_handles, legend_labels, fontsize=fontsize)
                     )
 
-            # Set X-axis tick labels for bar, box, and violin plots using categorical mapping
-            if plot_kind in ["bar", "box", "violin"] and hasattr(self, 'x_categorical_reverse_map'):
+            # Set categorical tick labels for bar, box, and violin plots using categorical mapping
+            if plot_kind in ["bar", "box", "violin"] and hasattr(self, 'x_categorical_reverse_map') and not swap_axes:
                 # Extract labels from our categorical mapping
                 x_tick_locs = sorted(self.x_categorical_reverse_map.keys())
                 x_tick_labels = [self.x_categorical_reverse_map[i] for i in x_tick_locs]
-                ax.set_xticks(x_tick_locs)
-                # Set appropriate rotation based on number of labels and existing settings
-                rotation_angle = 45 if len(x_tick_labels) > 3 else 0
-                ax.set_xticklabels(x_tick_labels, rotation=rotation_angle, fontsize=fontsize)
+                if swap_axes:
+                    ax.set_yticks(x_tick_locs)
+                    rotation_angle = 0
+                    ax.set_yticklabels(x_tick_labels, rotation=rotation_angle, fontsize=fontsize)
+                else:
+                    ax.set_xticks(x_tick_locs)
+                    # Set appropriate rotation based on number of labels and existing settings
+                    rotation_angle = 45 if len(x_tick_labels) > 3 else 0
+                    ax.set_xticklabels(x_tick_labels, rotation=rotation_angle, fontsize=fontsize)
 
             # --- Grids ---
             if show_hgrid:
@@ -8890,7 +9520,7 @@ class ExPlotApp:
 
             # --- Axis labels ---
             if swap_axes:
-                ax.set_ylabel(self.xlabel_entry.get() or x_col, fontsize=fontsize)
+                ax.set_ylabel(self.xlabel_entry.get() or original_x_col, fontsize=fontsize)
                 ax.set_xlabel(value_col if n_rows > 1 else (self.ylabel_entry.get() or value_col), fontsize=fontsize)
             else:
                 # Enable math text rendering
@@ -8904,19 +9534,47 @@ class ExPlotApp:
             ax.tick_params(axis='x', labelsize=fontsize, rotation=rotation, direction='in', length=4, width=linewidth)
             ax.tick_params(axis='y', labelsize=fontsize, direction='in', length=4, width=linewidth, color='black', left=True)
 
+            if plot_kind == "bar":
+                if swap_axes:
+                    ax.tick_params(axis='y', which='both', length=0)
+                    ax.tick_params(axis='x', which='both', length=4, width=linewidth)
+                else:
+                    ax.tick_params(axis='x', which='both', length=0)
+                    ax.tick_params(axis='y', which='both', length=4, width=linewidth)
+
             # --- The rest of your axis/tick/statistics/annotation code ---
             try:
-                ymin = float(self.ymin_entry.get()) if self.ymin_entry.get() else None
-                ymax = float(self.ymax_entry.get()) if self.ymax_entry.get() else None
-                yinterval = float(self.yinterval_entry.get()) if self.yinterval_entry.get() else None
-                minor_ticks_str = self.minor_ticks_entry.get()
-                minor_ticks = int(minor_ticks_str) if minor_ticks_str else None
+                def _parse_float(val):
+                    s = str(val).strip()
+                    if not s:
+                        return None
+                    try:
+                        return float(s)
+                    except Exception:
+                        import re
+                        m = re.search(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", s)
+                        return float(m.group(0)) if m else None
 
-                xmin = float(self.xmin_entry.get()) if self.xmin_entry.get() else None
-                xmax = float(self.xmax_entry.get()) if self.xmax_entry.get() else None
-                xinterval = float(self.xinterval_entry.get()) if self.xinterval_entry.get() else None
-                xminor_ticks_str = self.xminor_ticks_entry.get()
-                xminor_ticks = int(xminor_ticks_str) if xminor_ticks_str else None
+                def _parse_int(val):
+                    s = str(val).strip()
+                    if not s:
+                        return None
+                    try:
+                        return int(s)
+                    except Exception:
+                        import re
+                        m = re.search(r"[-+]?\d+", s)
+                        return int(m.group(0)) if m else None
+
+                ymin = _parse_float(self.ymin_entry.get())
+                ymax = _parse_float(self.ymax_entry.get())
+                yinterval = _parse_float(self.yinterval_entry.get())
+                minor_ticks = _parse_int(self.minor_ticks_entry.get())
+
+                xmin = _parse_float(self.xmin_entry.get())
+                xmax = _parse_float(self.xmax_entry.get())
+                xinterval = _parse_float(self.xinterval_entry.get())
+                xminor_ticks = _parse_int(self.xminor_ticks_entry.get())
 
                 if not swap_axes:
                     # Y-axis settings
@@ -9152,6 +9810,14 @@ class ExPlotApp:
             # Ensure minor ticks never have labels
             ax.tick_params(axis='both', which='minor', labelsize=0, labelbottom=False, labeltop=False, 
                            labelleft=False, labelright=False)
+
+            if plot_kind == "bar":
+                if swap_axes:
+                    ax.tick_params(axis='y', which='both', length=0)
+                    ax.tick_params(axis='x', which='major', bottom=True, top=False, length=4, width=linewidth, color='black')
+                else:
+                    ax.tick_params(axis='x', which='both', length=0)
+                    ax.tick_params(axis='y', which='major', left=True, right=False, length=4, width=linewidth, color='black')
             
             # Apply tick label orientation based on user selection
             orientation = self.label_orientation.get()
@@ -9201,6 +9867,8 @@ class ExPlotApp:
                     if show_annotations is None or not show_annotations.get():
                         print(f"[DEBUG] Statistical annotations disabled by user preference")
                         continue
+                    if disable_plot_stat_annotations:
+                        continue
                     
                     # Import required modules for annotations
                     from statannotations.Annotator import Annotator
@@ -9226,6 +9894,14 @@ class ExPlotApp:
                     }
                     
                     print(f"[DEBUG] Using pvalue thresholds: {[t[0] for t in pvalue_format['pvalue_thresholds']]}")
+
+                    annot_x_col = x_col
+                    annot_y_col = value_col
+                    annot_orient = 'v'
+                    if swap_axes and plot_kind in ("bar", "box", "violin"):
+                        annot_x_col = value_col
+                        annot_y_col = x_col
+                        annot_orient = 'h'
                     
                     
                     # Determine what kind of annotations we need based on the data structure
@@ -9258,7 +9934,7 @@ class ExPlotApp:
                                 try:
                                     # Create annotator
                                     annotator = Annotator(ax, pairs_to_compare, data=df_plot, 
-                                                       x=x_col, y=value_col, hue=hue_col)
+                                                       x=annot_x_col, y=annot_y_col, hue=hue_col, orient=annot_orient)
                                     
                                     # Add annotations
                                     annotator.configure(test=None, text_format='star', 
@@ -9295,7 +9971,7 @@ class ExPlotApp:
                                 try:
                                     # Create annotator for x-category comparisons
                                     annotator = Annotator(ax, pairs_to_compare, data=df_plot, 
-                                                       x=x_col, y=value_col)
+                                                       x=annot_x_col, y=annot_y_col, orient=annot_orient)
                                     
                                     # Add annotations
                                     annotator.configure(test=None, text_format='star', 
@@ -9305,10 +9981,8 @@ class ExPlotApp:
                                                      )
                                     annotator.set_pvalues(pair_pvalues)
                                     annotator.annotate()
-                                except Exception as e:
-                                    print(f"[DEBUG] Error adding ungrouped annotations: {e}")
-                                
-                            print(f"[DEBUG] Total annotations drawn: {len(pair_pvalues)}")
+                                except Exception:
+                                    pass
                     
                     # Save the figure for later reference
                     fig = ax.figure
@@ -9321,6 +9995,24 @@ class ExPlotApp:
             ax.tick_params(axis='both', which='both', width=linewidth)
             # (grid lines already set above)
 
+        # Apply Y-axis break if enabled
+        if self.ybreak_enabled and self.ax_upper is not None and self.ax_lower is not None:
+            self.apply_yaxis_break(self.ax_lower, self.ax_upper, self.ybreak_min, self.ybreak_max,
+                                  show_frame, linewidth)
+
+        try:
+            self._sync_custom_marks_vars_from_ui()
+            x_marks = self._parse_custom_marks(self.custom_x_marks_var.get() if hasattr(self, 'custom_x_marks_var') else '', axis='x')
+            y_marks = self._parse_custom_marks(self.custom_y_marks_var.get() if hasattr(self, 'custom_y_marks_var') else '', axis='y')
+            for _ax in self.fig.axes:
+                draw_x_labels = True
+                if getattr(self, 'ybreak_enabled', False) and getattr(self, 'ax_upper', None) is not None and _ax is self.ax_upper:
+                    draw_x_labels = False
+                self._apply_custom_marks_to_axis(_ax, 'x', x_marks, linewidth=linewidth, fontsize=fontsize, draw_labels=draw_x_labels)
+                self._apply_custom_marks_to_axis(_ax, 'y', y_marks, linewidth=linewidth, fontsize=fontsize, draw_labels=True)
+        except Exception:
+            pass
+        
         # Apply legend settings from UI to all axes
         legend_visible = self.legend_visible_var.get()
         legend_position = self.legend_position_var.get()
@@ -9350,8 +10042,23 @@ class ExPlotApp:
                     new_legend = ax.legend(handles, labels, bbox_to_anchor=(1.02, 1), loc='upper left',
                                           borderaxespad=0., frameon=False, fontsize=fontsize, ncol=ncol)
                 elif legend_position == "outside top":
-                    new_legend = ax.legend(handles, labels, bbox_to_anchor=(0.5, 1.15), loc='upper center',
-                                          borderaxespad=0., frameon=False, fontsize=fontsize, ncol=ncol)
+                    # For axis break, the "main" axes bbox is the pre-split bbox stored during apply_yaxis_break.
+                    # Anchor the outside-top legend in FIGURE coordinates so its distance to the plot area
+                    # matches the non-broken plot.
+                    if getattr(self, 'ybreak_enabled', False) and hasattr(self, '_ybreak_base_pos') and self._ybreak_base_pos is not None:
+                        base_pos = self._ybreak_base_pos
+                        x_center = base_pos.x0 + base_pos.width / 2
+                        y_top = base_pos.y0 + base_pos.height
+                        new_legend = ax.legend(
+                            handles, labels,
+                            bbox_to_anchor=(x_center, y_top + base_pos.height * 0.15),
+                            bbox_transform=self.fig.transFigure,
+                            loc='upper center',
+                            borderaxespad=0., frameon=False, fontsize=fontsize, ncol=ncol
+                        )
+                    else:
+                        new_legend = ax.legend(handles, labels, bbox_to_anchor=(0.5, 1.15), loc='upper center',
+                                              borderaxespad=0., frameon=False, fontsize=fontsize, ncol=ncol)
                 else:
                     # Standard matplotlib positions
                     new_legend = ax.legend(handles, labels, loc=legend_position, frameon=False,
@@ -9363,6 +10070,260 @@ class ExPlotApp:
         
         # Display interactive preview (before saving, to preserve figure state)
         self.display_preview()
+
+    def apply_yaxis_break(self, ax_lower, ax_upper, break_min, break_max, show_frame, linewidth):
+        """
+        Apply Y-axis break styling to the dual axes.
+        Copies plot elements from lower to upper, sets y-limits, hides spines, adds break markers.
+        """
+        # Get current y-limits from the lower axis (which has all the data)
+        y_data_min, y_data_max = ax_lower.get_ylim()
+        
+        # Get user-specified y-axis limits if provided
+        try:
+            user_ymin = float(self.ymin_entry.get()) if self.ymin_entry.get().strip() else None
+        except ValueError:
+            user_ymin = None
+        try:
+            user_ymax = float(self.ymax_entry.get()) if self.ymax_entry.get().strip() else None
+        except ValueError:
+            user_ymax = None
+        
+        # Set y-limits for lower axis (from 0 or user min to break_min)
+        lower_ymin = user_ymin if user_ymin is not None else 0
+        ax_lower.set_ylim(lower_ymin, break_min)
+        
+        # Set y-limits for upper axis (from break_max to data max or user max)
+        upper_ymax = user_ymax if user_ymax is not None else y_data_max * 1.05
+        ax_upper.set_ylim(break_max, upper_ymax)
+        
+        # Reposition axes while PRESERVING the original y-scale.
+        # Previous behavior renormalized (lower+upper) to fill the entire plot height,
+        # making the visible bars/points appear larger than the non-broken plot.
+        #
+        # New behavior: allocate a *proportional* gap height that corresponds to the removed
+        # y-range (break_max - break_min). This keeps pixels-per-y-unit consistent with the
+        # non-broken plot.
+        lower_range = break_min - lower_ymin
+        upper_range = upper_ymax - break_max
+        total_visible_range = lower_range + upper_range
+        
+        if total_visible_range > 0:
+            # IMPORTANT: the app later sets the "main" axis position explicitly via ax.set_position(...)
+            # (see ax_position assignment in plot_graph). When axis break is enabled, that adjustment
+            # is applied to ax_lower (the "main" axis) but not necessarily to the combined two-subplot
+            # bbox from plt.subplots. If we base our layout on the combined bbox, the broken-axis plot
+            # area can become larger than the non-broken plot.
+            #
+            # Therefore, always split WITHIN the final current bbox of ax_lower.
+            base_pos = ax_lower.get_position().frozen()
+            self._ybreak_base_pos = base_pos
+            left = base_pos.x0
+            width = base_pos.width
+            bottom = base_pos.y0
+            total_height = base_pos.height
+            top = bottom + total_height
+
+            gap_frac = getattr(self, 'ybreak_gap', None)
+            if gap_frac is None:
+                gap_frac = 0.05
+            gap_frac = max(0.0, min(0.3, float(gap_frac)))
+            gap = total_height * gap_frac
+            available_height = max(total_height - gap, 0)
+            
+            # Allocate heights either from user ratio (upper_ratio) or automatically from visible y ranges
+            upper_ratio = getattr(self, 'ybreak_ratio', None)
+            if upper_ratio is not None:
+                upper_ratio = max(0.1, min(0.9, float(upper_ratio)))
+                upper_height = available_height * upper_ratio
+                lower_height = available_height - upper_height
+            else:
+                lower_height = available_height * (lower_range / total_visible_range)
+                upper_height = available_height * (upper_range / total_visible_range)
+            
+            # Position lower axis at bottom, upper axis above it with proportional gap
+            ax_lower.set_position([left, bottom, width, lower_height])
+            ax_upper.set_position([left, bottom + lower_height + gap, width, upper_height])
+
+            self.debug(
+                f"Repositioned (preserve y-scale): lower_h={lower_height:.3f}, gap={gap:.3f}, "
+                f"upper_h={upper_height:.3f}, total={lower_height+gap+upper_height:.3f} vs orig={top-bottom:.3f}"
+            )
+        
+        # Note: Plot elements are now created by seaborn on both axes during plotting
+        # No need to copy elements - just set y-limits and styling
+        
+        # Get fontsize from the app settings
+        try:
+            fontsize = self.fontsize.get()
+        except:
+            fontsize = 10
+        
+        # Copy EXACT styling from lower axis to upper axis
+        # This ensures identical appearance (font size, tick params, spine visibility, etc.)
+        
+        # Copy Y-axis tick label font size and tick params from lower
+        ax_upper.tick_params(axis='y', labelsize=fontsize, direction='in', length=4, width=linewidth, color='black', left=True)
+
+        # Copy y-axis tick locators/formatters so minor interval settings apply to both axes
+        try:
+            # IMPORTANT: matplotlib Locator/Formatter instances are bound to a single Axis.
+            # Reusing the same instance can detach it from ax_lower (causing missing ticks/labels).
+            # Clone them for ax_upper.
+            lower_major_loc = ax_lower.yaxis.get_major_locator()
+            lower_minor_loc = ax_lower.yaxis.get_minor_locator()
+            lower_major_fmt = ax_lower.yaxis.get_major_formatter()
+            lower_minor_fmt = ax_lower.yaxis.get_minor_formatter()
+
+            ax_upper.yaxis.set_major_locator(copy.deepcopy(lower_major_loc))
+            ax_upper.yaxis.set_minor_locator(copy.deepcopy(lower_minor_loc))
+            ax_upper.yaxis.set_major_formatter(copy.deepcopy(lower_major_fmt))
+            ax_upper.yaxis.set_minor_formatter(copy.deepcopy(lower_minor_fmt))
+        except Exception as e:
+            try:
+                ax_upper.yaxis.set_major_locator(copy.copy(ax_lower.yaxis.get_major_locator()))
+                ax_upper.yaxis.set_minor_locator(copy.copy(ax_lower.yaxis.get_minor_locator()))
+                ax_upper.yaxis.set_major_formatter(copy.copy(ax_lower.yaxis.get_major_formatter()))
+                ax_upper.yaxis.set_minor_formatter(copy.copy(ax_lower.yaxis.get_minor_formatter()))
+            except Exception as e2:
+                print(f"[DEBUG] Could not copy y-axis locator/formatter to upper axis: {e}; fallback failed: {e2}")
+        
+        # Copy spine linewidth from lower to upper
+        for spine_name, spine in ax_upper.spines.items():
+            lower_spine = ax_lower.spines[spine_name]
+            spine.set_linewidth(lower_spine.get_linewidth())
+            spine.set_color(lower_spine.get_edgecolor())
+        
+        # Copy spine visibility from lower (except for the break spines)
+        ax_upper.spines['left'].set_visible(ax_lower.spines['left'].get_visible())
+        ax_upper.spines['right'].set_visible(ax_lower.spines['right'].get_visible())
+        ax_upper.spines['top'].set_visible(ax_lower.spines['top'].get_visible())
+        
+        # Hide the spines between the two axes (the break)
+        ax_upper.spines['bottom'].set_visible(False)
+        ax_lower.spines['top'].set_visible(False)
+        
+        # Hide x-axis ticks on upper plot (they show on lower)
+        ax_upper.tick_params(axis='x', which='both', bottom=False, labelbottom=False, top=False, labeltop=False)
+        ax_upper.set_xlabel('')  # Remove x-label from upper
+
+        # Mirror grid visibility and styling from lower axis
+        try:
+            y_gridlines_lower = ax_lower.get_ygridlines()
+            y_grid_on = any(gl.get_visible() for gl in y_gridlines_lower)
+            ax_upper.grid(y_grid_on, axis='y', which='major')
+            if y_gridlines_lower:
+                src = y_gridlines_lower[0]
+                for gl in ax_upper.get_ygridlines():
+                    gl.set_color(src.get_color())
+                    gl.set_linestyle(src.get_linestyle())
+                    gl.set_linewidth(src.get_linewidth())
+                    gl.set_alpha(src.get_alpha())
+                    gl.set_zorder(src.get_zorder())
+
+            x_gridlines_lower = ax_lower.get_xgridlines()
+            x_grid_on = any(gl.get_visible() for gl in x_gridlines_lower)
+            ax_upper.grid(x_grid_on, axis='x', which='major')
+            if x_gridlines_lower:
+                src = x_gridlines_lower[0]
+                for gl in ax_upper.get_xgridlines():
+                    gl.set_color(src.get_color())
+                    gl.set_linestyle(src.get_linestyle())
+                    gl.set_linewidth(src.get_linewidth())
+                    gl.set_alpha(src.get_alpha())
+                    gl.set_zorder(src.get_zorder())
+        except Exception as e:
+            print(f"[DEBUG] Could not copy grid settings to upper axis: {e}")
+        
+        # Add diagonal break lines
+        d = 0.015  # Size of diagonal lines
+        kwargs = dict(transform=ax_upper.transAxes, color='black', 
+                     clip_on=False, linewidth=linewidth)
+        
+        # Draw diagonal lines on upper axis (bottom edge)
+        ax_upper.plot((-d, +d), (-d, +d), **kwargs)
+        if show_frame:
+            ax_upper.plot((1 - d, 1 + d), (-d, +d), **kwargs)
+        
+        # Draw diagonal lines on lower axis (top edge)
+        kwargs.update(transform=ax_lower.transAxes)
+        ax_lower.plot((-d, +d), (1 - d, 1 + d), **kwargs)
+        if show_frame:
+            ax_lower.plot((1 - d, 1 + d), (1 - d, 1 + d), **kwargs)
+        
+        # Handle legend - move from lower to upper axis
+        lower_legend = ax_lower.get_legend()
+        if lower_legend:
+            # Get handles and labels from lower axis legend
+            handles = lower_legend.legend_handles
+            labels = [t.get_text() for t in lower_legend.get_texts()]
+            fontsize = lower_legend.get_texts()[0].get_fontsize() if lower_legend.get_texts() else 10
+            
+            # Remove legend from lower axis
+            lower_legend.remove()
+
+            # Remove any existing legend on upper axis, then re-place using the same helper
+            # as non-broken plots for consistent layout.
+            try:
+                if ax_upper.get_legend():
+                    ax_upper.get_legend().remove()
+            except Exception:
+                pass
+
+            if hasattr(self, 'place_legend'):
+                self.place_legend(ax_upper, handles, labels)
+            else:
+                ax_upper.legend(handles, labels, loc='best', frameon=False, fontsize=fontsize)
+        
+        # Handle Y-axis label: center it across BOTH axes.
+        # Remove per-axis ylabels and draw a figure-level ylabel at the midpoint.
+        try:
+            fig = ax_lower.figure
+            ylabel_text = ax_lower.get_ylabel()
+            if ylabel_text:
+                if hasattr(self, '_ybreak_ylabel_artist') and self._ybreak_ylabel_artist is not None:
+                    try:
+                        self._ybreak_ylabel_artist.remove()
+                    except Exception:
+                        pass
+                    self._ybreak_ylabel_artist = None
+
+                label_artist = ax_lower.yaxis.label
+                x_fig = None
+                try:
+                    if hasattr(fig, 'canvas') and fig.canvas is not None:
+                        fig.canvas.draw()
+                        renderer = fig.canvas.get_renderer()
+                        bbox = label_artist.get_window_extent(renderer=renderer)
+                        x_center_disp = bbox.x0 + bbox.width / 2
+                        x_fig, _ = fig.transFigure.inverted().transform((x_center_disp, 0))
+                except Exception:
+                    x_fig = None
+
+                if x_fig is None:
+                    label_pos_axes = label_artist.get_position()
+                    x_disp, _ = ax_lower.transAxes.transform(label_pos_axes)
+                    x_fig, _ = fig.transFigure.inverted().transform((x_disp, 0))
+
+                lower_pos = ax_lower.get_position().frozen()
+                upper_pos = ax_upper.get_position().frozen()
+                y_center = (lower_pos.y0 + (upper_pos.y0 + upper_pos.height)) / 2
+
+                self._ybreak_ylabel_artist = fig.text(
+                    x_fig,
+                    y_center,
+                    ylabel_text,
+                    rotation=90,
+                    va='center',
+                    ha='center',
+                    fontsize=label_artist.get_fontsize(),
+                    color=label_artist.get_color()
+                )
+
+            ax_lower.set_ylabel('')
+            ax_upper.set_ylabel('')
+        except Exception as e:
+            print(f"[DEBUG] Could not center y-axis label for axis break: {e}")
 
     def display_preview(self):
         """Display an interactive preview using matplotlib's native tkinter widget.
@@ -9477,153 +10438,597 @@ class ExPlotApp:
     def manage_colors_palettes(self):
         window = tk.Toplevel(self.root)
         window.title("Manage Colors & Palettes")
-
-        tk.Label(window, text="Single Data Colors:").pack(pady=(10,2))
-        colors_frame = tk.Frame(window)
-        colors_frame.pack()
-
-        # Create Treeview for color list with a single column
-        color_tree = ttk.Treeview(colors_frame, selectmode='browse', show='tree', height=7)
-        color_tree.column('#0', width=200, stretch=tk.YES)
-        color_tree.heading('#0', text='Colors', anchor='w')
-        color_tree.pack(side='left')
-        color_scrollbar = ttk.Scrollbar(colors_frame, orient='vertical', command=color_tree.yview)
-        color_scrollbar.pack(side='right', fill='y')
+        window.geometry("550x500")
+        window.resizable(True, True)
+        
+        notebook = ttk.Notebook(window)
+        notebook.pack(fill='both', expand=True, padx=10, pady=10)
+        
+        colors_tab = ttk.Frame(notebook)
+        palettes_tab = ttk.Frame(notebook)
+        notebook.add(colors_tab, text="  Single Colors  ")
+        notebook.add(palettes_tab, text="  Palettes  ")
+        
+        # ==================== COLORS TAB ====================
+        colors_tab.columnconfigure(0, weight=1)
+        colors_tab.rowconfigure(1, weight=1)
+        
+        ttk.Label(colors_tab, text="Click a color to edit, or use buttons below", font=(None, 9)).grid(row=0, column=0, pady=(10, 5), sticky='w', padx=10)
+        
+        colors_list_frame = ttk.Frame(colors_tab)
+        colors_list_frame.grid(row=1, column=0, sticky='nsew', padx=10, pady=5)
+        colors_list_frame.columnconfigure(0, weight=1)
+        colors_list_frame.rowconfigure(0, weight=1)
+        
+        color_tree = ttk.Treeview(colors_list_frame, columns=('hex',), show='headings', height=10, selectmode='browse')
+        color_tree.heading('#1', text='Color Name', anchor='w')
+        color_tree.column('#1', width=200, stretch=tk.YES)
+        color_tree.grid(row=0, column=0, sticky='nsew')
+        
+        color_scrollbar = ttk.Scrollbar(colors_list_frame, orient='vertical', command=color_tree.yview)
+        color_scrollbar.grid(row=0, column=1, sticky='ns')
         color_tree.configure(yscrollcommand=color_scrollbar.set)
-
-        # Color preview canvas
-        color_preview = tk.Canvas(window, width=60, height=20, highlightthickness=0, bg='white')
-        color_preview.pack(pady=(0, 8))
-
+        
+        color_preview_frame = ttk.Frame(colors_tab)
+        color_preview_frame.grid(row=2, column=0, pady=10, padx=10, sticky='ew')
+        ttk.Label(color_preview_frame, text="Preview:").pack(side='left', padx=(0, 10))
+        color_preview = tk.Canvas(color_preview_frame, width=80, height=30, highlightthickness=1, highlightbackground='gray', bg='white')
+        color_preview.pack(side='left')
+        color_hex_label = ttk.Label(color_preview_frame, text="", font=('Courier', 10))
+        color_hex_label.pack(side='left', padx=10)
+        
+        def get_selected_color_name():
+            sel = color_tree.selection()
+            if sel:
+                return color_tree.item(sel[0])['values'][0] if color_tree.item(sel[0])['values'] else None
+            return None
+        
         def show_color_preview(event=None):
             color_preview.delete('all')
             sel = color_tree.selection()
             if sel:
                 item = color_tree.item(sel[0])
-                name = item['text'].split(":")[0].strip()
-                hexcode = self.custom_colors.get(name)
-                if hexcode:
-                    color_preview.create_rectangle(10, 2, 50, 18, fill=hexcode, outline='black')
+                name = item['tags'][0] if item['tags'] else None
+                if name and name in self.custom_colors:
+                    hexcode = self.custom_colors[name]
+                    color_preview.create_rectangle(2, 2, 78, 28, fill=hexcode, outline='black')
+                    color_hex_label.config(text=hexcode)
+                else:
+                    color_hex_label.config(text="")
+            else:
+                color_hex_label.config(text="")
         color_tree.bind('<<TreeviewSelect>>', show_color_preview)
-
-        def refresh_color_list():
-            for item in color_tree.get_children():
-                color_tree.delete(item)
-            for name, val in self.custom_colors.items():
-                color_tree.insert('', 'end', text=f"{name}: {val}")
+        
+        def refresh_color_list(select_name=None):
+            color_tree.delete(*color_tree.get_children())
+            for name, hexcode in self.custom_colors.items():
+                iid = color_tree.insert('', 'end', values=(f"  ■  {name}",), tags=(name,))
+                color_tree.tag_configure(name, foreground=hexcode)
+            if select_name:
+                for item in color_tree.get_children():
+                    if color_tree.item(item)['tags'][0] == select_name:
+                        color_tree.selection_set(item)
+                        break
             show_color_preview()
         refresh_color_list()
-
+        
         def add_color():
-            def save_color():
-                name = name_entry.get().strip()
-                if not name:
-                    messagebox.showerror("Error", "Color name required.")
-                    return
-                color_code = colorchooser.askcolor()[1]
-                if not color_code:
-                    messagebox.showerror("Error", "No color selected.")
-                    return
-                self.custom_colors[name] = color_code
-                refresh_color_list()
-                self.save_custom_colors_palettes()
-                self.update_color_palette_dropdowns()
-                popup.destroy()
+            result = colorchooser.askcolor(title="Pick a new color")
+            if result[1]:
+                hexcode = result[1]
+                popup = tk.Toplevel(window)
+                popup.title("New Color Name")
+                popup.geometry("300x100")
+                popup.transient(window)
+                popup.grab_set()
+                ttk.Label(popup, text="Enter a name for this color:").pack(pady=(15, 5))
+                name_entry = ttk.Entry(popup, width=30)
+                name_entry.pack(pady=5)
+                name_entry.focus_set()
+                def save():
+                    name = name_entry.get().strip()
+                    if not name:
+                        messagebox.showerror("Error", "Please enter a color name.", parent=popup)
+                        return
+                    self.custom_colors[name] = hexcode
+                    self.save_custom_colors_palettes()
+                    self.update_color_palette_dropdowns()
+                    refresh_color_list(select_name=name)
+                    popup.destroy()
+                name_entry.bind('<Return>', lambda e: save())
+                ttk.Button(popup, text="Save", command=save).pack(pady=5)
+        
+        def add_color_by_hex():
             popup = tk.Toplevel(window)
-            ttk.Label(popup, text="Color Name:").pack()
-            name_entry = ttk.Entry(popup)
-            name_entry.pack()
-            ttk.Button(popup, text="Pick Color and Save", command=save_color).pack()
-        ttk.Button(window, text="Add Color", command=add_color).pack(pady=2)
-
-        def remove_color():
-            selected = color_tree.selection()
-            if not selected:
-                return
-            item = color_tree.item(selected[0])
-            name = item['text'].split(":")[0].strip()
-            if name in self.custom_colors:
-                del self.custom_colors[name]
-                refresh_color_list()
+            popup.title("Add Color by Hex Code")
+            popup.geometry("350x180")
+            popup.transient(window)
+            popup.grab_set()
+            ttk.Label(popup, text="Color Name:").pack(pady=(15, 5))
+            name_entry = ttk.Entry(popup, width=35)
+            name_entry.pack(pady=2)
+            ttk.Label(popup, text="Hex Code (e.g. #FF5733 or FF5733):").pack(pady=(10, 5))
+            hex_entry = ttk.Entry(popup, width=35)
+            hex_entry.pack(pady=2)
+            hex_preview = tk.Canvas(popup, width=60, height=25, highlightthickness=1, highlightbackground='gray', bg='white')
+            hex_preview.pack(pady=5)
+            def update_preview(event=None):
+                hex_preview.delete('all')
+                hexcode = hex_entry.get().strip()
+                if not hexcode.startswith('#'):
+                    hexcode = '#' + hexcode
+                try:
+                    hex_preview.create_rectangle(2, 2, 58, 23, fill=hexcode, outline='black')
+                except:
+                    pass
+            hex_entry.bind('<KeyRelease>', update_preview)
+            name_entry.focus_set()
+            def save():
+                name = name_entry.get().strip()
+                hexcode = hex_entry.get().strip()
+                if not name:
+                    messagebox.showerror("Error", "Please enter a color name.", parent=popup)
+                    return
+                if not hexcode:
+                    messagebox.showerror("Error", "Please enter a hex code.", parent=popup)
+                    return
+                if not hexcode.startswith('#'):
+                    hexcode = '#' + hexcode
+                hexcode = self._to_hex(hexcode)
+                self.custom_colors[name] = hexcode
                 self.save_custom_colors_palettes()
                 self.update_color_palette_dropdowns()
-        ttk.Button(window, text="Remove Selected Color", command=remove_color).pack(pady=2)
-
-        tk.Label(window, text="Palettes:").pack(pady=(15,2))
-        palettes_frame = tk.Frame(window)
-        palettes_frame.pack()
-
-        # Create Treeview for palette list with a single column
-        palette_tree = ttk.Treeview(palettes_frame, selectmode='browse', show='tree', height=7)
-        palette_tree.column('#0', width=200, stretch=tk.YES)
-        palette_tree.heading('#0', text='Palettes', anchor='w')
-        palette_tree.pack(side='left')
-        palette_scrollbar = ttk.Scrollbar(palettes_frame, orient='vertical', command=palette_tree.yview)
-        palette_scrollbar.pack(side='right', fill='y')
+                refresh_color_list(select_name=name)
+                popup.destroy()
+            hex_entry.bind('<Return>', lambda e: save())
+            ttk.Button(popup, text="Save", command=save).pack(pady=5)
+        
+        def edit_color():
+            sel = color_tree.selection()
+            if not sel:
+                messagebox.showinfo("Edit Color", "Please select a color to edit.", parent=window)
+                return
+            name = color_tree.item(sel[0])['tags'][0]
+            current_hex = self.custom_colors.get(name, '#000000')
+            result = colorchooser.askcolor(color=current_hex, title=f"Edit '{name}'")
+            if result[1]:
+                self.custom_colors[name] = result[1]
+                self.save_custom_colors_palettes()
+                self.update_color_palette_dropdowns()
+                refresh_color_list(select_name=name)
+        
+        def edit_color_by_hex():
+            sel = color_tree.selection()
+            if not sel:
+                messagebox.showinfo("Edit by Hex", "Please select a color to edit.", parent=window)
+                return
+            name = color_tree.item(sel[0])['tags'][0]
+            current_hex = self.custom_colors.get(name, '#000000')
+            popup = tk.Toplevel(window)
+            popup.title(f"Edit '{name}' by Hex Code")
+            popup.geometry("350x150")
+            popup.transient(window)
+            popup.grab_set()
+            ttk.Label(popup, text=f"Current: {current_hex}", font=(None, 9)).pack(pady=(15, 5))
+            ttk.Label(popup, text="New Hex Code:").pack(pady=(5, 2))
+            hex_entry = ttk.Entry(popup, width=35)
+            hex_entry.insert(0, current_hex)
+            hex_entry.pack(pady=2)
+            hex_entry.select_range(0, 'end')
+            hex_preview = tk.Canvas(popup, width=60, height=25, highlightthickness=1, highlightbackground='gray', bg='white')
+            hex_preview.pack(pady=5)
+            hex_preview.create_rectangle(2, 2, 58, 23, fill=current_hex, outline='black')
+            def update_preview(event=None):
+                hex_preview.delete('all')
+                hexcode = hex_entry.get().strip()
+                if not hexcode.startswith('#'):
+                    hexcode = '#' + hexcode
+                try:
+                    hex_preview.create_rectangle(2, 2, 58, 23, fill=hexcode, outline='black')
+                except:
+                    pass
+            hex_entry.bind('<KeyRelease>', update_preview)
+            hex_entry.focus_set()
+            def save():
+                hexcode = hex_entry.get().strip()
+                if not hexcode:
+                    messagebox.showerror("Error", "Please enter a hex code.", parent=popup)
+                    return
+                if not hexcode.startswith('#'):
+                    hexcode = '#' + hexcode
+                hexcode = self._to_hex(hexcode)
+                self.custom_colors[name] = hexcode
+                self.save_custom_colors_palettes()
+                self.update_color_palette_dropdowns()
+                refresh_color_list(select_name=name)
+                popup.destroy()
+            hex_entry.bind('<Return>', lambda e: save())
+            ttk.Button(popup, text="Save", command=save).pack(pady=5)
+        
+        def rename_color():
+            sel = color_tree.selection()
+            if not sel:
+                messagebox.showinfo("Rename Color", "Please select a color to rename.", parent=window)
+                return
+            old_name = color_tree.item(sel[0])['tags'][0]
+            hexcode = self.custom_colors.get(old_name)
+            popup = tk.Toplevel(window)
+            popup.title("Rename Color")
+            popup.geometry("300x100")
+            popup.transient(window)
+            popup.grab_set()
+            ttk.Label(popup, text=f"Enter new name for '{old_name}':").pack(pady=(15, 5))
+            name_entry = ttk.Entry(popup, width=30)
+            name_entry.insert(0, old_name)
+            name_entry.pack(pady=5)
+            name_entry.select_range(0, 'end')
+            name_entry.focus_set()
+            def save():
+                new_name = name_entry.get().strip()
+                if not new_name:
+                    messagebox.showerror("Error", "Please enter a color name.", parent=popup)
+                    return
+                if new_name != old_name:
+                    del self.custom_colors[old_name]
+                    self.custom_colors[new_name] = hexcode
+                    self.save_custom_colors_palettes()
+                    self.update_color_palette_dropdowns()
+                    refresh_color_list(select_name=new_name)
+                popup.destroy()
+            name_entry.bind('<Return>', lambda e: save())
+            ttk.Button(popup, text="Save", command=save).pack(pady=5)
+        
+        def remove_color():
+            sel = color_tree.selection()
+            if not sel:
+                return
+            name = color_tree.item(sel[0])['tags'][0]
+            if messagebox.askyesno("Remove Color", f"Remove '{name}'?", parent=window):
+                del self.custom_colors[name]
+                self.save_custom_colors_palettes()
+                self.update_color_palette_dropdowns()
+                refresh_color_list()
+        
+        color_tree.bind('<Double-1>', lambda e: edit_color())
+        
+        color_buttons_frame = ttk.Frame(colors_tab)
+        color_buttons_frame.grid(row=3, column=0, pady=10, padx=10, sticky='ew')
+        ttk.Button(color_buttons_frame, text="Add", command=add_color).pack(side='left', padx=2)
+        ttk.Button(color_buttons_frame, text="Add Hex", command=add_color_by_hex).pack(side='left', padx=2)
+        ttk.Button(color_buttons_frame, text="Edit", command=edit_color).pack(side='left', padx=2)
+        ttk.Button(color_buttons_frame, text="Edit Hex", command=edit_color_by_hex).pack(side='left', padx=2)
+        ttk.Button(color_buttons_frame, text="Rename", command=rename_color).pack(side='left', padx=2)
+        ttk.Button(color_buttons_frame, text="Remove", command=remove_color).pack(side='left', padx=2)
+        
+        # ==================== PALETTES TAB ====================
+        palettes_tab.columnconfigure(0, weight=1)
+        palettes_tab.rowconfigure(1, weight=1)
+        
+        ttk.Label(palettes_tab, text="Select a palette, then edit colors below", font=(None, 9)).grid(row=0, column=0, pady=(10, 5), sticky='w', padx=10)
+        
+        palettes_list_frame = ttk.Frame(palettes_tab)
+        palettes_list_frame.grid(row=1, column=0, sticky='nsew', padx=10, pady=5)
+        palettes_list_frame.columnconfigure(0, weight=1)
+        palettes_list_frame.rowconfigure(0, weight=1)
+        
+        palette_tree = ttk.Treeview(palettes_list_frame, columns=('name',), show='headings', height=6, selectmode='browse')
+        palette_tree.heading('#1', text='Palette Name', anchor='w')
+        palette_tree.column('#1', width=200, stretch=tk.YES)
+        palette_tree.grid(row=0, column=0, sticky='nsew')
+        
+        palette_scrollbar = ttk.Scrollbar(palettes_list_frame, orient='vertical', command=palette_tree.yview)
+        palette_scrollbar.grid(row=0, column=1, sticky='ns')
         palette_tree.configure(yscrollcommand=palette_scrollbar.set)
-
-        # Palette preview canvas
-        palette_preview = tk.Canvas(window, width=120, height=20, highlightthickness=0, bg='white')
-        palette_preview.pack(pady=(0, 8))
-
-        def show_palette_preview(event=None):
-            palette_preview.delete('all')
+        
+        palette_preview_frame = ttk.LabelFrame(palettes_tab, text="Palette Colors (click to edit)")
+        palette_preview_frame.grid(row=2, column=0, pady=10, padx=10, sticky='ew')
+        
+        palette_colors_canvas = tk.Canvas(palette_preview_frame, height=50, highlightthickness=0, bg='#f0f0f0')
+        palette_colors_canvas.pack(fill='x', padx=5, pady=10)
+        
+        current_palette_name = tk.StringVar(value="")
+        current_palette_colors = []
+        
+        def get_selected_palette_name():
             sel = palette_tree.selection()
             if sel:
-                item = palette_tree.item(sel[0])
-                name = item['text'].split(":")[0].strip()
-                colors = self.custom_palettes.get(name, [])
-                for i, hexcode in enumerate(colors[:8]):
-                    x0 = 10 + i*14
-                    x1 = x0 + 12
-                    palette_preview.create_rectangle(x0, 2, x1, 18, fill=hexcode, outline='black')
+                return palette_tree.item(sel[0])['tags'][0] if palette_tree.item(sel[0])['tags'] else None
+            return None
+        
+        def draw_palette_preview():
+            palette_colors_canvas.delete('all')
+            name = current_palette_name.get()
+            if not name or name not in self.custom_palettes:
+                return
+            colors = self.custom_palettes[name]
+            canvas_width = palette_colors_canvas.winfo_width()
+            if canvas_width < 50:
+                canvas_width = 500
+            n = len(colors)
+            if n == 0:
+                return
+            swatch_w = min(40, (canvas_width - 20) // max(n, 1))
+            swatch_h = 35
+            start_x = 10
+            for i, hexcode in enumerate(colors):
+                x0 = start_x + i * (swatch_w + 4)
+                x1 = x0 + swatch_w
+                y0 = 5
+                y1 = y0 + swatch_h
+                rect_id = palette_colors_canvas.create_rectangle(x0, y0, x1, y1, fill=hexcode, outline='black', width=1)
+                palette_colors_canvas.tag_bind(rect_id, '<Button-1>', lambda e, idx=i: edit_palette_color(idx))
+                palette_colors_canvas.tag_bind(rect_id, '<Enter>', lambda e, rid=rect_id: palette_colors_canvas.itemconfig(rid, width=2))
+                palette_colors_canvas.tag_bind(rect_id, '<Leave>', lambda e, rid=rect_id: palette_colors_canvas.itemconfig(rid, width=1))
+            add_x = start_x + n * (swatch_w + 4)
+            add_rect = palette_colors_canvas.create_rectangle(add_x, 5, add_x + swatch_w, 5 + swatch_h, fill='#e0e0e0', outline='gray', dash=(2, 2))
+            palette_colors_canvas.create_text(add_x + swatch_w//2, 5 + swatch_h//2, text="+", font=(None, 16, 'bold'), fill='gray')
+            palette_colors_canvas.tag_bind(add_rect, '<Button-1>', lambda e: add_color_to_palette())
+        
+        def edit_palette_color(idx):
+            name = current_palette_name.get()
+            if not name or name not in self.custom_palettes:
+                return
+            colors = self.custom_palettes[name]
+            if idx >= len(colors):
+                return
+            current_hex = colors[idx]
+            popup = tk.Toplevel(window)
+            popup.title(f"Edit Color #{idx+1}")
+            popup.geometry("320x200")
+            popup.transient(window)
+            popup.grab_set()
+            preview_canvas = tk.Canvas(popup, width=60, height=30, highlightthickness=1, highlightbackground='gray')
+            preview_canvas.pack(pady=(10, 5))
+            preview_canvas.create_rectangle(2, 2, 58, 28, fill=current_hex, outline='black')
+            hex_frame = ttk.Frame(popup)
+            hex_frame.pack(pady=5)
+            ttk.Label(hex_frame, text="Hex:").pack(side='left', padx=(0, 5))
+            hex_entry = ttk.Entry(hex_frame, width=12)
+            hex_entry.insert(0, current_hex)
+            hex_entry.pack(side='left')
+            def update_preview_from_hex(event=None):
+                preview_canvas.delete('all')
+                hexcode = hex_entry.get().strip()
+                if not hexcode.startswith('#'):
+                    hexcode = '#' + hexcode
+                try:
+                    preview_canvas.create_rectangle(2, 2, 58, 28, fill=hexcode, outline='black')
+                except:
+                    pass
+            hex_entry.bind('<KeyRelease>', update_preview_from_hex)
+            def save_hex():
+                hexcode = hex_entry.get().strip()
+                if not hexcode:
+                    return
+                if not hexcode.startswith('#'):
+                    hexcode = '#' + hexcode
+                hexcode = self._to_hex(hexcode)
+                self.custom_palettes[name][idx] = hexcode
+                self.save_custom_colors_palettes()
+                self.update_color_palette_dropdowns()
+                draw_palette_preview()
+                popup.destroy()
+            ttk.Button(hex_frame, text="Apply", command=save_hex).pack(side='left', padx=5)
+            def pick_new():
+                result = colorchooser.askcolor(color=current_hex, title="Pick new color")
+                if result[1]:
+                    self.custom_palettes[name][idx] = result[1]
+                    self.save_custom_colors_palettes()
+                    self.update_color_palette_dropdowns()
+                    draw_palette_preview()
+                    popup.destroy()
+            def remove_this():
+                if len(self.custom_palettes[name]) > 1:
+                    del self.custom_palettes[name][idx]
+                    self.save_custom_colors_palettes()
+                    self.update_color_palette_dropdowns()
+                    draw_palette_preview()
+                    popup.destroy()
+                else:
+                    messagebox.showwarning("Cannot Remove", "Palette must have at least one color.", parent=popup)
+            btn_frame = ttk.Frame(popup)
+            btn_frame.pack(pady=10)
+            ttk.Button(btn_frame, text="Color Picker", command=pick_new).pack(side='left', padx=5)
+            ttk.Button(btn_frame, text="Remove", command=remove_this).pack(side='left', padx=5)
+            ttk.Button(popup, text="Cancel", command=popup.destroy).pack(pady=5)
+        
+        def add_color_to_palette():
+            name = current_palette_name.get()
+            if not name or name not in self.custom_palettes:
+                messagebox.showinfo("Add Color", "Please select a palette first.", parent=window)
+                return
+            result = colorchooser.askcolor(title="Add color to palette")
+            if result[1]:
+                self.custom_palettes[name].append(result[1])
+                self.save_custom_colors_palettes()
+                self.update_color_palette_dropdowns()
+                draw_palette_preview()
+        
+        def show_palette_preview(event=None):
+            sel = palette_tree.selection()
+            if sel:
+                name = palette_tree.item(sel[0])['tags'][0]
+                current_palette_name.set(name)
+            else:
+                current_palette_name.set("")
+            draw_palette_preview()
         palette_tree.bind('<<TreeviewSelect>>', show_palette_preview)
-
-        def refresh_palette_list():
-            for item in palette_tree.get_children():
-                palette_tree.delete(item)
-            for name, val in self.custom_palettes.items():
-                preview = ', '.join([self._to_hex(c) for c in val[:5]])
-                palette_tree.insert('', 'end', text=f"{name}: {preview}...")
+        palette_colors_canvas.bind('<Configure>', lambda e: draw_palette_preview())
+        
+        def refresh_palette_list(select_name=None):
+            palette_tree.delete(*palette_tree.get_children())
+            for name in self.custom_palettes.keys():
+                palette_tree.insert('', 'end', values=(name,), tags=(name,))
+            if select_name:
+                for item in palette_tree.get_children():
+                    if palette_tree.item(item)['tags'][0] == select_name:
+                        palette_tree.selection_set(item)
+                        break
             show_palette_preview()
         refresh_palette_list()
-
+        
         def add_palette():
-            def save_palette():
-                name = name_entry.get().strip()
-                colors = colors_entry.get().strip().split(",")
-                if not name or not colors:
-                    messagebox.showerror("Error", "Palette name and color list required.")
-                    return
-                colors = [self._to_hex(c.strip()) for c in colors if c.strip()]
-                self.custom_palettes[name] = colors
-                refresh_palette_list()
-                self.save_custom_colors_palettes()
-                self.update_color_palette_dropdowns()
-                popup.destroy()
             popup = tk.Toplevel(window)
-            ttk.Label(popup, text="Palette Name:").pack()
-            name_entry = ttk.Entry(popup)
-            name_entry.pack()
-            ttk.Label(popup, text="Colors (comma separated hex codes):").pack()
-            colors_entry = ttk.Entry(popup)
-            colors_entry.pack()
-            ttk.Button(popup, text="Save Palette", command=save_palette).pack()
-        ttk.Button(window, text="Add Palette", command=add_palette).pack(pady=2)
-
-        def remove_palette():
-            selected = palette_tree.selection()
-            if not selected:
-                return
-            item = palette_tree.item(selected[0])
-            name = item['text'].split(":")[0].strip()
-            if name in self.custom_palettes:
-                del self.custom_palettes[name]
-                refresh_palette_list()
+            popup.title("New Palette")
+            popup.geometry("300x100")
+            popup.transient(window)
+            popup.grab_set()
+            ttk.Label(popup, text="Enter a name for the new palette:").pack(pady=(15, 5))
+            name_entry = ttk.Entry(popup, width=30)
+            name_entry.pack(pady=5)
+            name_entry.focus_set()
+            def save():
+                name = name_entry.get().strip()
+                if not name:
+                    messagebox.showerror("Error", "Please enter a palette name.", parent=popup)
+                    return
+                result = colorchooser.askcolor(title="Pick first color for palette")
+                if result[1]:
+                    self.custom_palettes[name] = [result[1]]
+                    self.save_custom_colors_palettes()
+                    self.update_color_palette_dropdowns()
+                    refresh_palette_list(select_name=name)
+                    popup.destroy()
+                else:
+                    messagebox.showerror("Error", "Please pick at least one color.", parent=popup)
+            name_entry.bind('<Return>', lambda e: save())
+            ttk.Button(popup, text="Next: Pick Color", command=save).pack(pady=5)
+        
+        def add_palette_from_hex():
+            popup = tk.Toplevel(window)
+            popup.title("Create Palette from Hex Codes")
+            popup.geometry("450x220")
+            popup.transient(window)
+            popup.grab_set()
+            ttk.Label(popup, text="Palette Name:").pack(pady=(15, 5))
+            name_entry = ttk.Entry(popup, width=40)
+            name_entry.pack(pady=2)
+            ttk.Label(popup, text="Hex Codes (comma or space separated):").pack(pady=(10, 5))
+            ttk.Label(popup, text="e.g.: #FF5733, #33FF57, #3357FF  or  FF5733 33FF57 3357FF", font=(None, 8)).pack()
+            hex_entry = ttk.Entry(popup, width=50)
+            hex_entry.pack(pady=5)
+            preview_canvas = tk.Canvas(popup, height=30, highlightthickness=0, bg='#f0f0f0')
+            preview_canvas.pack(fill='x', padx=20, pady=5)
+            def update_preview(event=None):
+                preview_canvas.delete('all')
+                text = hex_entry.get().strip()
+                if not text:
+                    return
+                parts = [p.strip() for p in text.replace(',', ' ').split() if p.strip()]
+                colors = []
+                for p in parts:
+                    if not p.startswith('#'):
+                        p = '#' + p
+                    try:
+                        colors.append(self._to_hex(p))
+                    except:
+                        pass
+                for i, c in enumerate(colors[:12]):
+                    x0 = 10 + i * 32
+                    try:
+                        preview_canvas.create_rectangle(x0, 2, x0 + 28, 26, fill=c, outline='black')
+                    except:
+                        pass
+            hex_entry.bind('<KeyRelease>', update_preview)
+            name_entry.focus_set()
+            def save():
+                name = name_entry.get().strip()
+                text = hex_entry.get().strip()
+                if not name:
+                    messagebox.showerror("Error", "Please enter a palette name.", parent=popup)
+                    return
+                if not text:
+                    messagebox.showerror("Error", "Please enter at least one hex code.", parent=popup)
+                    return
+                parts = [p.strip() for p in text.replace(',', ' ').split() if p.strip()]
+                colors = []
+                for p in parts:
+                    if not p.startswith('#'):
+                        p = '#' + p
+                    try:
+                        colors.append(self._to_hex(p))
+                    except:
+                        pass
+                if not colors:
+                    messagebox.showerror("Error", "No valid hex codes found.", parent=popup)
+                    return
+                self.custom_palettes[name] = colors
                 self.save_custom_colors_palettes()
                 self.update_color_palette_dropdowns()
-        ttk.Button(window, text="Remove Selected Palette", command=remove_palette).pack(pady=2)
-
+                refresh_palette_list(select_name=name)
+                popup.destroy()
+            hex_entry.bind('<Return>', lambda e: save())
+            ttk.Button(popup, text="Create Palette", command=save).pack(pady=10)
+        
+        def rename_palette():
+            sel = palette_tree.selection()
+            if not sel:
+                messagebox.showinfo("Rename Palette", "Please select a palette to rename.", parent=window)
+                return
+            old_name = palette_tree.item(sel[0])['tags'][0]
+            colors = self.custom_palettes.get(old_name, [])
+            popup = tk.Toplevel(window)
+            popup.title("Rename Palette")
+            popup.geometry("300x100")
+            popup.transient(window)
+            popup.grab_set()
+            ttk.Label(popup, text=f"Enter new name for '{old_name}':").pack(pady=(15, 5))
+            name_entry = ttk.Entry(popup, width=30)
+            name_entry.insert(0, old_name)
+            name_entry.pack(pady=5)
+            name_entry.select_range(0, 'end')
+            name_entry.focus_set()
+            def save():
+                new_name = name_entry.get().strip()
+                if not new_name:
+                    messagebox.showerror("Error", "Please enter a palette name.", parent=popup)
+                    return
+                if new_name != old_name:
+                    del self.custom_palettes[old_name]
+                    self.custom_palettes[new_name] = colors
+                    self.save_custom_colors_palettes()
+                    self.update_color_palette_dropdowns()
+                    refresh_palette_list(select_name=new_name)
+                popup.destroy()
+            name_entry.bind('<Return>', lambda e: save())
+            ttk.Button(popup, text="Save", command=save).pack(pady=5)
+        
+        def duplicate_palette():
+            sel = palette_tree.selection()
+            if not sel:
+                messagebox.showinfo("Duplicate Palette", "Please select a palette to duplicate.", parent=window)
+                return
+            old_name = palette_tree.item(sel[0])['tags'][0]
+            colors = self.custom_palettes.get(old_name, [])[:]
+            new_name = f"{old_name} (copy)"
+            i = 2
+            while new_name in self.custom_palettes:
+                new_name = f"{old_name} (copy {i})"
+                i += 1
+            self.custom_palettes[new_name] = colors
+            self.save_custom_colors_palettes()
+            self.update_color_palette_dropdowns()
+            refresh_palette_list(select_name=new_name)
+        
+        def remove_palette():
+            sel = palette_tree.selection()
+            if not sel:
+                return
+            name = palette_tree.item(sel[0])['tags'][0]
+            if messagebox.askyesno("Remove Palette", f"Remove '{name}'?", parent=window):
+                del self.custom_palettes[name]
+                self.save_custom_colors_palettes()
+                self.update_color_palette_dropdowns()
+                refresh_palette_list()
+        
+        palette_buttons_frame = ttk.Frame(palettes_tab)
+        palette_buttons_frame.grid(row=3, column=0, pady=10, padx=10, sticky='ew')
+        ttk.Button(palette_buttons_frame, text="Add", command=add_palette).pack(side='left', padx=2)
+        ttk.Button(palette_buttons_frame, text="From Hex", command=add_palette_from_hex).pack(side='left', padx=2)
+        ttk.Button(palette_buttons_frame, text="Rename", command=rename_palette).pack(side='left', padx=2)
+        ttk.Button(palette_buttons_frame, text="Duplicate", command=duplicate_palette).pack(side='left', padx=2)
+        ttk.Button(palette_buttons_frame, text="Remove", command=remove_palette).pack(side='left', padx=2)
+        
         ttk.Button(window, text="Close", command=window.destroy).pack(pady=10)
 
     def cleanup(self):
