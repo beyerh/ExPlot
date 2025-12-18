@@ -1,0 +1,19 @@
+#commands to compile for Intel CPU on apple silicon using Rosetta
+#Install phtyon universal2 from python.org first
+
+rm -rf .venv_x86
+arch -x86_64 /Library/Frameworks/Python.framework/Versions/3.11/bin/python3 -m venv .venv_x86
+
+arch -x86_64 bash -lc "source .venv_x86/bin/activate && pip install -U pip"
+arch -x86_64 bash -lc "source .venv_x86/bin/activate && pip install --only-binary=:all: -r requirements_intel.txt"
+arch -x86_64 bash -lc "source .venv_x86/bin/activate && pip install nuitka"
+
+arch -x86_64 bash -lc "source .venv_x86/bin/activate && python -c 'import fitz; print(fitz.__doc__[:60])'"
+
+rm -rf build
+arch -x86_64 bash -lc "export MACOSX_DEPLOYMENT_TARGET=11.0; source .venv_x86/bin/activate && ./build.sh"
+
+ls -la build
+file build/ExPlot.app/Contents/MacOS/ExPlot
+
+arch -x86_64 open build/ExPlot.app

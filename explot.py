@@ -1,6 +1,6 @@
 # ExPlot - Data visualization tool for Excel files
 
-VERSION = "0.7.1"
+VERSION = "0.7.2"
 # =====================================================================
 
 import tkinter as tk
@@ -15,6 +15,9 @@ import matplotlib.pyplot as plt
 import matplotlib
 from matplotlib.ticker import AutoMinorLocator, MultipleLocator, LogLocator, NullLocator, FixedLocator, FuncFormatter
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.path import Path as MplPath
+from matplotlib.lines import Line2D
+from matplotlib.transforms import blended_transform_factory
 from PIL import Image, ImageTk
 import json
 import time
@@ -1691,6 +1694,8 @@ class ExPlotApp:
         # Scale factor as percentage (100 = 100% = 1x, 175 = 175% = 1.75x)
         self.preview_dpi = tk.IntVar(value=175)  # Keep variable name for compatibility, but now means scale %
 
+        self.start_maximized_var = tk.BooleanVar(value=True)
+
         self.root = root
         self.version = VERSION  # Use the global VERSION constant
         self.root.title(f'ExPlot v{VERSION}')
@@ -1749,6 +1754,9 @@ class ExPlotApp:
         self.legend_visible_var = tk.BooleanVar(value=True)
         self.legend_position_var = tk.StringVar(value="outside top")
         self.legend_ncol_var = tk.IntVar(value=0)  # 0 = auto
+
+        self.ybreak_marker_style_var = tk.StringVar(value="Connected")
+        self.ybreak_marker_style_user_set_var = tk.BooleanVar(value=False)
         
         # --- XY Fitting variables ---
         self.use_fitting_var = tk.BooleanVar(value=False)
@@ -2719,6 +2727,7 @@ class ExPlotApp:
         # Variables to hold settings
         # General tab
         self.settings_plot_kind_var = tk.StringVar(value=self.plot_kind_var.get())
+        self.settings_start_maximized_var = tk.BooleanVar(value=self.start_maximized_var.get() if hasattr(self, 'start_maximized_var') else True)
         
         # Plot Settings tab
         self.settings_show_stripplot_var = tk.BooleanVar(value=self.show_stripplot_var.get())
@@ -2747,6 +2756,24 @@ class ExPlotApp:
         self.settings_plot_width_var = tk.DoubleVar(value=self.plot_width_var.get())
         self.settings_plot_height_var = tk.DoubleVar(value=self.plot_height_var.get())
         self.settings_preview_dpi_var = tk.IntVar(value=self.preview_dpi.get() if hasattr(self, 'preview_dpi') else 175)
+
+        try:
+            self.settings_ybreak_marker_style_var = tk.StringVar(value=self.ybreak_marker_style_var.get())
+        except Exception:
+            self.settings_ybreak_marker_style_var = tk.StringVar(value="Connected")
+
+        try:
+            gap_val = 0.07
+            if hasattr(self, 'ybreak_gap_entry'):
+                gap_str = self.ybreak_gap_entry.get().strip()
+                if gap_str:
+                    if '-' in gap_str and not gap_str.startswith('-'):
+                        gap_str = gap_str.split('-')[0]
+                    gap_val = float(gap_str)
+            gap_val = max(0.0, min(0.3, gap_val))
+        except Exception:
+            gap_val = 0.07
+        self.settings_ybreak_gap_var = tk.DoubleVar(value=gap_val)
         
         # XY Plot tab
         self.settings_xy_marker_symbol_var = tk.StringVar(value=self.xy_marker_symbol_var.get())
@@ -2767,6 +2794,8 @@ class ExPlotApp:
         # General Tab Content
         ttk.Label(general_tab, text="Default Plot Type:", anchor="w").grid(row=0, column=0, sticky="w", padx=10, pady=10)
         ttk.Combobox(general_tab, textvariable=self.settings_plot_kind_var, values=["bar", "box", "violin", "xy"], width=15, state="readonly").grid(row=0, column=1, sticky="w", padx=10, pady=10)
+
+        ttk.Checkbutton(general_tab, text="Start maximized", variable=self.settings_start_maximized_var).grid(row=1, column=0, columnspan=2, sticky="w", padx=10, pady=5)
         
         # Plot Settings Tab Content
         ttk.Checkbutton(plot_settings_tab, text="Show stripplot", variable=self.settings_show_stripplot_var).grid(row=0, column=0, sticky="w", padx=10, pady=5)
@@ -2816,6 +2845,12 @@ class ExPlotApp:
         
         ttk.Label(appearance_tab, text="Preview DPI:", anchor="w").grid(row=3, column=0, sticky="w", padx=10, pady=10)
         tk.Spinbox(appearance_tab, from_=50, to=300, increment=25, textvariable=self.settings_preview_dpi_var, width=5).grid(row=3, column=1, sticky="w", padx=10, pady=10)
+
+        ttk.Label(appearance_tab, text="Y-break gap:", anchor="w").grid(row=4, column=0, sticky="w", padx=10, pady=10)
+        tk.Spinbox(appearance_tab, from_=0.0, to=0.3, increment=0.01, textvariable=self.settings_ybreak_gap_var, width=6).grid(row=4, column=1, sticky="w", padx=10, pady=10)
+
+        ttk.Label(appearance_tab, text="Y-break marker:", anchor="w").grid(row=5, column=0, sticky="w", padx=10, pady=10)
+        ttk.Combobox(appearance_tab, textvariable=self.settings_ybreak_marker_style_var, values=["Connected", "Diagonal"], width=12, state="readonly").grid(row=5, column=1, sticky="w", padx=10, pady=10)
         
         # Bar Graph Tab Content
         ttk.Checkbutton(bar_graph_tab, text="Draw bar outlines", variable=self.settings_bar_outline_var).grid(row=0, column=0, sticky="w", padx=10, pady=10)
@@ -2950,6 +2985,26 @@ class ExPlotApp:
             # Update preview DPI
             if hasattr(self, 'preview_dpi'):
                 self.preview_dpi.set(self.settings_preview_dpi_var.get())
+
+            if hasattr(self, 'start_maximized_var') and hasattr(self, 'settings_start_maximized_var'):
+                self.start_maximized_var.set(self.settings_start_maximized_var.get())
+
+            try:
+                if hasattr(self, 'ybreak_marker_style_var') and hasattr(self, 'settings_ybreak_marker_style_var'):
+                    self.ybreak_marker_style_var.set(self.settings_ybreak_marker_style_var.get())
+                    if hasattr(self, 'ybreak_marker_style_user_set_var'):
+                        self.ybreak_marker_style_user_set_var.set(True)
+            except Exception:
+                pass
+
+            try:
+                if hasattr(self, 'ybreak_gap_entry') and hasattr(self, 'settings_ybreak_gap_var'):
+                    gap = float(self.settings_ybreak_gap_var.get())
+                    gap = max(0.0, min(0.3, gap))
+                    self.ybreak_gap_entry.delete(0, tk.END)
+                    self.ybreak_gap_entry.insert(0, f"{gap:g}")
+            except Exception:
+                pass
             # Then save preferences
             self.save_user_preferences()
             messagebox.showinfo("Settings Saved", "Your preferences have been saved.")
@@ -5174,7 +5229,12 @@ class ExPlotApp:
             'theme_name': 'light',
             'dark_mode': False,
             # Preview settings
-            'preview_dpi': 175  # Default DPI for preview images
+            'preview_dpi': 175,  # Default DPI for preview images
+            'start_maximized': True,
+            'ybreak_marker_style': "Connected",
+            'ybreak_marker_style_user_set': False,
+            'ybreak_marker_style_user_set_schema': 1,
+            'ybreak_gap': 0.07
         }
         
         # Set default colors after loading custom colors
@@ -5277,6 +5337,33 @@ class ExPlotApp:
             self.plot_height_var.set(preferences['plot_height'])
         if hasattr(self, 'preview_dpi') and 'preview_dpi' in preferences:
             self.preview_dpi.set(preferences['preview_dpi'])
+
+        if hasattr(self, 'start_maximized_var') and 'start_maximized' in preferences:
+            self.start_maximized_var.set(preferences['start_maximized'])
+
+        if hasattr(self, 'ybreak_marker_style_var') and 'ybreak_marker_style' in preferences:
+            user_set = bool(preferences.get('ybreak_marker_style_user_set', False))
+            schema = int(preferences.get('ybreak_marker_style_user_set_schema', 0) or 0)
+            if schema < 1:
+                user_set = False
+
+            if not user_set:
+                self.ybreak_marker_style_var.set('Connected')
+                if hasattr(self, 'ybreak_marker_style_user_set_var'):
+                    self.ybreak_marker_style_user_set_var.set(False)
+            else:
+                self.ybreak_marker_style_var.set(preferences['ybreak_marker_style'])
+                if hasattr(self, 'ybreak_marker_style_user_set_var'):
+                    self.ybreak_marker_style_user_set_var.set(True)
+
+        if hasattr(self, 'ybreak_gap_entry') and 'ybreak_gap' in preferences:
+            try:
+                gap = float(preferences['ybreak_gap'])
+                gap = max(0.0, min(0.3, gap))
+                self.ybreak_gap_entry.delete(0, tk.END)
+                self.ybreak_gap_entry.insert(0, f"{gap:g}")
+            except Exception:
+                pass
             
         # Color settings
         if 'single_color' in preferences and hasattr(self, 'single_color_var'):
@@ -5335,6 +5422,29 @@ class ExPlotApp:
             preferences['outline_color'] = self.outline_color_var.get()
         if hasattr(self, 'bar_gap_multiplier_var'):
             preferences['bar_gap_multiplier'] = self.bar_gap_multiplier_var.get()
+
+        if hasattr(self, 'start_maximized_var'):
+            preferences['start_maximized'] = self.start_maximized_var.get()
+
+        if hasattr(self, 'ybreak_marker_style_var'):
+            preferences['ybreak_marker_style'] = self.ybreak_marker_style_var.get()
+            if hasattr(self, 'ybreak_marker_style_user_set_var'):
+                preferences['ybreak_marker_style_user_set'] = bool(self.ybreak_marker_style_user_set_var.get())
+            else:
+                preferences['ybreak_marker_style_user_set'] = False
+            preferences['ybreak_marker_style_user_set_schema'] = 1
+
+        if hasattr(self, 'ybreak_gap_entry'):
+            try:
+                gap_str = self.ybreak_gap_entry.get().strip()
+                if gap_str:
+                    if '-' in gap_str and not gap_str.startswith('-'):
+                        gap_str = gap_str.split('-')[0]
+                    gap = float(gap_str)
+                    gap = max(0.0, min(0.3, gap))
+                    preferences['ybreak_gap'] = gap
+            except Exception:
+                pass
             
         # Save theme settings to both preferences and dedicated file
         if hasattr(self, 'theme_name') and hasattr(self, 'dark_mode'):
@@ -5996,8 +6106,26 @@ class ExPlotApp:
         tk.Label(ybreak_grid, text="Gap:", width=12, anchor="w").grid(row=2, column=0, sticky="w", pady=2)
         self.ybreak_gap_entry = ttk.Entry(ybreak_grid, width=10, state="disabled")
         self.ybreak_gap_entry.grid(row=2, column=1, sticky="w", pady=2)
-        self.ybreak_gap_entry.insert(0, "0.05")
+        self.ybreak_gap_entry.insert(0, "0.07")
         tk.Label(ybreak_grid, text="(0-0.3)", width=10, anchor="w").grid(row=2, column=2, columnspan=2, sticky="w", padx=(10,0), pady=2)
+
+        tk.Label(ybreak_grid, text="Marker style:", width=12, anchor="w").grid(row=3, column=0, sticky="w", pady=2)
+        self.ybreak_marker_style_dropdown = ttk.Combobox(
+            ybreak_grid,
+            textvariable=self.ybreak_marker_style_var,
+            values=["Diagonal", "Connected"],
+            state="disabled",
+            width=10
+        )
+        self.ybreak_marker_style_dropdown.grid(row=3, column=1, sticky="w", pady=2)
+
+        try:
+            def _on_ybreak_marker_style_selected(_event=None):
+                if hasattr(self, 'ybreak_marker_style_user_set_var'):
+                    self.ybreak_marker_style_user_set_var.set(True)
+            self.ybreak_marker_style_dropdown.bind('<<ComboboxSelected>>', _on_ybreak_marker_style_selected)
+        except Exception:
+            pass
 
     def update_ybreak_options(self):
         """Enable or disable Y-axis break options based on checkbox state"""
@@ -6007,12 +6135,16 @@ class ExPlotApp:
             self.ybreak_ratio_entry.config(state="normal")
             if hasattr(self, 'ybreak_gap_entry'):
                 self.ybreak_gap_entry.config(state="normal")
+            if hasattr(self, 'ybreak_marker_style_dropdown'):
+                self.ybreak_marker_style_dropdown.config(state="readonly")
         else:
             self.ybreak_min_entry.config(state="disabled")
             self.ybreak_max_entry.config(state="disabled")
             self.ybreak_ratio_entry.config(state="disabled")
             if hasattr(self, 'ybreak_gap_entry'):
                 self.ybreak_gap_entry.config(state="disabled")
+            if hasattr(self, 'ybreak_marker_style_dropdown'):
+                self.ybreak_marker_style_dropdown.config(state="disabled")
 
     def update_xlog_options(self):
         """Enable or disable X-axis log options based on checkbox state"""
@@ -10126,7 +10258,7 @@ class ExPlotApp:
 
             gap_frac = getattr(self, 'ybreak_gap', None)
             if gap_frac is None:
-                gap_frac = 0.05
+                gap_frac = 0.07
             gap_frac = max(0.0, min(0.3, float(gap_frac)))
             gap = total_height * gap_frac
             available_height = max(total_height - gap, 0)
@@ -10234,22 +10366,132 @@ class ExPlotApp:
                     gl.set_zorder(src.get_zorder())
         except Exception as e:
             print(f"[DEBUG] Could not copy grid settings to upper axis: {e}")
-        
-        # Add diagonal break lines
-        d = 0.015  # Size of diagonal lines
-        kwargs = dict(transform=ax_upper.transAxes, color='black', 
-                     clip_on=False, linewidth=linewidth)
-        
-        # Draw diagonal lines on upper axis (bottom edge)
-        ax_upper.plot((-d, +d), (-d, +d), **kwargs)
-        if show_frame:
-            ax_upper.plot((1 - d, 1 + d), (-d, +d), **kwargs)
-        
-        # Draw diagonal lines on lower axis (top edge)
-        kwargs.update(transform=ax_lower.transAxes)
-        ax_lower.plot((-d, +d), (1 - d, 1 + d), **kwargs)
-        if show_frame:
-            ax_lower.plot((1 - d, 1 + d), (1 - d, 1 + d), **kwargs)
+
+        try:
+            if hasattr(self, '_ybreak_marker_artists') and self._ybreak_marker_artists:
+                for a in list(self._ybreak_marker_artists):
+                    try:
+                        a.remove()
+                    except Exception:
+                        pass
+                self._ybreak_marker_artists = []
+        except Exception:
+            pass
+
+        try:
+            if hasattr(self, '_ybreak_frame_connector_artists') and self._ybreak_frame_connector_artists:
+                for a in list(self._ybreak_frame_connector_artists):
+                    try:
+                        a.remove()
+                    except Exception:
+                        pass
+                self._ybreak_frame_connector_artists = []
+        except Exception:
+            pass
+
+        style = None
+        try:
+            style = self.ybreak_marker_style_var.get() if hasattr(self, 'ybreak_marker_style_var') else None
+        except Exception:
+            style = None
+        style = style or "Diagonal"
+
+        try:
+            marker_lw = ax_lower.spines['left'].get_linewidth()
+        except Exception:
+            marker_lw = linewidth
+
+        if style == "Connected":
+            try:
+                fig = ax_lower.figure
+                lower_pos = ax_lower.get_position().frozen()
+                upper_pos = ax_upper.get_position().frozen()
+                y_bot_gap = lower_pos.y0 + lower_pos.height
+                y_top_gap = upper_pos.y0
+                gap_h = max(y_top_gap - y_bot_gap, 0)
+
+                # Connect directly to the broken spine endpoints
+                mid_y = (y_bot_gap + y_top_gap) / 2
+                dx_fig = max(0.004, min(0.012, lower_pos.width * 0.03))
+                dx_axes = (dx_fig / lower_pos.width) if lower_pos.width else 0.03
+                dx_axes = max(0.015, min(0.08, dx_axes))
+
+                # x in axes coords (so it hits the y-axis spine exactly), y in figure coords (so it sits in the gap)
+                x0 = 0.0
+                t = blended_transform_factory(ax_lower.transAxes, fig.transFigure)
+
+                # Single connected 'zig' (like '>')
+                ys = [y_top_gap, mid_y, y_bot_gap]
+                xs = [x0, x0 + dx_axes, x0]
+
+                line = Line2D(xs, ys, transform=t, color='black', linewidth=marker_lw, clip_on=False)
+                try:
+                    line.set_solid_capstyle('projecting')
+                except Exception:
+                    pass
+                try:
+                    line.set_zorder(ax_lower.spines['left'].get_zorder() + 2)
+                except Exception:
+                    pass
+                fig.add_artist(line)
+                self._ybreak_marker_artists = [line]
+            except Exception:
+                pass
+        else:
+            # Diagonal slashes, but drawn as fixed-size marker paths (consistent visual angle)
+            marker_path = MplPath([(-1, -1), (1, 1)], [MplPath.MOVETO, MplPath.LINETO])
+            x_left = 0.0
+            x_right = 1.0
+            ms = 5.0
+
+            marker_kwargs_upper = dict(
+                marker=marker_path,
+                markersize=ms,
+                markeredgewidth=marker_lw,
+                color='black',
+                linestyle='none',
+                transform=ax_upper.transAxes,
+                clip_on=False
+            )
+            ax_upper.plot([x_left], [0], **marker_kwargs_upper)
+            if show_frame:
+                ax_upper.plot([x_right], [0], **marker_kwargs_upper)
+
+            marker_kwargs_lower = marker_kwargs_upper.copy()
+            marker_kwargs_lower['transform'] = ax_lower.transAxes
+            ax_lower.plot([x_left], [1], **marker_kwargs_lower)
+            if show_frame:
+                ax_lower.plot([x_right], [1], **marker_kwargs_lower)
+
+        # Close the frame gap on the right side (opposite of the y-axis break) when frame is enabled.
+        try:
+            if show_frame and ax_lower.spines['right'].get_visible():
+                fig = ax_lower.figure
+                lower_pos = ax_lower.get_position().frozen()
+                upper_pos = ax_upper.get_position().frozen()
+                y_bot_gap = lower_pos.y0 + lower_pos.height
+                y_top_gap = upper_pos.y0
+
+                x_right = upper_pos.x0 + upper_pos.width
+                spine = ax_lower.spines['right']
+                spine_lw = spine.get_linewidth()
+                spine_color = spine.get_edgecolor()
+
+                conn = Line2D([x_right, x_right], [y_bot_gap, y_top_gap],
+                              transform=fig.transFigure, color=spine_color,
+                              linewidth=spine_lw, clip_on=False)
+                try:
+                    conn.set_solid_capstyle('projecting')
+                except Exception:
+                    pass
+                try:
+                    conn.set_zorder(spine.get_zorder() + 1)
+                except Exception:
+                    pass
+                fig.add_artist(conn)
+                self._ybreak_frame_connector_artists = [conn]
+        except Exception:
+            pass
         
         # Handle legend - move from lower to upper axis
         lower_legend = ax_lower.get_legend()
@@ -10356,32 +10598,252 @@ class ExPlotApp:
             return
             
         try:
-            # Get figure size and DPI (use figure's native DPI - don't modify it)
-            fig_width_inches, fig_height_inches = self.fig.get_size_inches()
             fig_dpi = self.fig.dpi
-            
-            # Calculate canvas size in pixels
+
+            if (not hasattr(self, '_preview_base_geometry') or
+                self._preview_base_geometry is None or
+                self._preview_base_geometry.get('fig_id') != id(self.fig)):
+                self._preview_base_geometry = {
+                    'fig_id': id(self.fig),
+                    'fig_size': tuple(self.fig.get_size_inches()),
+                    'axes_positions': [ax.get_position().bounds for ax in self.fig.axes]
+                }
+            else:
+                try:
+                    base_size = self._preview_base_geometry.get('fig_size')
+                    base_axes = self._preview_base_geometry.get('axes_positions')
+                    if base_size and base_axes and len(base_axes) == len(self.fig.axes):
+                        self.fig.set_size_inches(base_size[0], base_size[1])
+                        for ax, pos in zip(self.fig.axes, base_axes):
+                            ax.set_position(pos)
+                except Exception:
+                    pass
+
+            base_w_in, base_h_in = self._preview_base_geometry.get('fig_size')
+            base_w_px = int(base_w_in * fig_dpi)
+            base_h_px = int(base_h_in * fig_dpi)
+
+            legend_position = self.legend_position_var.get() if hasattr(self, 'legend_position_var') else 'best'
+
+            avg_dim = (base_w_px + base_h_px) / 2
+            pad_px = max(int(avg_dim * 0.60), 600)
+            if legend_position == 'outside right':
+                pad_px = max(int(avg_dim * 0.90), 900)
+            elif legend_position == 'outside top':
+                pad_px = max(int(avg_dim * 0.75), 800)
+
+            new_w_px = base_w_px + (2 * pad_px)
+            new_h_px = base_h_px + (2 * pad_px)
+            new_w_in = new_w_px / fig_dpi
+            new_h_in = new_h_px / fig_dpi
+
+            self.fig.set_size_inches(new_w_in, new_h_in)
+
+            try:
+                base_axes = self._preview_base_geometry.get('axes_positions')
+                if base_axes and len(base_axes) == len(self.fig.axes):
+                    for ax, b in zip(self.fig.axes, base_axes):
+                        left_px = b[0] * base_w_px
+                        bottom_px = b[1] * base_h_px
+                        width_px = b[2] * base_w_px
+                        height_px = b[3] * base_h_px
+                        ax.set_position([
+                            (left_px + pad_px) / new_w_px,
+                            (bottom_px + pad_px) / new_h_px,
+                            width_px / new_w_px,
+                            height_px / new_h_px
+                        ])
+            except Exception:
+                pass
+
+            try:
+                if getattr(self, 'ybreak_enabled', False) and getattr(self, 'ax_lower', None) is not None and getattr(self, 'ax_upper', None) is not None:
+                    try:
+                        lower_pos = self.ax_lower.get_position().frozen()
+                        upper_pos = self.ax_upper.get_position().frozen()
+
+                        x0 = min(lower_pos.x0, upper_pos.x0)
+                        y0 = min(lower_pos.y0, upper_pos.y0)
+                        x1 = max(lower_pos.x0 + lower_pos.width, upper_pos.x0 + upper_pos.width)
+                        y1 = max(lower_pos.y0 + lower_pos.height, upper_pos.y0 + upper_pos.height)
+
+                        bbox_cls = type(lower_pos)
+                        self._ybreak_base_pos = bbox_cls.from_extents(x0, y0, x1, y1).frozen()
+                    except Exception:
+                        self._ybreak_base_pos = self.ax_lower.get_position().frozen()
+
+                    if hasattr(self, '_ybreak_ylabel_artist') and self._ybreak_ylabel_artist is not None:
+                        try:
+                            old_x, _ = self._ybreak_ylabel_artist.get_position()
+                            new_x = (old_x * base_w_px + pad_px) / new_w_px
+
+                            lower_pos = self.ax_lower.get_position().frozen()
+                            upper_pos = self.ax_upper.get_position().frozen()
+                            y_center = (lower_pos.y0 + (upper_pos.y0 + upper_pos.height)) / 2
+
+                            self._ybreak_ylabel_artist.set_position((new_x, y_center))
+                        except Exception:
+                            pass
+
+                    try:
+                        if (hasattr(self, '_ybreak_marker_artists') and self._ybreak_marker_artists and
+                            hasattr(self, 'ybreak_marker_style_var') and self.ybreak_marker_style_var.get() == 'Connected'):
+                            lower_pos = self.ax_lower.get_position().frozen()
+                            upper_pos = self.ax_upper.get_position().frozen()
+                            y_bot_gap = lower_pos.y0 + lower_pos.height
+                            y_top_gap = upper_pos.y0
+                            gap_h = max(y_top_gap - y_bot_gap, 0)
+                            mid_y = (y_bot_gap + y_top_gap) / 2
+                            dx_fig = max(0.004, min(0.012, lower_pos.width * 0.03))
+                            dx_axes = (dx_fig / lower_pos.width) if lower_pos.width else 0.03
+                            dx_axes = max(0.015, min(0.08, dx_axes))
+                            x0 = 0.0
+
+                            ys = [y_top_gap, mid_y, y_bot_gap]
+                            xs = [x0, x0 + dx_axes, x0]
+
+                            for a in list(self._ybreak_marker_artists):
+                                try:
+                                    try:
+                                        a.set_transform(blended_transform_factory(self.ax_lower.transAxes, self.fig.transFigure))
+                                    except Exception:
+                                        pass
+                                    a.set_data(xs, ys)
+                                    try:
+                                        a.set_solid_capstyle('projecting')
+                                    except Exception:
+                                        pass
+                                    try:
+                                        a.set_zorder(self.ax_lower.spines['left'].get_zorder() + 2)
+                                    except Exception:
+                                        pass
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
+
+                    try:
+                        if (hasattr(self, '_ybreak_frame_connector_artists') and self._ybreak_frame_connector_artists and
+                            getattr(self, 'ax_lower', None) is not None and getattr(self, 'ax_upper', None) is not None):
+                            lower_pos = self.ax_lower.get_position().frozen()
+                            upper_pos = self.ax_upper.get_position().frozen()
+                            y_bot_gap = lower_pos.y0 + lower_pos.height
+                            y_top_gap = upper_pos.y0
+                            x_right = upper_pos.x0 + upper_pos.width
+
+                            for a in list(self._ybreak_frame_connector_artists):
+                                try:
+                                    a.set_data([x_right, x_right], [y_bot_gap, y_top_gap])
+                                    try:
+                                        a.set_transform(self.fig.transFigure)
+                                    except Exception:
+                                        pass
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            fig_width_inches, fig_height_inches = self.fig.get_size_inches()
             canvas_width = int(fig_width_inches * fig_dpi)
             canvas_height = int(fig_height_inches * fig_dpi)
+
+            pad_left = 0
+            pad_top = 0
+            padded_width = canvas_width
+            padded_height = canvas_height
+
+            padding_frame = tk.Frame(self.canvas_frame, bg='white', width=padded_width, height=padded_height)
+            padding_frame.pack(fill='none', expand=False, anchor='nw')
+            padding_frame.pack_propagate(False)
             
             # Create the matplotlib canvas widget (keeps figure at native DPI)
-            self.mpl_canvas = FigureCanvasTkAgg(self.fig, master=self.canvas_frame)
+            self.mpl_canvas = FigureCanvasTkAgg(self.fig, master=padding_frame)
             canvas_widget = self.mpl_canvas.get_tk_widget()
             
             # Set fixed size on canvas widget to prevent tkinter from resizing it
             canvas_widget.configure(width=canvas_width, height=canvas_height)
             
-            # Pack the canvas widget (anchor to top-left)
-            canvas_widget.pack(fill='none', expand=False, anchor='nw')
+            canvas_widget.place(x=pad_left, y=pad_top)
             
             # Draw the canvas
             self.mpl_canvas.draw()
-            
-            # Scroll to bottom-left after content is added (content appears at bottom due to figure padding)
-            self.root.after(50, lambda: (
-                self.preview_scroll_canvas.xview_moveto(0),
-                self.preview_scroll_canvas.yview_moveto(1.0)
-            ))
+
+            try:
+                if getattr(self, 'ybreak_enabled', False) and legend_position == "outside top":
+                    legend_visible = self.legend_visible_var.get() if hasattr(self, 'legend_visible_var') else True
+                    legend_ncol = self.legend_ncol_var.get() if hasattr(self, 'legend_ncol_var') else 0
+                    fontsize = self.fontsize.get() if hasattr(self, 'fontsize') else 10
+
+                    for ax in self.fig.axes:
+                        old_legend = ax.get_legend()
+                        if not old_legend:
+                            continue
+
+                        handles = old_legend.legend_handles
+                        labels = [t.get_text() for t in old_legend.get_texts()]
+                        old_legend.remove()
+
+                        if not legend_visible or not handles:
+                            continue
+
+                        if legend_ncol > 0:
+                            ncol = legend_ncol
+                        else:
+                            ncol = self.optimize_legend_layout(ax, handles, labels, fontsize=fontsize)
+
+                        if hasattr(self, '_ybreak_base_pos') and self._ybreak_base_pos is not None:
+                            base_pos = self._ybreak_base_pos
+                            x_center = base_pos.x0 + base_pos.width / 2
+                            y_top = base_pos.y0 + base_pos.height
+                            new_legend = ax.legend(
+                                handles, labels,
+                                bbox_to_anchor=(x_center, y_top + base_pos.height * 0.15),
+                                bbox_transform=self.fig.transFigure,
+                                loc='upper center',
+                                borderaxespad=0., frameon=False, fontsize=fontsize, ncol=ncol
+                            )
+                        else:
+                            new_legend = ax.legend(handles, labels, bbox_to_anchor=(0.5, 1.15), loc='upper center',
+                                                  borderaxespad=0., frameon=False, fontsize=fontsize, ncol=ncol)
+
+                        if new_legend:
+                            new_legend.set_draggable(True)
+            except Exception:
+                pass
+
+            self.preview_scroll_canvas.config(scrollregion=(0, 0, padded_width, padded_height))
+
+            # Center the plot in the viewport (important when window is not maximized)
+            def _center_preview_view():
+                try:
+                    self.preview_scroll_canvas.update_idletasks()
+                    viewport_w = self.preview_scroll_canvas.winfo_width()
+                    viewport_h = self.preview_scroll_canvas.winfo_height()
+
+                    max_x = max(padded_width - viewport_w, 0)
+                    max_y = max(padded_height - viewport_h, 0)
+
+                    target_x = max((pad_left + (canvas_width / 2)) - (viewport_w / 2), 0)
+                    target_y = max((pad_top + (canvas_height / 2)) - (viewport_h / 2), 0)
+
+                    # xview_moveto/yview_moveto expect a fraction of the total scrollregion
+                    if padded_width > 0 and max_x > 0:
+                        frac_x = min(max(min(target_x, max_x) / padded_width, 0.0), 1.0)
+                        self.preview_scroll_canvas.xview_moveto(frac_x)
+                    else:
+                        self.preview_scroll_canvas.xview_moveto(0)
+
+                    if padded_height > 0 and max_y > 0:
+                        frac_y = min(max(min(target_y, max_y) / padded_height, 0.0), 1.0)
+                        self.preview_scroll_canvas.yview_moveto(frac_y)
+                    else:
+                        self.preview_scroll_canvas.yview_moveto(0)
+                except Exception as e:
+                    print(f"Error centering preview view: {e}")
+
+            self.root.after(80, _center_preview_view)
             
             # Make legends draggable
             for ax in self.fig.axes:

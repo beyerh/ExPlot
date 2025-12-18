@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=ExPlot
+Comment=Data Visualization and Statistical Analysis Application
+Exec=/home/hbeyer/repos/ExPlot/explot-launcher.sh
+Icon=/home/hbeyer/repos/ExPlot/explot.icns
+Terminal=false
+Categories=Science;Education;DataVisualization;
+Keywords=plot;graph;statistics;data;visualization;excel;
+StartupNotify=true

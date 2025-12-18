@@ -94,6 +94,32 @@ def main():
     
     root.geometry(f'{window_width}x{window_height}+{x}+{y}')
     root.minsize(1000, 700)
+
+    # Start maximized when possible (platform-dependent) if enabled in preferences
+    def _try_maximize_if_enabled():
+        try:
+            if hasattr(app, 'start_maximized_var') and not app.start_maximized_var.get():
+                return
+        except Exception:
+            return
+
+        try:
+            root.state('zoomed')
+            return
+        except Exception:
+            pass
+        try:
+            root.attributes('-zoomed', True)
+            return
+        except Exception:
+            pass
+        try:
+            root.attributes('-fullscreen', True)
+            root.after(100, lambda: root.attributes('-fullscreen', False))
+        except Exception:
+            pass
+
+    root.after(50, _try_maximize_if_enabled)
     
     # Add theme switcher to the menu
     _add_theme_switcher(root, style, app)

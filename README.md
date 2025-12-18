@@ -73,7 +73,7 @@ conda install --file requirements.txt
 pip install PyMuPDF ttkbootstrap
 ```
 
-## Using pip (not tested)
+## Using pip
 ```bash
 # Create and activate a virtual environment
 python -m venv .venv

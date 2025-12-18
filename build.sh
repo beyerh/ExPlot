@@ -4,7 +4,7 @@
 
 # Configuration
 APP_NAME="ExPlot"
-VERSION="0.7.1"
+VERSION="0.7.2"
 BUILD_DIR="build"
 
 # Create a clean build directory
@@ -17,6 +17,7 @@ echo -e "Building ${APP_NAME} v${VERSION} with Python ${PYTHON_VERSION}..."
 # Run Nuitka to build the standalone application
 echo -e "Building with Nuitka..."
 
+# If needed include:  --macos-target-arch=x86_64 \
 python -m nuitka \
   --standalone \
   --macos-create-app-bundle \
