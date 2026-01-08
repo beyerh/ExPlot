@@ -62,18 +62,9 @@ File --> Load Example Data
 ## Packaged App
 Packaged app for macOS and Windows can be downloaded from the [releases](releases) page.
 
-## Using conda
-```bash
-# Create and activate a conda environment
-conda create --name explot python=3.10
-conda activate explot
-conda config --add channels conda-forge
-conda config --set channel_priority strict
-conda install --file requirements.txt
-pip install PyMuPDF ttkbootstrap
-```
+## Create environment manually
+Preferably, use the `build.sh` script wizardto create the environment using the recommended Python version (see below).
 
-## Using pip
 ```bash
 # Create and activate a virtual environment
 python -m venv .venv
@@ -81,34 +72,45 @@ source .venv/bin/activate  # On Windows: venv\Scripts\activate
 
 # Install from requirements.txt
 pip install -r requirements.txt
-pip install PyMuPDF ttkbootstrap
 ```
 
 # Running the Application
 
 ## With ttkbootstrap Theme (recommended)
 ```bash
-conda activate explot # source venv/bin/activate with pip
+source .venv/bin/activate
 python launch.py
 ```
 
 ## With Default Theme
 ```bash
-conda activate explot # source venv/bin/activate with pip
+source .venv/bin/activate
 python explot.py
 ```
 
-# Packaging macOS, Linux using Nuitka
+# Generate environments and/or package ExPlot on macOS arm64 using Nuitka
 ```bash
-conda activate explot # source venv/bin/activate with pip
-conda install nuitka
 chmod +x build.sh
 ./build.sh
 ```
 
+The build script launches an interactive wizard and can:
+- Create/update the build environment
+- Build an Apple Silicon app bundle
+- Build an Intel app bundle
+- Build an Intel compatibility app bundle for older macOS (macOS 11+), using pinned dependencies from `requirements_intel_compatibility.txt`
+
+Build outputs are written to:
+- `build_apple/ExPlot.app`
+- `build_intel/ExPlot.app`
+- `build_intel_compat/ExPlot.app`
+
+For Intel builds on Apple Silicon, python.org **universal2 Python 3.13** is recommended.
+Installer (3.13.11): https://www.python.org/downloads/release/python-31311/
+
 # Packaging Windows using PyInstaller
 ```bash
-conda activate explot # source venv/bin/activate with pip
-conda install pyinstaller
+source .venv/bin/activate
+pip install pyinstaller
 pyinstaller ExPlot.spec
 ```
