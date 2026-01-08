@@ -68,7 +68,7 @@ Preferably, use the `build.sh` script wizardto create the environment using the 
 ```bash
 # Create and activate a virtual environment
 python -m venv .venv
-source .venv/bin/activate  # On Windows: venv\Scripts\activate
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
 # Install from requirements.txt
 pip install -r requirements.txt
@@ -110,7 +110,7 @@ Installer (3.13.11): https://www.python.org/downloads/release/python-31311/
 
 # Packaging Windows using PyInstaller
 ```bash
-source .venv/bin/activate
+source .venv/Scripts/activate
 pip install pyinstaller
 pyinstaller ExPlot.spec
 ```
