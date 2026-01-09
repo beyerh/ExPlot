@@ -1,22 +1,22 @@
 # Core dependencies
-numpy==2.1.1
-pandas==2.3.3
-matplotlib==3.10.3
+numpy==1.26.3
+pandas==2.1.4
+matplotlib==3.8.4
 seaborn==0.13.2
-scipy==1.15.2
+scipy==1.11.4
 
 # Statistics and data analysis
 pingouin>=0.5.0
 scikit-posthocs>=0.7.0
-statsmodels==0.14.4
-scikit-learn==1.6.1
+statsmodels==0.14.1
+scikit-learn==1.4.2
 
 # Excel and data handling
 openpyxl>=3.0.7
 xlrd>=2.0.1
 
 # Image and PDF handling
-Pillow==11.0.0
+Pillow==10.4.0
 ttkbootstrap==1.10.1
 PyMuPDF==1.26.7
 

@@ -1,6 +1,6 @@
 # ExPlot - Data visualization tool for Excel files
 
-VERSION = "0.7.2"
+VERSION = "0.7.3"
 # =====================================================================
 
 import tkinter as tk
@@ -11222,9 +11222,14 @@ class ExPlotApp:
                 palette_colors_canvas.tag_bind(rect_id, '<Enter>', lambda e, rid=rect_id: palette_colors_canvas.itemconfig(rid, width=2))
                 palette_colors_canvas.tag_bind(rect_id, '<Leave>', lambda e, rid=rect_id: palette_colors_canvas.itemconfig(rid, width=1))
             add_x = start_x + n * (swatch_w + 4)
-            add_rect = palette_colors_canvas.create_rectangle(add_x, 5, add_x + swatch_w, 5 + swatch_h, fill='#e0e0e0', outline='gray', dash=(2, 2))
-            palette_colors_canvas.create_text(add_x + swatch_w//2, 5 + swatch_h//2, text="+", font=(None, 16, 'bold'), fill='gray')
-            palette_colors_canvas.tag_bind(add_rect, '<Button-1>', lambda e: add_color_to_palette())
+            add_tag = 'add_color_button'
+            add_rect = palette_colors_canvas.create_rectangle(add_x, 5, add_x + swatch_w, 5 + swatch_h, fill='#e0e0e0', outline='gray', dash=(2, 2), tags=(add_tag,))
+            palette_colors_canvas.create_text(add_x + swatch_w//2, 5 + swatch_h//2, text="+", font=(None, 16, 'bold'), fill='gray', tags=(add_tag,))
+            palette_colors_canvas.tag_bind(add_tag, '<Button-1>', lambda e: add_color_to_palette())
+
+        def request_draw_palette_preview():
+            palette_colors_canvas.update_idletasks()
+            palette_colors_canvas.after_idle(draw_palette_preview)
         
         def edit_palette_color(idx):
             name = current_palette_name.get()
@@ -11268,7 +11273,7 @@ class ExPlotApp:
                 self.custom_palettes[name][idx] = hexcode
                 self.save_custom_colors_palettes()
                 self.update_color_palette_dropdowns()
-                draw_palette_preview()
+                request_draw_palette_preview()
                 popup.destroy()
             ttk.Button(hex_frame, text="Apply", command=save_hex).pack(side='left', padx=5)
             def pick_new():
@@ -11277,14 +11282,14 @@ class ExPlotApp:
                     self.custom_palettes[name][idx] = result[1]
                     self.save_custom_colors_palettes()
                     self.update_color_palette_dropdowns()
-                    draw_palette_preview()
+                    request_draw_palette_preview()
                     popup.destroy()
             def remove_this():
                 if len(self.custom_palettes[name]) > 1:
                     del self.custom_palettes[name][idx]
                     self.save_custom_colors_palettes()
                     self.update_color_palette_dropdowns()
-                    draw_palette_preview()
+                    request_draw_palette_preview()
                     popup.destroy()
                 else:
                     messagebox.showwarning("Cannot Remove", "Palette must have at least one color.", parent=popup)
@@ -11304,7 +11309,7 @@ class ExPlotApp:
                 self.custom_palettes[name].append(result[1])
                 self.save_custom_colors_palettes()
                 self.update_color_palette_dropdowns()
-                draw_palette_preview()
+                request_draw_palette_preview()
         
         def show_palette_preview(event=None):
             sel = palette_tree.selection()

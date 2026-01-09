@@ -1,9 +1,12 @@
 # ExPlot
-A modern Python/Tkinter app to plot data from Excel sheets using *seaborn* and *matplotlib*, featuring theming with ttkbootstrap. Fully developed with Claude 3.7 Sonnet, Cascade Base, SWE-1, and GPT-4.1 using Windsurf.
+A modern cross-platform Python/Tkinter app to plot data from Excel sheets using *seaborn* and *matplotlib*, featuring theming with ttkbootstrap. Fully developed with Claude 3.7 Sonnet, Cascade Base, SWE-1, and GPT-4.1 using Windsurf.
 
 No warranty is given or implied. Use at your own risk and after testing and validation of functionality.
 
 ![ExPlot](img/ExPlot.png)
+
+Demo video:
+https://github.com/user-attachments/assets/10612e7a-778d-43c2-8e92-4ea0c66b7106
 
 # macOS error
 <img align="left" width="200" alt="macOS error" src="img/macOS_error.png">
@@ -105,8 +108,8 @@ Build outputs are written to:
 - `build_intel/ExPlot.app`
 - `build_intel_compat/ExPlot.app`
 
-For Intel builds on Apple Silicon, python.org **universal2 Python 3.13** is recommended.
-Installer (3.13.11): https://www.python.org/downloads/release/python-31311/
+python.org **universal2 Python 3.12** is recommended for macOS builds.
+Installer (3.12.10): https://www.python.org/downloads/release/python-31210/
 
 # Packaging Windows using PyInstaller
 ```bash

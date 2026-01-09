@@ -4,16 +4,17 @@
  
  # Configuration
  APP_NAME="ExPlot"
- VERSION="0.7.2"
+ VERSION="0.7.3"
  BUILD_DIR="build"
  
  VENV_APP=".venv"
  VENV_INTEL=".venv_x86"
  VENV_INTEL_COMPAT=".venv_x86_compat"
  
- # python.org universal2 Python path (recommended). Override with --python.
- PYTHON_UNIVERSAL2="/Library/Frameworks/Python.framework/Versions/3.13/bin/python3"
- PYTHON_UNIVERSAL2_RELEASE_URL="https://www.python.org/downloads/release/python-31311/"
+ # python.org universal2 Python path (recommended). Override by pasting a different python3 path.
+ PYTHON_UNIVERSAL2="/Library/Frameworks/Python.framework/Versions/3.12/bin/python3"
+ PYTHON_UNIVERSAL2_RELEASE_URL="https://www.python.org/downloads/release/python-31210/"
+ PYTHON_UNIVERSAL2_RECOMMENDED_VERSION="3.12"
  
  # Intel build settings (for older macOS support)
  INTEL_COMPAT_REQUIREMENTS_FILE="requirements_intel_compatibility.txt"
@@ -55,7 +56,7 @@
      *) echo "Invalid choice." ;;
    esac
  done
- 
+
  MODE=""
  while [[ -z "${MODE}" ]]; do
    echo
@@ -82,7 +83,7 @@
  if [[ ! -x "${PYTHON_UNIVERSAL2}" ]]; then
    echo >&2
    echo "Error: Python executable not found at: ${PYTHON_UNIVERSAL2}" >&2
-   echo "Recommended: install python.org 'universal2' Python 3.13 (includes both arm64 and x86_64 support)." >&2
+   echo "Recommended: install python.org 'universal2' Python ${PYTHON_UNIVERSAL2_RECOMMENDED_VERSION} (includes both arm64 and x86_64 support)." >&2
    echo "Download: ${PYTHON_UNIVERSAL2_RELEASE_URL}" >&2
    echo "More downloads: https://www.python.org/downloads/macos/" >&2
    echo >&2
@@ -129,7 +130,7 @@
    echo >&2
    echo "Warning: Selected Python does not look like a python.org Framework install:" >&2
    echo "  ${PYTHON_UNIVERSAL2}" >&2
-   echo "Recommended universal2 installer (3.13.11): ${PYTHON_UNIVERSAL2_RELEASE_URL}" >&2
+   echo "Recommended universal2 installer: ${PYTHON_UNIVERSAL2_RELEASE_URL}" >&2
  fi
 
  if /usr/bin/lipo -archs "${PYTHON_UNIVERSAL2}" >/dev/null 2>&1; then
@@ -139,7 +140,7 @@
      echo "Warning: Selected Python does not appear to be universal2 (missing arm64/x86_64):" >&2
      echo "  ${PYTHON_UNIVERSAL2}" >&2
      echo "  archs: ${py_archs}" >&2
-     echo "Recommended universal2 installer (3.13.11): ${PYTHON_UNIVERSAL2_RELEASE_URL}" >&2
+     echo "Recommended universal2 installer: ${PYTHON_UNIVERSAL2_RELEASE_URL}" >&2
    fi
  fi
  
@@ -150,7 +151,7 @@
      echo >&2
      echo "Error: The selected Python cannot run as x86_64 under Rosetta:" >&2
      echo "  ${PYTHON_UNIVERSAL2}" >&2
-     echo "For Intel builds on Apple Silicon, install python.org universal2 Python 3.13 and re-run." >&2
+     echo "For Intel builds on Apple Silicon, install python.org universal2 Python ${PYTHON_UNIVERSAL2_RECOMMENDED_VERSION} and re-run." >&2
      echo "Download: ${PYTHON_UNIVERSAL2_RELEASE_URL}" >&2
      echo "More downloads: https://www.python.org/downloads/macos/" >&2
      exit 2
