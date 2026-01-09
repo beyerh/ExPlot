@@ -6,6 +6,7 @@ No warranty is given or implied. Use at your own risk and after testing and vali
 ![ExPlot](img/ExPlot.png)
 
 Demo video:
+
 https://github.com/user-attachments/assets/10612e7a-778d-43c2-8e92-4ea0c66b7106
 
 # macOS error
