@@ -9,6 +9,9 @@ __pycache__/
 # Distribution / packaging
 .Python
 build/
+build_apple
+build_intel
+build_intel_compat
 develop-eggs/
 dist/
 downloads/
@@ -25,6 +28,7 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+.DS_Store
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
@@ -129,6 +133,8 @@ celerybeat.pid
 # Environments
 .env
 .venv
+.venv_x86
+.venv_x86_compat
 env/
 venv/
 ENV/

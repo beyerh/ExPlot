@@ -36,6 +36,12 @@ from matplotlib.patches import Polygon
 from matplotlib.collections import PatchCollection
 from tkinter import font as tkfont
 from statannotations.Annotator import Annotator
+from explot_stats import (
+    pval_to_annotation as _stats_pval_to_annotation,
+    get_significance_thresholds,
+    get_statannotations_format,
+    format_significance_legend,
+)
 
 # Disable dask imports, nuitka fix for macOS
 '''import sys
@@ -948,20 +954,11 @@ class ExPlotApp:
         
     def _add_significance_legend(self, details_text):
         """Add the significance level legend to the details panel"""
-        details_text.insert(tk.END, "Significance levels:\n")
-        details_text.insert(tk.END, "     ns p > 0.05\n")
-        details_text.insert(tk.END, "    * p ≤ 0.05\n")
-        details_text.insert(tk.END, "   ** p ≤ 0.01\n")
-        details_text.insert(tk.END, "  *** p ≤ 0.001\n")
-        details_text.insert(tk.END, " **** p ≤ 1e-05\n\n")
-        
-        # Get the current alpha value from the variable
         try:
-            alpha_value = float(self.alpha_level_var.get()) if hasattr(self, 'alpha_level_var') else 0.05
+            alpha = float(self.alpha_level_var.get()) if hasattr(self, 'alpha_level_var') else 0.05
         except (ValueError, AttributeError):
-            alpha_value = 0.05  # Default if there's an error
-            
-        details_text.insert(tk.END, f"Current alpha level: {alpha_value:.2f}\n\n")
+            alpha = 0.05
+        details_text.insert(tk.END, format_significance_legend(alpha) + "\n")
         
     def _show_old_metric_comparisons(self, details_text, metric_pairs, metric_results, x_categories):
         """Display metric comparisons using the old format as a fallback"""
@@ -1257,43 +1254,29 @@ class ExPlotApp:
                 verbose=True
             )
             
-            # Get current alpha level for custom p-value thresholds
+            # p-value format from the single canonical source
             try:
                 alpha = float(self.alpha_level_var.get())
             except (ValueError, AttributeError):
-                alpha = 0.05  # Default if not set or invalid
-                    
-            # Configure p-value thresholds directly in the format required by statannotations
-            pvalue_thresholds = [
-                [1e-4, "****"],  # p < 0.01%
-                [1e-3, "***"],   # p < 0.1%
-                [1e-2, "**"],    # p < 1%
-                [alpha, "*"]     # p < alpha (default 0.05 or user-specified)
-            ]
+                alpha = 0.05
+            pvalue_format = get_statannotations_format(alpha)
+            print(f"[DEBUG] Setting annotator pvalue format: {pvalue_format['pvalue_thresholds']}")
                 
-            print(f"[DEBUG] Setting annotator pvalue format: {pvalue_thresholds}")
-                
-            # Configure annotations with our custom pvalue thresholds
+            # Configure annotations with canonical thresholds
             annotator.configure(test=None, text_format='star', 
                                 pvalue_format=pvalue_format,
                                 loc='inside',
                                 line_width=self.linewidth.get()
                                 )
-            # Set custom p-values and annotate using the current alpha level
-            # Get current alpha level from dropdown
-            try:
-                current_alpha = float(self.alpha_level_var.get())
-            except (ValueError, AttributeError):
-                current_alpha = 0.05  # Default if not set or invalid
                 
             # Generate annotations with the current alpha setting
             annotations = []
             for p in pvalues:
-                annotation = self.pval_to_annotation(p)  # This already uses alpha_level_var internally
+                annotation = self.pval_to_annotation(p)
                 annotations.append(annotation)
                 
             # Debug to check consistency
-            print(f"[DEBUG] Alpha level: {current_alpha}, creating annotations: {list(zip([f'{p:.4g}' for p in pvalues], annotations))}")
+            print(f"[DEBUG] Alpha level: {alpha}, creating annotations: {list(zip([f'{p:.4g}' for p in pvalues], annotations))}")
                 
             annotator.set_custom_annotations(annotations)
             annotator.annotate()
@@ -1471,27 +1454,15 @@ class ExPlotApp:
                 # Configure the annotator with enhanced settings for better visibility
                 print(f"[DEBUG] Configuring annotator with {len(pairs)} pairs")
                 
-                # Get current alpha level for custom p-value thresholds
+                # p-value format from the single canonical source
                 try:
                     alpha = float(self.alpha_level_var.get())
                 except (ValueError, AttributeError):
-                    alpha = 0.05  # Default if not set or invalid
-                    
-                # Configure p-value thresholds directly in the format required by statannotations
-                pvalue_format = {
-                    'text_format': 'star',
-                    'pvalue_thresholds': [
-                        (alpha/5000, '****'),  # 4 stars threshold (e.g., 0.00001 at alpha=0.05)
-                        (alpha/50, '***'),    # 3 stars threshold (e.g., 0.001 at alpha=0.05)
-                        (alpha/5, '**'),      # 2 stars threshold (e.g., 0.01 at alpha=0.05)
-                        (alpha, '*'),         # 1 star threshold (alpha itself)
-                        (1, 'ns')             # Not significant
-                    ]
-                }
+                    alpha = 0.05
+                pvalue_format = get_statannotations_format(alpha)
+                print(f"[DEBUG] Setting annotator pvalue format: {pvalue_format['pvalue_thresholds']}")
                 
-                print(f"[DEBUG] Setting annotator pvalue format: {pvalue_format_dict['pvalue_thresholds']}")
-                
-                # Configure the annotator with very aggressive settings for maximum visibility
+                # Configure the annotator with canonical thresholds
                 annotator.configure(test=None, text_format='star', 
                                     pvalue_format=pvalue_format,
                                     loc='inside',
@@ -1604,66 +1575,26 @@ class ExPlotApp:
                     # Adjust these values as needed for your specific plots
                     line_pos = ymax + y_range * 0.1  # Start 10% above the top of the plot
                     
-                    # Get current alpha level for custom p-value thresholds
+                    # p-value format from the single canonical source
                     try:
                         alpha = float(self.alpha_level_var.get())
                     except (ValueError, AttributeError):
-                        alpha = 0.05  # Default if not set or invalid
+                        alpha = 0.05
+                    pvalue_format = get_statannotations_format(alpha)
                     
-                    # Get the current alpha level for custom p-value thresholds
-                    try:
-                        alpha = float(self.alpha_level_var.get())
-                    except (ValueError, AttributeError):
-                        alpha = 0.05  # Default if not set or invalid
-                    
-                        # Configure p-value thresholds directly in the format required by statannotations
-                    pvalue_format = {
-                        'text_format': 'star',
-                        'pvalue_thresholds': [
-                            (alpha/5000, '****'),  # 4 stars threshold (e.g., 0.00001 at alpha=0.05)
-                            (alpha/50, '***'),    # 3 stars threshold (e.g., 0.001 at alpha=0.05)
-                            (alpha/5, '**'),      # 2 stars threshold (e.g., 0.01 at alpha=0.05)
-                            (alpha, '*'),         # 1 star threshold (alpha itself)
-                            (1, 'ns')             # Not significant
-                        ]
-                    }
-                    
-                    # Configure the annotator with the same settings as _add_ungrouped_annotations
+                    # Configure the annotator with canonical thresholds
                     annotator.configure(test=None, text_format='star', 
                                         pvalue_format=pvalue_format,
                                         loc='inside',
                                         line_width=self.linewidth.get()
                                         )
                     
-                    # Generate annotations with the current alpha setting using the same method as _add_ungrouped_annotations
-                    annotations = [self.pval_to_annotation(p) for p in pvalues]
-                    
-                    # Debug to check consistency
-                    print(f"[DEBUG] Alpha level: {alpha}, creating grouped annotations: {list(zip([f'{p:.4g}' for p in pvalues], annotations))}")
-                    
-                    # Set the custom annotations
-                    annotator.set_custom_annotations(annotations)
-                    
                     # Increase the y-limit to make room for annotations
                     ax.set_ylim(ymin, ymax + y_range * 0.3)
                     
-                    # Set custom p-values and annotations using the current alpha level
                     if pvalues:
-                        # Get current alpha level from dropdown
-                        try:
-                            current_alpha = float(self.alpha_level_var.get())
-                        except (ValueError, AttributeError):
-                            current_alpha = 0.05  # Default if not set or invalid
-                        
-                        # Generate annotations with the current alpha setting
-                        annotations = []
-                        for p in pvalues:
-                            annotation = self.pval_to_annotation(p)  # This already uses alpha_level_var internally
-                            annotations.append(annotation)
-                        
-                        # Debug to check consistency
-                        print(f"[DEBUG] Alpha level: {current_alpha}, creating annotations for {x_cat}: {list(zip([f'{p:.4g}' for p in pvalues], annotations))}")
-                            
+                        annotations = [self.pval_to_annotation(p) for p in pvalues]
+                        print(f"[DEBUG] Alpha level: {alpha}, creating annotations for {x_cat}: {list(zip([f'{p:.4g}' for p in pvalues], annotations))}")
                         annotator.set_custom_annotations(annotations)
                         annotator.annotate()
                         print(f"[DEBUG] Added {len(pvalues)} annotation(s) for groups in category {x_cat}")
@@ -1968,14 +1899,17 @@ class ExPlotApp:
         self.setup_statistics_settings_tab()
 
     def pval_to_annotation(self, pval, alpha=None):
-        """Return p-value in scientific notation.
-        Returns '?' if pval is None or NaN, otherwise returns p-value in scientific notation."""
-        if pval is None or (isinstance(pval, float) and math.isnan(pval)):
-            return "?"
-            
-        # Format p-value in scientific notation with 2 decimal places
-        # Use 'e' format for scientific notation with 2 decimal places
-        return f"{pval:.2e}"
+        """Return significance star annotation for a p-value.
+        
+        Delegates to the canonical implementation in explot_stats so that
+        annotations, details panel, and legend all use identical thresholds.
+        """
+        if alpha is None:
+            try:
+                alpha = float(self.alpha_level_var.get())
+            except (ValueError, AttributeError):
+                alpha = 0.05
+        return _stats_pval_to_annotation(pval, alpha=alpha)
 
     def format_pvalue_matrix(self, matrix):
         # Check if the matrix is empty
@@ -3603,41 +3537,12 @@ class ExPlotApp:
         except Exception as e:
             print(f"[DEBUG] Failed to set monospace font: {e}")
         details_text.insert(tk.END, "Statistical Details\n\n")
-        # Legend
-        # Get the current alpha level from dropdown to show correct significance thresholds
+        # Legend — uses the single canonical source of truth
         try:
             alpha = float(self.alpha_level_var.get())
         except (ValueError, AttributeError):
-            alpha = 0.05  # Default if not set or invalid
-        
-        # Get the current alpha level for dynamic thresholds
-        try:
-            alpha = float(self.alpha_level_var.get())
-        except (ValueError, AttributeError):
-            alpha = 0.05  # Default if not set or invalid
-            
-        # Define the same thresholds as in the statannotations configuration
-        thresholds = [
-            (alpha/5000, '****'),  # 4 stars threshold (e.g., 0.00001 at alpha=0.05)
-            (alpha/50, '***'),    # 3 stars threshold (e.g., 0.001 at alpha=0.05)
-            (alpha/5, '**'),      # 2 stars threshold (e.g., 0.01 at alpha=0.05)
-            (alpha, '*'),         # 1 star threshold (alpha itself)
-            (1, 'ns')             # Not significant
-        ]
-        
-        # Display the significance levels with the actual threshold values
-        details_text.insert(tk.END, "Significance levels:\n")
-        prev_threshold = 1.0
-        for threshold, symbol in sorted(thresholds, reverse=True):
-            if symbol == 'ns':
-                details_text.insert(tk.END, f"     {symbol} p > {alpha:.5g}\n")
-            else:
-                details_text.insert(tk.END, f"{symbol:>5} p ≤ {threshold:.5g}\n")
-                prev_threshold = threshold
-        details_text.insert(tk.END, "\n")
-        
-        # Show which alpha level is currently being used
-        details_text.insert(tk.END, f"Current alpha level: {alpha}\n\n")
+            alpha = 0.05
+        details_text.insert(tk.END, format_significance_legend(alpha) + "\n")
         # Try to reconstruct the most recent statistical tests
         # We'll use the existing p-values that were calculated for annotations
         # DO NOT clear the p-values dictionary here
@@ -3692,6 +3597,7 @@ class ExPlotApp:
             if not valid_value_cols:
                 details_text.insert(tk.END, "No valid statistics could be calculated.\n")
             import traceback
+            grouped_stats_displayed = False  # Guard: only display grouped stats once
             for val_col in valid_value_cols:
                     # Detect ungrouped data the same way as calculate_statistics
                     if not group_col or group_col == 'None' or (group_col and len(df_plot[group_col].dropna().unique()) <= 1):
@@ -3794,19 +3700,15 @@ class ExPlotApp:
                                 # Show detailed test information if available
                                 if test_key and test_key in self.latest_test_info:
                                     test_info = self.latest_test_info[test_key]
-                                    test_used = test_info.get('test_used', 'Unknown test')
                                     statistic = test_info.get('statistic')
                                     df = test_info.get('df')
-                                    
-                                    details_text.insert(tk.END, f"Test Used: {ttest_type} ({alternative}) between {cat1} and {cat2}\n")
-                                    details_text.insert(tk.END, f"Actual test performed: {test_used}\n")
                                     
                                     if statistic is not None and df is not None:
                                         details_text.insert(tk.END, f"t = {statistic:.3f}, df = {df}, p = {p_val:.4g} {sig}\n")
                                     elif statistic is not None:
                                         details_text.insert(tk.END, f"t = {statistic:.3f}, p = {p_val:.4g} {sig}\n")
                                 
-                                details_text.insert(tk.END, "\nNote: These statistics are the same as those used for plot annotations.\n")
+                                details_text.insert(tk.END, f"\nAlpha level: {alpha}\n")
                             else:
                                 # Calculate new p-value if we don't have one stored
                                 if len(data1) > 0 and len(data2) > 0:
@@ -3865,6 +3767,7 @@ class ExPlotApp:
                                         details_text.insert(tk.END, f"Error calculating t-test: {str(e)}\n")
                                 else:
                                     details_text.insert(tk.END, "No valid numeric data available for statistical test.\n")
+                            continue  # Ungrouped 2-cat t-test complete — skip n_groups==1 block
                         elif n_x_categories > 2:
                             # For 3+ categories, display ANOVA + post-hoc test results
                             # Get the stored information about the statistical tests
@@ -3872,31 +3775,8 @@ class ExPlotApp:
                             posthoc_type = self.latest_stats.get('posthoc_type', "Tukey's HSD")
                             
                             
-                            # Display the main ANOVA result if available
+                            # Load stored ANOVA results (display handled by n_groups==1 block below)
                             anova_results = self.latest_stats.get('anova_results', None)
-                            if anova_results is not None:
-                                try:
-                                    # ANOVA results format may vary based on the test type
-                                    if 'p-unc' in anova_results.columns:  # pingouin format
-                                        anova_p = anova_results['p-unc'].iloc[0]
-                                    elif 'p' in anova_results.columns:  # alternate format
-                                        anova_p = anova_results['p'].iloc[0]
-                                    else:
-                                        anova_p = None
-                                        
-                                    if anova_p is not None:
-                                        details_text.insert(tk.END, f"\n============ ANOVA Results Summary ============\n")
-                                        details_text.insert(tk.END, f"Test type: {anova_type}\n")
-                                        details_text.insert(tk.END, f"Main ANOVA result: p = {anova_p:.4g} {self.pval_to_annotation(anova_p, alpha=alpha)}\n")
-                                        details_text.insert(tk.END, "")
-                                        
-                                        # Add guidance for non-significant ANOVA results
-                                        if anova_p > 0.05:
-                                            details_text.insert(tk.END, "\n⚠️ WARNING: The overall ANOVA p-value is not significant (p > 0.05).\n")
-                                            details_text.insert(tk.END, "When the main ANOVA is not significant, post-hoc test results should be interpreted with caution\n")
-                                            details_text.insert(tk.END, "as there may not be meaningful differences between any groups.\n\n")
-                                except Exception as e:
-                                    print(f"[DEBUG] Error displaying ANOVA p-value: {e}")
                             
                             # Check if we have p-values from previous calculations
                             print(f"[DEBUG] Statistical Details - latest_pvals keys: {list(self.latest_pvals.keys())}")
@@ -4056,17 +3936,16 @@ class ExPlotApp:
                             # Check if we have triplet keys with metric comparisons
                             if has_triplet_keys:
                                 # Get the value columns that were selected in the UI
-                                value_cols = [col for var, col in self.value_vars if var.get()]
-                                value_cols = [col for col in value_cols if col]
-                                self.debug(f"Multiple metrics detected: {value_cols}")
+                                value_cols_ui = [col for var, col in self.value_vars if var.get()]
+                                value_cols_ui = [col for col in value_cols_ui if col and col != x_col]
                                 
-                                # Clear the text widget and start with a fresh header
-                                details_text.delete(1.0, tk.END)
-                                self._add_significance_legend(details_text)
+                                # Get test types from UI settings
+                                anova_type = self.anova_type_var.get()
+                                posthoc_type = self.posthoc_type_var.get()
                                 
-                                # Collect all unique metric pairs for comparison
+                                # Collect all unique metric pairs and per-category results from latest_pvals
                                 metric_pairs = []
-                                metric_results = {}
+                                metric_results = {}  # key: (x_name, metric1, metric2) -> p_val
                                 
                                 for key, val in self.latest_pvals.items():
                                     if isinstance(key, tuple) and len(key) == 3:
@@ -4078,196 +3957,114 @@ class ExPlotApp:
                                         if metric_pair not in metric_pairs and (metric2, metric1) not in metric_pairs:
                                             metric_pairs.append(metric_pair)
                                         
-                                        # Store with x_category name if possible
-                                        x_index = None
+                                        # Map numeric x-index to category name
                                         try:
                                             x_index = int(float(x_val))
                                             if 0 <= x_index < len(x_categories):
                                                 x_name = x_categories[x_index]
                                             else:
                                                 x_name = str(x_val)
-                                        except:
+                                        except (ValueError, TypeError):
                                             x_name = str(x_val)
                                             
                                         result_key = (x_name, metric1, metric2)
                                         metric_results[result_key] = val
                                 
-                                if metric_pairs and not metrics_analysis_done:
-                                    metrics_analysis_done = True  # Mark that we've performed the metrics analysis
+                                if metric_pairs:
+                                    # Clear the text widget and start with a fresh header
+                                    details_text.delete(1.0, tk.END)
+                                    self._add_significance_legend(details_text)
                                     
-                                    # Get the selected ANOVA and post-hoc test types from UI settings
-                                    anova_type = self.anova_type_var.get()
-                                    posthoc_type = self.posthoc_type_var.get()
-                                    
+                                    n_metrics = len(set(m for pair in metric_pairs for m in pair))
                                     details_text.insert(tk.END, f"\n============ Multiple Y-Axis Columns Analysis ============\n")
-                                    details_text.insert(tk.END, f"Comparing {len(value_cols)} metrics across {len(x_categories)} categories\n")
-                                    
-                                    # Create an appropriate melted dataframe for statistical analysis
-                                    df_analysis = None
-                                    
-                                    # First try to make a fresh melted DataFrame for better statistics
-                                    try:
-                                        # Get the necessary columns
-                                        if hasattr(self, 'xaxis_var') and len(value_cols) > 1 and self.xaxis_var.get() in df_plot.columns:
-                                            x_col = self.xaxis_var.get()
-                                            
-                                            # Create a subset of the dataframe with just what we need
-                                            cols_to_keep = [x_col] + value_cols
-                                            df_subset = df_plot[cols_to_keep].copy()
-                                            
-                                            # Melt the data into long format
-                                            id_vars = [x_col]
-                                            df_analysis = pd.melt(df_subset, 
-                                                                id_vars=id_vars, 
-                                                                value_vars=value_cols, 
-                                                                var_name='Measurement', 
-                                                                value_name='MeltedValue')
-                                            
-                                            # Ensure values are numeric
-                                            df_analysis['MeltedValue'] = pd.to_numeric(df_analysis['MeltedValue'], errors='coerce')
-                                            df_analysis = df_analysis.dropna(subset=['MeltedValue'])
-                                            
-                                            self.debug(f"Created fresh analysis DataFrame, shape: {df_analysis.shape}")
-                                    except Exception as e_frame:
-                                        self.debug(f"Error creating analysis DataFrame: {e_frame}\n{traceback.format_exc()}")
-                                        df_analysis = None
-                                    
-                                    # Perform the statistical analysis
-                                    if df_analysis is not None and len(df_analysis) > 0:
-                                        try:
-                                            # Import statistical functions
-                                            from explot_stats import run_anova, run_posthoc, run_ttest
-                                            
-                                            # Get unique metrics
-                                            metrics = df_analysis['Measurement'].unique()
-                                            
-                                            # Use t-test for exactly 2 y-columns, ANOVA for 3+ columns
-                                            if len(metrics) == 2:
-                                                # For 2 metrics, use t-test instead of ANOVA
-                                                test_type = "Welch's t-test (unpaired, unequal variances)"
-                                                
-                                                # Extract the two metrics
-                                                metric1, metric2 = metrics
-                                                
-                                                # Run the t-test
-                                                p_val, t_result = run_ttest(df_analysis, 'MeltedValue', metric1, metric2, 'Measurement', test_type)
-                                                
-                                                # Display t-test result
-                                                details_text.insert(tk.END, f"T-test result: p = {p_val:.4f} {p_val:.2e}\n\n")
-                                                
-                                                # Add a note about interpretation
-                                                if p_val > 0.05:
-                                                    details_text.insert(tk.END, "⚠️ NOTE: The t-test p-value is not significant (p > 0.05).\n")
-                                                    details_text.insert(tk.END, "This suggests there is no statistically significant difference between the two metrics.\n\n")
-                                                else:
-                                                    details_text.insert(tk.END, "The t-test p-value is significant (p ≤ 0.05).\n")
-                                                    details_text.insert(tk.END, "This suggests there is a statistically significant difference between the two metrics.\n\n")
-                                                
-                                                # Show test type information
-                                                details_text.insert(tk.END, f"Test Used: {test_type} between the two metrics\n\n")
-                                                
-                                                # Create a simple posthoc-like result for consistent downstream processing
-                                                posthoc = pd.DataFrame(data=[[np.nan, p_val], [p_val, np.nan]], 
-                                                                   index=[metric1, metric2], 
-                                                                   columns=[metric1, metric2])
-                                            else:
-                                                # Run ANOVA on metrics (3+ columns)
-                                                anova_result = run_anova(df_analysis, 'MeltedValue', 'Measurement', anova_type=anova_type)
-                                                
-                                                if anova_result is not None:
-                                                    # Display main ANOVA result
-                                                    if 'p-unc' in anova_result.columns:
-                                                        p_val = anova_result['p-unc'].iloc[0]
-                                                    else:
-                                                        p_val = anova_result.iloc[0, -1]
-                                                        
-                                                    details_text.insert(tk.END, f"Main ANOVA result: p = {p_val:.4f} {p_val:.2e}\n\n")
-                                                    
-                                                    # Add warning if not significant
-                                                    if p_val > 0.05:
-                                                        details_text.insert(tk.END, "⚠️ WARNING: The overall ANOVA p-value is not significant (p > 0.05).\n")
-                                                        details_text.insert(tk.END, "When the main ANOVA is not significant, post-hoc test results should be interpreted with caution\n")
-                                                        details_text.insert(tk.END, "as there may not be meaningful differences between any groups.\n\n")
-                                                    
-                                                    # Show test type information
-                                                    details_text.insert(tk.END, f"Test Used: {anova_type} + {posthoc_type} across {len(metrics)} metrics\n\n")
-                                                
-                                                # Run post-hoc tests
-                                                posthoc = run_posthoc(df_analysis, 'MeltedValue', 'Measurement', posthoc_type=posthoc_type)
-                                                
-                                                if posthoc is not None:
-                                                    # Format and display the post-hoc results matrix
-                                                    details_text.insert(tk.END, f"Post-hoc {posthoc_type} test results:\n")
-                                                    details_text.insert(tk.END, "-" * 60 + "\n")
-                                                    details_text.insert(tk.END, self.format_pvalue_matrix(posthoc) + '\n')
-                                                    
-                                                    # Show nicely formatted significance indicators
-                                                    details_text.insert(tk.END, "\nSignificance indicators for pairwise comparisons:\n")
-                                                    details_text.insert(tk.END, "-" * 60 + "\n")
-                                                    
-                                                    # Only show upper triangle to avoid duplication
-                                                    for i, m1 in enumerate(posthoc.index):
-                                                        for j, m2 in enumerate(posthoc.columns):
-                                                            if i < j:  # Upper triangle only
-                                                                try:
-                                                                    p_val = posthoc.loc[m1, m2]
-                                                                    if pd.notna(p_val):
-                                                                        sig = self.pval_to_annotation(p_val)
-                                                                        
-                                                                        # Format p-value for display
-                                                                        if abs(p_val) < 1e-10:
-                                                                            p_text = "p < 1e-10"
-                                                                        elif p_val < 0.0001:
-                                                                            p_text = f"p = {p_val:.2e}"
-                                                                        else:
-                                                                            p_text = f"p = {p_val:.4f}"
-                                                                        
-                                                                        details_text.insert(tk.END, f"{m1} vs {m2}: {p_text} {sig}\n")
-                                                                except Exception as e:
-                                                                    self.debug(f"Error displaying posthoc p-value: {e}")
-                                                    
-                                                    # Add note about consistency with plot annotations
-                                                    details_text.insert(tk.END, "\nNote: These statistics are the same as those used for plot annotations.\n")
-                                                else:
-                                                    details_text.insert(tk.END, "Error running post-hoc tests. Unable to calculate pairwise comparisons.\n")
-                                                    
-                                                    # This handles both the case where t-test results or ANOVA results are None
-                                                    if len(metrics) == 2:
-                                                        details_text.insert(tk.END, "Error running t-test. Unable to determine significance.\n")
-                                                    else:
-                                                        details_text.insert(tk.END, "Error running ANOVA. Unable to determine overall significance.\n")
-                                                    # Fall back to showing the raw p-values
-                                                    self._show_old_metric_comparisons(details_text, metric_pairs, metric_results, x_categories)
-                                        except Exception as e_stats:
-                                            self.debug(f"Error in ANOVA analysis: {e_stats}\n{traceback.format_exc()}")
-                                            details_text.insert(tk.END, f"Error in statistical analysis: {e_stats}\n\n")
-                                            # Fall back to showing the raw p-values
-                                            self._show_old_metric_comparisons(details_text, metric_pairs, metric_results, x_categories)
+                                    details_text.insert(tk.END, f"Comparing {n_metrics} metrics across {len(x_categories)} categories\n")
+                                    if n_metrics == 2:
+                                        ttest_type = self.ttest_type_var.get()
+                                        details_text.insert(tk.END, f"Test Used: {ttest_type} per category\n\n")
                                     else:
-                                        # If we couldn't create a proper analysis dataframe, use the old method
-                                        details_text.insert(tk.END, "Could not create proper analysis dataframe. Showing raw p-values:\n\n")
-                                        self._show_old_metric_comparisons(details_text, metric_pairs, metric_results, x_categories)
+                                        details_text.insert(tk.END, f"Test Used: {anova_type} + {posthoc_type} per category\n\n")
                                     
-                                    # Skip the rest of the statistical display to avoid duplications
-                                    # Set has_pvals to indicate we have successfully showed the statistics
-                                    has_pvals = True
+                                    # Display per-category pairwise metric comparisons
+                                    # These match exactly what is shown as annotations on the plot
+                                    # Get per-category ANOVA results if available
+                                    per_cat_anova = self.latest_stats.get('per_category_anova', {})
+                                    
+                                    for x_cat in x_categories:
+                                        details_text.insert(tk.END, f"Category: {x_cat}\n")
+                                        details_text.insert(tk.END, "-" * 50 + "\n")
+                                        
+                                        # Show ANOVA p-value for this category if available (3+ metrics)
+                                        if n_metrics > 2:
+                                            cat_anova = per_cat_anova.get(x_cat) or per_cat_anova.get(str(x_cat))
+                                            # Keys may be numeric indices — try positional lookup
+                                            if not cat_anova:
+                                                import numpy as _np
+                                                x_cat_idx = list(x_categories).index(x_cat) if x_cat in list(x_categories) else None
+                                                if x_cat_idx is not None:
+                                                    for idx_key in [x_cat_idx, _np.int64(x_cat_idx), str(x_cat_idx)]:
+                                                        cat_anova = per_cat_anova.get(idx_key)
+                                                        if cat_anova:
+                                                            break
+                                            if cat_anova:
+                                                anova_p = cat_anova.get('p')
+                                                anova_f = cat_anova.get('F')
+                                                if anova_p is not None:
+                                                    anova_sig = self.pval_to_annotation(anova_p)
+                                                    f_str = f"F = {anova_f:.3f}, " if anova_f is not None else ""
+                                                    if anova_p < 0.0001:
+                                                        details_text.insert(tk.END, f"  ANOVA: {f_str}p = {anova_p:.2e} {anova_sig}\n")
+                                                    else:
+                                                        details_text.insert(tk.END, f"  ANOVA: {f_str}p = {anova_p:.4f} {anova_sig}\n")
+                                                    details_text.insert(tk.END, f"  Post-hoc comparisons:\n")
+                                        
+                                        for m1, m2 in metric_pairs:
+                                            # Try both orderings
+                                            p_val = metric_results.get((x_cat, m1, m2))
+                                            if p_val is None:
+                                                p_val = metric_results.get((x_cat, m2, m1))
+                                            
+                                            if p_val is not None:
+                                                sig = self.pval_to_annotation(p_val)
+                                                if abs(p_val) < 1e-10:
+                                                    p_text = "p < 1e-10"
+                                                elif p_val < 0.0001:
+                                                    p_text = f"p = {p_val:.2e}"
+                                                else:
+                                                    p_text = f"p = {p_val:.4f}"
+                                                details_text.insert(tk.END, f"  {m1} vs {m2}: {p_text} {sig}\n")
+                                            else:
+                                                details_text.insert(tk.END, f"  {m1} vs {m2}: p-value not available\n")
+                                        details_text.insert(tk.END, "\n")
+                                    
+                                    # Descriptive statistics per category per metric
+                                    error_type = self.errorbar_type_var.get().lower()
+                                    error_label = "SEM" if error_type == "sem" else "SD"
+                                    
+                                    details_text.insert(tk.END, "=" * 60 + "\n")
+                                    details_text.insert(tk.END, "DESCRIPTIVE STATISTICS\n")
+                                    details_text.insert(tk.END, "=" * 60 + "\n\n")
+                                    
+                                    for x_cat in x_categories:
+                                        details_text.insert(tk.END, f"Category: {x_cat}\n")
+                                        details_text.insert(tk.END, f"{'Metric':<20} {'Mean':<12} {error_label+' ±':<12} {'n':<5}\n")
+                                        details_text.insert(tk.END, "-" * 50 + "\n")
+                                        df_cat = df_plot[df_plot[x_col] == x_cat]
+                                        for metric in value_cols_ui:
+                                            if metric in df_cat.columns:
+                                                mdata = pd.to_numeric(df_cat[metric], errors='coerce').dropna()
+                                                if len(mdata) > 0:
+                                                    mean_v = mdata.mean()
+                                                    err_v = mdata.sem() if error_type == "sem" else mdata.std(ddof=1)
+                                                    details_text.insert(tk.END, f"{metric:<20} {mean_v:<12.4g} {err_v:<12.4g} {len(mdata):<5}\n")
+                                        details_text.insert(tk.END, "\n")
+                                    
+                                    details_text.insert(tk.END, f"Alpha level: {alpha}\n")
                                     
                                     # Return early to avoid showing redundant statistical details
                                     return
                             
-                            # Format and display p-value matrix if we found values
-                            if not has_triplet_keys:  # Skip this section entirely if we're dealing with metric comparisons
-                                if has_pvals:
-                                    details_text.insert(tk.END, f"Test Used: {anova_type} + {posthoc_type} across {n_x_categories} categories\n")
-                                    
-                                    # We'll show the formatted p-value matrix in the post-hoc test section below
-                                    # This avoids duplication of the same information
-                                
-                                # Note about using same p-values as annotations
-                                details_text.insert(tk.END, "\nNote: These statistics are the same as those used for plot annotations.\n")
-                            elif not has_triplet_keys:  # Only show error if we haven't already displayed metric comparisons
-                                details_text.insert(tk.END, "No matching p-values found in latest_pvals dictionary.\n")
-                                details_text.insert(tk.END, f"Keys available: {list(self.latest_pvals.keys())[:5]}\n")
+                            # For non-triplet case, display is handled by the n_groups==1 block below
+                            # (triplet case already returned early above)
                     else:
                         # Grouped Data: multiple groups in a dataframe
                         unique_groups = df_plot[group_col].dropna().unique() if group_col in df_plot else []
@@ -4380,7 +4177,27 @@ class ExPlotApp:
                             stored_anova_type = self.latest_stats.get('anova_type', anova_type)
                             stored_posthoc_type = self.latest_stats.get('posthoc_type', posthoc_type)
                             
-                            details_text.insert(tk.END, f"Test Used: {stored_anova_type} across x-axis categories\n")
+                            details_text.insert(tk.END, f"\n============ ANOVA Results ============\n")
+                            details_text.insert(tk.END, f"Test Used: {stored_anova_type} + {stored_posthoc_type} post-hoc\n")
+                            
+                            # Show stored ANOVA p-value if available
+                            stored_aov = self.latest_stats.get('anova_results', None)
+                            if stored_aov is not None:
+                                try:
+                                    if 'p-unc' in stored_aov.columns:
+                                        _anova_p = stored_aov['p-unc'].iloc[0]
+                                    elif 'p' in stored_aov.columns:
+                                        _anova_p = stored_aov['p'].iloc[0]
+                                    else:
+                                        _anova_p = None
+                                    if _anova_p is not None:
+                                        details_text.insert(tk.END, f"Main ANOVA result: p = {_anova_p:.4g} {self.pval_to_annotation(_anova_p, alpha=alpha)}\n")
+                                        if _anova_p > alpha:
+                                            details_text.insert(tk.END, f"\n⚠️ WARNING: The overall ANOVA p-value is not significant (p > {alpha}).\n")
+                                            details_text.insert(tk.END, "Post-hoc test results should be interpreted with caution.\n")
+                                except Exception:
+                                    pass
+                            
                             anova_success = False
                             
                             try:
@@ -4557,23 +4374,166 @@ class ExPlotApp:
                                         if has_very_small_pvals:
                                             details_text.insert(tk.END, "\nNote: p < 1e-10 indicates an extremely small p-value\n")
                                             details_text.insert(tk.END, "that is effectively zero in floating point precision.\n")
+                                        
+                                        details_text.insert(tk.END, f"\nAlpha level: {alpha}\n")
                                     except Exception as e:
                                         details_text.insert(tk.END, f"Error displaying post-hoc results: {e}\n")
                                 else:
                                     details_text.insert(tk.END, "ANOVA/post-hoc pipeline requires required packages.\n")
 
                     # Handle multiple groups case (more than 1 group)
-                    if group_col and group_col.strip() != '' and group_col != 'None':
-                        unique_groups = df_plot[group_col].dropna().unique() if group_col in df_plot else []
+                    # Use the guard to only display grouped stats once (avoids repeated
+                    # output when looping over multiple value columns).
+                    if group_col and group_col.strip() != '' and group_col != 'None' and not grouped_stats_displayed:
+                        grouped_stats_displayed = True
+                        
+                        # Determine the ACTUAL hue groups used for statistics.
+                        # When multiple Y-columns are in overlay mode, plot_graph sets
+                        # hue_col='Measurement' (the metric names), so the stored p-value
+                        # keys use metric names, NOT the raw group column values.
+                        actual_hue_values = self.latest_stats.get('hue_values', []) if hasattr(self, 'latest_stats') else []
+                        
                         x_categories = df_plot[x_col].dropna().unique() if x_col in df_plot else []
-                        n_groups = len(unique_groups)
-                        if n_groups > 1:  # If we have more than 1 group (multiple group comparison)
-                            base_groups = [g for g in df_plot[x_col].dropna().unique()]
-                            hue_groups = [g for g in df_plot[group_col].dropna().unique()]
+                        base_groups = list(x_categories)
+                        
+                        if actual_hue_values and len(actual_hue_values) > 1:
+                            # Use the hue values that calculate_statistics actually used
+                            hue_groups = list(actual_hue_values)
+                        else:
+                            # Fallback: use the group column from the UI
+                            unique_groups = df_plot[group_col].dropna().unique() if group_col in df_plot else []
+                            if len(unique_groups) > 1:
+                                hue_groups = list(unique_groups)
+                            else:
+                                hue_groups = []
+                        
                         n_hue = len(hue_groups)
                         
+                        # Detect if hue groups are actually metric/value column names
+                        # (multi-Y overlay: plot_graph sets hue_col='Measurement')
+                        hue_is_metrics = (n_hue > 0 and
+                                          set(hue_groups) <= set(valid_value_cols) and
+                                          len(valid_value_cols) > 1)
+                        
+                        if hue_is_metrics:
+                            # --- Multi-Y overlay: show metric pairwise comparisons ---
+                            import itertools as _it
+                            metric_pairs = list(_it.combinations(hue_groups, 2))
+                            
+                            # Determine test type from stored results
+                            test_method = self.latest_stats.get('test_method', '')
+                            if n_hue == 2:
+                                ttest_type = self.ttest_type_var.get()
+                                details_text.insert(tk.END, f"Test Used: {ttest_type} for {n_hue} metrics across categories\n")
+                            else:
+                                anova_type = self.anova_type_var.get()
+                                posthoc_type = self.posthoc_type_var.get()
+                                details_text.insert(tk.END, f"Test Used: {anova_type} + {posthoc_type} for {n_hue} metrics across categories\n")
+                            
+                            details_text.insert(tk.END, f"\n{'='*60}\n")
+                            details_text.insert(tk.END, f"PAIRWISE METRIC COMPARISONS (within each category)\n")
+                            details_text.insert(tk.END, f"{'='*60}\n\n")
+                            
+                            from explot_stats import make_stat_key
+                            # Debug: show what keys are available
+                            triplet_keys = [k for k in self.latest_pvals if isinstance(k, tuple) and len(k) == 3]
+                            print(f"[DEBUG] hue_is_metrics: x_categories={list(x_categories)}, metric_pairs={metric_pairs}")
+                            print(f"[DEBUG] hue_is_metrics: triplet keys in latest_pvals: {triplet_keys[:6]}")
+                            
+                            # Get per-category ANOVA results if available
+                            per_cat_anova = self.latest_stats.get('per_category_anova', {})
+                            
+                            for x_cat in x_categories:
+                                details_text.insert(tk.END, f"Category: {x_cat}\n{'-'*50}\n")
+                                # Show ANOVA p-value for this category
+                                cat_anova = per_cat_anova.get(x_cat) or per_cat_anova.get(str(x_cat))
+                                # Keys may be numeric indices — try positional lookup
+                                if not cat_anova:
+                                    import numpy as _np
+                                    x_cat_idx = list(x_categories).index(x_cat) if x_cat in list(x_categories) else None
+                                    if x_cat_idx is not None:
+                                        for idx_key in [x_cat_idx, _np.int64(x_cat_idx), str(x_cat_idx)]:
+                                            cat_anova = per_cat_anova.get(idx_key)
+                                            if cat_anova:
+                                                break
+                                if cat_anova and n_hue > 2:
+                                    anova_p = cat_anova.get('p')
+                                    anova_f = cat_anova.get('F')
+                                    if anova_p is not None:
+                                        anova_sig = self.pval_to_annotation(anova_p)
+                                        f_str = f"F = {anova_f:.3f}, " if anova_f is not None else ""
+                                        if anova_p < 0.0001:
+                                            details_text.insert(tk.END, f"  ANOVA: {f_str}p = {anova_p:.2e} {anova_sig}\n")
+                                        else:
+                                            details_text.insert(tk.END, f"  ANOVA: {f_str}p = {anova_p:.4f} {anova_sig}\n")
+                                        details_text.insert(tk.END, f"  Post-hoc comparisons:\n")
+                                for m1, m2 in metric_pairs:
+                                    p_val = None
+                                    # Try all key formats used by calculate_statistics and annotation code
+                                    for key in [
+                                        (x_cat, m1, m2), (x_cat, m2, m1),
+                                        self.stat_key(x_cat, m1, m2),
+                                        make_stat_key(x_cat, m1, m2),
+                                        (str(x_cat), str(m1), str(m2)), (str(x_cat), str(m2), str(m1)),
+                                        make_stat_key(str(x_cat), str(m1), str(m2)),
+                                    ]:
+                                        if key in self.latest_pvals:
+                                            p_val = self.latest_pvals[key]
+                                            break
+                                    
+                                    # Brute-force scan if still not found
+                                    if p_val is None:
+                                        sx = str(x_cat)
+                                        sm1, sm2 = str(m1), str(m2)
+                                        for k, v in self.latest_pvals.items():
+                                            if isinstance(k, tuple) and len(k) == 3:
+                                                if (str(k[0]) == sx and
+                                                    ((str(k[1]) == sm1 and str(k[2]) == sm2) or
+                                                     (str(k[1]) == sm2 and str(k[2]) == sm1))):
+                                                    p_val = v
+                                                    print(f"[DEBUG] Found via brute-force: key={k} type=({type(k[0]).__name__},{type(k[1]).__name__},{type(k[2]).__name__})")
+                                                    break
+                                    
+                                    if p_val is not None:
+                                        sig = self.pval_to_annotation(p_val)
+                                        if abs(p_val) < 1e-10:
+                                            p_str = "p < 1e-10"
+                                        elif p_val < 0.0001:
+                                            p_str = f"p = {p_val:.2e}"
+                                        else:
+                                            p_str = f"p = {p_val:.4f}"
+                                        details_text.insert(tk.END, f"  {m1} vs {m2}: {p_str} {sig}\n")
+                                    else:
+                                        details_text.insert(tk.END, f"  {m1} vs {m2}: p-value not available\n")
+                                details_text.insert(tk.END, "\n")
+                            
+                            # Descriptive statistics per metric per category
+                            details_text.insert(tk.END, f"{'='*60}\n")
+                            details_text.insert(tk.END, "DESCRIPTIVE STATISTICS\n")
+                            details_text.insert(tk.END, f"{'='*60}\n\n")
+                            error_type = self.errorbar_type_var.get().lower()
+                            error_label = "SEM" if error_type == "sem" else "SD"
+                            for x_cat in x_categories:
+                                details_text.insert(tk.END, f"Category: {x_cat}\n{'-'*40}\n")
+                                details_text.insert(tk.END, f"{'Metric':<20} {'Mean':<10} {error_label+' ±':<10} {'n':<5}\n")
+                                details_text.insert(tk.END, "-"*45 + "\n")
+                                df_cat = df_plot[df_plot[x_col] == x_cat]
+                                for metric in hue_groups:
+                                    if metric in df_cat.columns:
+                                        mdata = pd.to_numeric(df_cat[metric], errors='coerce').dropna()
+                                        if len(mdata) > 0:
+                                            mean_v = mdata.mean()
+                                            err_v = mdata.sem() if error_type == "sem" else mdata.std(ddof=1)
+                                            details_text.insert(tk.END, f"{metric:<20} {mean_v:<10.4g} {err_v:<10.4g} {len(mdata):<5}\n")
+                                details_text.insert(tk.END, "\n")
+                            
+                            details_text.insert(tk.END, f"\nNote: These statistics are the same as those used for plot annotations.\n")
+                            details_text.insert(tk.END, f"Alpha level: {alpha}\n")
+                            # Skip the standard grouped display — metrics are fully handled above
+                            continue
+                        
                         # Show which test is being used
-                        if n_hue > 2 and pg is not None and sp is not None:
+                        elif n_hue > 2 and pg is not None and sp is not None:
                             # Get the selected ANOVA and post-hoc test types from UI
                             anova_type = self.anova_type_var.get()
                             posthoc_type = self.posthoc_type_var.get()
@@ -4888,72 +4848,74 @@ class ExPlotApp:
                             # End of loop for each x-axis category
                         
                         # Now display the results in a more concise format
-                        # 1. First show the ANOVA results summary for each category
-                        details_text.insert(tk.END, "\n" + "="*80 + "\n")
-                        details_text.insert(tk.END, f"ANOVA RESULTS SUMMARY: {anova_type}\n")
-                        details_text.insert(tk.END, f"Alpha level: {alpha}\n")
-                        details_text.insert(tk.END, "="*80 + "\n\n")
-                        
-                        details_text.insert(tk.END, f"{'Category':<15} {'F-statistic':<15} {'DF':<10} {'p-value':<15} {'Sig.':<5} {'η²':<10}\n")
-                        details_text.insert(tk.END, "-"*70 + "\n")
-                        
-                        for g, results in anova_results.items():
-                            f_stat = results['f_stat']
-                            df = f"{results['df_between']}, {results['df_error']}"
-                            p_val = results['p_value']
-                            sig = results['sig']
-                            eta_sq = results['eta_sq']
+                        # Only show ANOVA/post-hoc/descriptive sections when n_hue > 2
+                        # (for n_hue == 2, t-test results are already displayed above)
+                        if n_hue > 2 and anova_results:
+                            # 1. First show the ANOVA results summary for each category
+                            details_text.insert(tk.END, "\n" + "="*80 + "\n")
+                            details_text.insert(tk.END, f"ANOVA RESULTS SUMMARY: {anova_type}\n")
+                            details_text.insert(tk.END, f"Alpha level: {alpha}\n")
+                            details_text.insert(tk.END, "="*80 + "\n\n")
                             
-                            # Format the F-statistic
-                            if isinstance(f_stat, (int, float)):
-                                f_str = f"{f_stat:.3f}"
-                            else:
-                                f_str = str(f_stat)
+                            details_text.insert(tk.END, f"{'Category':<15} {'F-statistic':<15} {'DF':<10} {'p-value':<15} {'Sig.':<5} {'η²':<10}\n")
+                            details_text.insert(tk.END, "-"*70 + "\n")
                             
-                            # Format the p-value
-                            if isinstance(p_val, (int, float)):
-                                p_str = f"{p_val:.4g}" if p_val < 0.001 else f"{p_val:.4f}"
-                            else:
-                                p_str = str(p_val)
+                            for g, results in anova_results.items():
+                                f_stat = results['f_stat']
+                                df = f"{results['df_between']}, {results['df_error']}"
+                                p_val = results['p_value']
+                                sig = results['sig']
+                                eta_sq = results['eta_sq']
                                 
-                            # Format the eta-squared value
-                            if isinstance(eta_sq, (int, float)) and eta_sq != 'N/A':
-                                eta_str = f"{float(eta_sq):.3f}"
-                            else:
-                                eta_str = str(eta_sq)
-                            
-                            details_text.insert(tk.END, f"{g:<15} {f_str:<15} {df:<10} {p_str:<15} {sig:<5} {eta_str:<10}\n")
-                        
-                        details_text.insert(tk.END, "\n\n")
-                        
-                        # 2. Now display the post-hoc test results for each category
-                        details_text.insert(tk.END, "="*80 + "\n")
-                        details_text.insert(tk.END, f"POST-HOC TEST RESULTS: {posthoc_type}\n")
-                        details_text.insert(tk.END, "="*80 + "\n\n")
-                        
-                        # Display post-hoc matrices for each category
-                        for g, matrix in all_pval_matrices.items():
-                            details_text.insert(tk.END, f"Category: {g}\n")
-                            details_text.insert(tk.END, "-"*40 + "\n")
-                            
-                            # Check if we have ANOVA results for this group
-                            if g in anova_results and anova_results[g]['p_value'] != 'N/A':
-                                anova_p = anova_results[g]['p_value']
-                                if isinstance(anova_p, (int, float)):
-                                    anova_sig = self.pval_to_annotation(anova_p, alpha=alpha)
-                                    p_str = f"{anova_p:.4g}" if anova_p < 0.001 else f"{anova_p:.4f}"
-                                    details_text.insert(tk.END, f"ANOVA p-value: {p_str} {anova_sig}\n")
+                                # Format the F-statistic
+                                if isinstance(f_stat, (int, float)):
+                                    f_str = f"{f_stat:.3f}"
+                                else:
+                                    f_str = str(f_stat)
+                                
+                                # Format the p-value
+                                if isinstance(p_val, (int, float)):
+                                    p_str = f"{p_val:.4g}" if p_val < 0.001 else f"{p_val:.4f}"
+                                else:
+                                    p_str = str(p_val)
                                     
-                                    # If ANOVA is not significant, add a warning
-                                    if anova_p > alpha:
-                                        details_text.insert(tk.END, "NOTE: ANOVA is not significant, interpret post-hoc tests with caution\n")
+                                # Format the eta-squared value
+                                if isinstance(eta_sq, (int, float)) and eta_sq != 'N/A':
+                                    eta_str = f"{float(eta_sq):.3f}"
+                                else:
+                                    eta_str = str(eta_sq)
+                                
+                                details_text.insert(tk.END, f"{g:<15} {f_str:<15} {df:<10} {p_str:<15} {sig:<5} {eta_str:<10}\n")
                             
-                            # Display the matrix with formatted p-values
-                            matrix_str = self.format_pvalue_matrix(matrix)
-                            details_text.insert(tk.END, matrix_str + "\n\n")
-                        
-                        # 3. Only show descriptive statistics section if not 2 groups case (which already displays stats)
-                        if n_hue != 2:
+                            details_text.insert(tk.END, "\n\n")
+                            
+                            # 2. Now display the post-hoc test results for each category
+                            details_text.insert(tk.END, "="*80 + "\n")
+                            details_text.insert(tk.END, f"POST-HOC TEST RESULTS: {posthoc_type}\n")
+                            details_text.insert(tk.END, "="*80 + "\n\n")
+                            
+                            # Display post-hoc matrices for each category
+                            for g, matrix in all_pval_matrices.items():
+                                details_text.insert(tk.END, f"Category: {g}\n")
+                                details_text.insert(tk.END, "-"*40 + "\n")
+                                
+                                # Check if we have ANOVA results for this group
+                                if g in anova_results and anova_results[g]['p_value'] != 'N/A':
+                                    anova_p = anova_results[g]['p_value']
+                                    if isinstance(anova_p, (int, float)):
+                                        anova_sig = self.pval_to_annotation(anova_p, alpha=alpha)
+                                        p_str = f"{anova_p:.4g}" if anova_p < 0.001 else f"{anova_p:.4f}"
+                                        details_text.insert(tk.END, f"ANOVA p-value: {p_str} {anova_sig}\n")
+                                        
+                                        # If ANOVA is not significant, add a warning
+                                        if anova_p > alpha:
+                                            details_text.insert(tk.END, "NOTE: ANOVA is not significant, interpret post-hoc tests with caution\n")
+                                
+                                # Display the matrix with formatted p-values
+                                matrix_str = self.format_pvalue_matrix(matrix)
+                                details_text.insert(tk.END, matrix_str + "\n\n")
+                            
+                            # 3. Descriptive statistics
                             details_text.insert(tk.END, "="*80 + "\n")
                             details_text.insert(tk.END, "DESCRIPTIVE STATISTICS\n")
                             details_text.insert(tk.END, "="*80 + "\n\n")
@@ -4998,129 +4960,8 @@ class ExPlotApp:
                                         details_text.insert(tk.END, f"{group:<15} {stats['mean']:<10.4g} {stats['error']:<10.4g} {stats['n']:<5}\n")
                                     else:
                                         details_text.insert(tk.END, f"{group:<15} {'No data':<10} {'-':<10} {'-':<5}\n")
-                            
-                            # No additional newline needed here
-                            
-                        # Add a section to display overall test information
-                        details_text.insert(tk.END, "\n" + "="*80 + "\n")
-                        details_text.insert(tk.END, "NOTES:\n")
-                        details_text.insert(tk.END, "="*80 + "\n\n")
                         
-                        # Display appropriate test information based on number of groups
-                        if n_hue == 2:
-                            details_text.insert(tk.END, f"Test Used: {ttest_type} ({alternative}) for multiple groups\n")
-                        else:
-                            details_text.insert(tk.END, f"Test Used: {anova_type} with {posthoc_type} post-hoc tests\n")
-                            
-                        details_text.insert(tk.END, f"Alpha level: {alpha}\n\n")
-                        if any([results.get('p_value', 1.0) > alpha for results in anova_results.values()]):
-                            details_text.insert(tk.END, "\n⚠️ WARNING: Some ANOVA p-values are not significant. ")
-                            details_text.insert(tk.END, "When the main ANOVA is not significant, post-hoc test results should be interpreted with caution.\n")
-                            
-                        # Handle case for non-ANOVA tests or two groups
-                        else:
-                            # Skip if we already displayed the special section for exactly 2 groups
-                            if n_hue == 2:
-                                # We've already shown detailed results in the t-test section above
-                                pass
-                            else:
-                                # For other cases or if posthoc not available, show the pairwise list
-                                for h1, h2 in pairs:
-                                    # Convert data to numeric, handling potential errors
-                                    def convert_to_numeric(series):
-                                        try:
-                                            return pd.to_numeric(series, errors='coerce').dropna()
-                                        except Exception as e:
-                                            details_text.insert(tk.END, f"Error converting data to numeric: {e}\n")
-                                            return pd.Series(dtype=float)
-                                    
-                                    vals1 = convert_to_numeric(df_sub[df_sub[group_col] == h1][val_col])
-                                    vals2 = convert_to_numeric(df_sub[df_sub[group_col] == h2][val_col])
-                                    
-                                    # Check if we have enough valid numeric data
-                                    if len(vals1) == 0 or len(vals2) == 0:
-                                        details_text.insert(tk.END, f"Insufficient numeric data for t-test between {h1} and {h2}\n")
-                                        continue
-                                    # Get the selected t-test type and alternative
-                                    ttest_type = self.ttest_type_var.get()
-                                    alternative = self.ttest_alternative_var.get()
-                                    
-                                    try:
-                                        # Create a temporary DataFrame for the t-test
-                                        temp_df = pd.DataFrame({
-                                            'group': [h1] * len(vals1) + [h2] * len(vals2),
-                                            'value': np.concatenate([vals1, vals2])
-                                        })
-                                        
-                                        # Calculate statistics
-                                        means = [vals1.mean(), vals2.mean()]
-                                        stds = [vals1.std(ddof=1), vals1.std(ddof=1)]
-                                        ns = [len(vals1), len(vals2)]
-                                        sems = [std / np.sqrt(n) for std, n in zip(stds, ns)]
-                                        
-                                        # Get error type from settings (SD or SEM)
-                                        error_type = self.errorbar_type_var.get().lower()
-                                        errors = stds if error_type == 'sd' else sems
-                                        error_label = 'SD' if error_type == 'sd' else 'SEM'
-                                        
-                                        # Perform the appropriate t-test using only explot_stats
-                                        try:
-                                            from explot_stats import run_ttest
-                                            p_val, ttest_result = run_ttest(
-                                                temp_df, 'value', h1, h2, 'group',
-                                                test_type=ttest_type, alternative=alternative
-                                            )
-                                            
-                                            # Extract test statistic and degrees of freedom for display
-                                            if hasattr(ttest_result, 'statistic'):
-                                                test_stat = ttest_result.statistic
-                                            else:
-                                                test_stat = float('nan')
-                                            
-                                            # Calculate degrees of freedom based on test type
-                                            if ttest_type == "Paired t-test" and len(vals1) == len(vals2):
-                                                df = len(vals1) - 1  # n-1 for paired t-test
-                                            elif ttest_type == "Student's t-test (unpaired, equal variances)":
-                                                df = len(vals1) + len(vals2) - 2  # n1 + n2 - 2 for Student's t-test
-                                            else:  # Welch's t-test (default)
-                                                # Welch-Satterthwaite equation for degrees of freedom
-                                                var1, var2 = np.var(vals1, ddof=1), np.var(vals2, ddof=1)
-                                                n1, n2 = len(vals1), len(vals2)
-                                                df = ((var1/n1 + var2/n2)**2) / ((var1/n1)**2/(n1-1) + (var2/n2)**2/(n2-1))
-                                            
-                                            # Store the p-value for this comparison
-                                            key = (g, h1, h2) if (g, h1, h2) not in self.latest_pvals else (g, h2, h1)
-                                            self.latest_pvals[key] = p_val
-                                            
-                                        except ImportError:
-                                            details_text.insert(tk.END, "Error: The explot_stats module is required for t-tests.\n")
-                                            details_text.insert(tk.END, "Please install the module or contact the developer.\n")
-                                            raise
-                                            
-                                    except Exception as e:
-                                        details_text.insert(tk.END, f"Error in t-test: {str(e)}\n")
-                                        continue
-                                        
-                                    # Format test statistics
-                                    test_name = ttest_type.split('(')[0].strip()
-                                    p_annotation = self.pval_to_annotation(p_val)
-                                    
-                                    # First line: Test statistics (compact format)
-                                    if 'test_stat' in locals() and 'df' in locals():
-                                        test_name = "Welch's t-test" if 'Welch' in ttest_type else 't-test'
-                                        details_text.insert(tk.END, 
-                                            f"{g}: {h1} vs {h2} - {test_name}: "
-                                            f"p = {p_val:.2g} {p_annotation}, "
-                                            f"t = {test_stat:.2f}, "
-                                            f"df = {df:.1f}\n"
-                                        )
-                                    
-                                    # Second table: Means and errors (compact format)
-                                    details_text.insert(tk.END, f"{'Group':<8} {'Mean':<10} {error_label+' ±':<10} {'n':<4}\n")
-                                    details_text.insert(tk.END, f"{'-' * 35}\n")
-                                    for group, mean, error, n in zip([h1, h2], means, errors, ns):
-                                        details_text.insert(tk.END, f"{group:<8} {mean:<10.4g} {error:<10.4g} {n:<4}\n")
-                                    details_text.insert(tk.END, "\n")
+                        details_text.insert(tk.END, f"\nAlpha level: {alpha}\n")
         except Exception as e:
             details_text.insert(tk.END, f"Error calculating statistics: {e}\n")
             details_text.insert(tk.END, traceback.format_exc())
@@ -9987,7 +9828,9 @@ class ExPlotApp:
             ax.set_position(ax_position)
 
             # --- Statistics/Annotations ---
-            if self.use_stats_var.get():
+            # In overlay mode, all iterations produce identical melted data,
+            # so only calculate statistics and add annotations on the first pass.
+            if self.use_stats_var.get() and not (plot_mode == 'overlay' and len(value_cols) > 1 and idx > 0):
                 try:
                     print(f"[DEBUG] Starting statistics calculation: x_col={x_col}, value_col={value_col}, hue_col={hue_col}")
                     # Calculate p-values for all pairs
@@ -10007,24 +9850,12 @@ class ExPlotApp:
                     import itertools
                     
 
-                    # Define p-value format configuration for statannotations using current alpha level
+                    # p-value format from the single canonical source
                     try:
                         alpha = float(self.alpha_level_var.get())
                     except (ValueError, AttributeError):
-                        alpha = 0.05  # Default if not set or invalid
-                    
-                    # Use the same threshold logic as in our pval_to_annotation function
-                    pvalue_format = {
-                        'text_format': 'star',
-                        'pvalue_thresholds': [
-                            (alpha/5000, '****'),  # 4 stars threshold (e.g., 0.00001 at alpha=0.05)
-                            (alpha/50, '***'),    # 3 stars threshold (e.g., 0.001 at alpha=0.05)
-                            (alpha/5, '**'),      # 2 stars threshold (e.g., 0.01 at alpha=0.05)
-                            (alpha, '*'),         # 1 star threshold (alpha itself)
-                            (1, 'ns')             # Not significant
-                        ]
-                    }
-                    
+                        alpha = 0.05
+                    pvalue_format = get_statannotations_format(alpha)
                     print(f"[DEBUG] Using pvalue thresholds: {[t[0] for t in pvalue_format['pvalue_thresholds']]}")
 
                     annot_x_col = x_col

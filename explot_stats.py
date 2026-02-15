@@ -46,10 +46,76 @@ def make_stat_key(*args):
         return args
 
 
+def get_significance_thresholds(alpha=0.05):
+    """
+    Return the canonical list of (threshold, symbol) tuples used everywhere
+    in ExPlot for converting p-values to star annotations.
+
+    The list is sorted from most significant to least significant.
+    A p-value is assigned the symbol of the *first* threshold it is ≤ to.
+
+    Args:
+        alpha (float): The significance level (default: 0.05)
+
+    Returns:
+        list[tuple[float, str]]: [(threshold, symbol), ...] from smallest to largest
+    """
+    return [
+        (alpha / 5000, '****'),
+        (alpha / 50,   '***'),
+        (alpha / 5,    '**'),
+        (alpha,        '*'),
+    ]
+
+
+def get_statannotations_format(alpha=0.05):
+    """
+    Return the pvalue_format dict expected by the *statannotations* library,
+    derived from the canonical thresholds.
+
+    Args:
+        alpha (float): The significance level (default: 0.05)
+
+    Returns:
+        dict: Ready-to-use ``pvalue_format`` for ``Annotator.configure()``.
+    """
+    thresholds = get_significance_thresholds(alpha)
+    # statannotations expects the list sorted ascending and ending with (1, 'ns')
+    sa_thresholds = [(t, s) for t, s in thresholds] + [(1, 'ns')]
+    return {
+        'text_format': 'star',
+        'pvalue_thresholds': sa_thresholds,
+    }
+
+
+def format_significance_legend(alpha=0.05):
+    """
+    Return a human-readable multi-line string describing the current
+    significance thresholds.  Used by both ``_add_significance_legend``
+    and ``show_statistical_details`` in the main app.
+
+    Args:
+        alpha (float): The significance level (default: 0.05)
+
+    Returns:
+        str: Formatted legend text
+    """
+    thresholds = get_significance_thresholds(alpha)
+    lines = ["Significance levels:"]
+    for threshold, symbol in reversed(thresholds):
+        lines.append(f"{symbol:>5} p ≤ {threshold:.5g}")
+    lines.append(f"   ns p > {alpha:.5g}")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def pval_to_annotation(p_val, alpha=0.05):
     """
-    Convert p-value to significance annotation using the same threshold logic as in explot.py.
-    
+    Convert a p-value to a significance annotation string.
+
+    Uses :func:`get_significance_thresholds` so that every call site in
+    ExPlot produces identical symbols for the same p-value and alpha.
+
     Args:
         p_val (float): The p-value to convert
         alpha (float): The significance threshold (default: 0.05)
@@ -59,17 +125,12 @@ def pval_to_annotation(p_val, alpha=0.05):
     """
     if p_val is None or (isinstance(p_val, float) and math.isnan(p_val)):
         return "?"
-        
-    if p_val > alpha:
-        return "ns"  # Not significant
-    elif p_val <= alpha/5000:  # 4 stars threshold
-        return "****"
-    elif p_val <= alpha/50:    # 3 stars threshold
-        return "***"
-    elif p_val <= alpha/5:     # 2 stars threshold
-        return "**"
-    elif p_val <= alpha:       # 1 star threshold
-        return "*"
+
+    for threshold, symbol in get_significance_thresholds(alpha):
+        if p_val <= threshold:
+            return symbol
+
+    return "ns"
 
 
 def format_pvalue_matrix(matrix):
@@ -760,6 +821,7 @@ def calculate_statistics(df_plot, x_col, value_col, hue_col=None, app_settings=N
             
             # For each x-category, perform ANOVA and post-hoc tests on the groups
             all_comparisons = []
+            results['per_category_anova'] = {}  # Store per-category ANOVA p-values
             
             for x_val in x_values:
                 debug(f"Processing x-category: {x_val}")
@@ -783,6 +845,16 @@ def calculate_statistics(df_plot, x_col, value_col, hue_col=None, app_settings=N
                         main_p = anova_results['p'].values[0] if len(anova_results) > 0 else 1.0
                     else:
                         main_p = 1.0
+                    
+                    # Get F-statistic if available
+                    f_stat = anova_results['F'].values[0] if 'F' in anova_results.columns and len(anova_results) > 0 else None
+                    
+                    # Store per-category ANOVA result
+                    results['per_category_anova'][x_val] = {
+                        'p': main_p,
+                        'F': f_stat,
+                        'anova_df': anova_results,
+                    }
                         
                     all_comparisons.append((x_val, main_p))
                     debug(f"ANOVA for {x_val}: p = {main_p:.4g}")
@@ -817,7 +889,5 @@ def calculate_statistics(df_plot, x_col, value_col, hue_col=None, app_settings=N
                 results['summary'] = "\n".join(summary_parts)
             else:
                 results['summary'] = "No valid ANOVA comparisons could be performed. Check your data."
-    
-    return results
     
     return results

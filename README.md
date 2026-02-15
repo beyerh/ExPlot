@@ -67,7 +67,7 @@ File --> Load Example Data
 Packaged app for macOS and Windows can be downloaded from the [releases](releases) page.
 
 ## Create environment manually
-Preferably, use the `build.sh` script wizardto create the environment using the recommended Python version (see below).
+Preferably, use the `build.sh` script wizard to create the environment using the recommended Python version (see below).
 
 ```bash
 # Create and activate a virtual environment
