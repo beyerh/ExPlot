@@ -1,5 +1,5 @@
 # ExPlot
-A modern cross-platform Python/Tkinter app to plot data from Excel sheets using *seaborn* and *matplotlib*, featuring theming with ttkbootstrap. Fully developed with Claude 3.7 Sonnet, Cascade Base, SWE-1, and GPT-4.1 using Windsurf.
+A modern cross-platform Python/Tkinter app to plot data from Excel sheets using *seaborn* and *matplotlib*, featuring theming with ttkbootstrap. Fully developed with Claude 3.7 Sonnet, Claude 4.5 Sonnet, Claude Opus 4.6, Cascade Base, SWE-1, and GPT-4.1 using Windsurf.
 
 No warranty is given or implied. Use at your own risk and after testing and validation of functionality.
 
@@ -46,7 +46,8 @@ The *x_category* column contains the categories to be plotted on the x-axis, the
 Alternatively, provide several *y_value* columns, each with a different name.
 
 # Features
-- **Plot Types**: Bar graphs, Box plots, Violin plots, Strip plots, XY plots
+- **Plot Types**: Bar graphs, Box plots, Violin plots, Strip plots, XY plots, Histograms, Heatmaps
+- **Data Viewer**: Browse and inspect loaded data in a spreadsheet-like interface
 - **Curve Fitting**: Predefined and custom models with parameter estimation
 - **Statistical Tests**:
   - **Parametric**: Student's t-test, Welch's t-test, Paired t-test

@@ -1,6 +1,6 @@
 # ExPlot - Data visualization tool for Excel files
 
-VERSION = "0.7.3"
+VERSION = "0.7.4"
 # =====================================================================
 
 import tkinter as tk
@@ -42,6 +42,17 @@ from explot_stats import (
     get_statannotations_format,
     format_significance_legend,
 )
+from explot_palette import (
+    DEFAULT_COLORS,
+    DEFAULT_PALETTES,
+    to_hex,
+    load_colors_palettes,
+    save_colors_palettes,
+    resolve_palette,
+    resolve_single_color,
+    get_outline_color,
+    resolve_markers,
+)
 
 # Disable dask imports, nuitka fix for macOS
 '''import sys
@@ -52,51 +63,8 @@ sys.modules['dask.array.core'] = None
 sys.modules['dask.array.compat'] = None
 '''
 
-DEFAULT_COLORS = {
-    "Black": "#000000",
-    "Red": "#E74C3C",
-    "Blue": "#3498DB",
-    "Blueish": "#2B2FFF",
-    "Green": "#27AE60",
-    "Orange": "#E67E22",
-    "Purple": "#8E44AD",
-    "Gray": "#7F8C8D"
-}
-DEFAULT_PALETTES = {
-    "Viridis": sns.color_palette("viridis", as_cmap=False).as_hex(),
-    "Grayscale": sns.color_palette("gray", as_cmap=False).as_hex(),
-    "Set2": sns.color_palette("Set2").as_hex(),
-    "Spring Pastels": sns.color_palette("pastel", as_cmap=False).as_hex(),
-    "Blue-Black": sns.color_palette(["#2b2fff","#000000"], as_cmap=False).as_hex(),
-    "Black-Blue": sns.color_palette(["#000000","#2b2fff"], as_cmap=False).as_hex(),
-    
-    # New palettes added
-    "Ocean": sns.color_palette("deep", as_cmap=False).as_hex(),
-    "Colorblind": sns.color_palette("colorblind", as_cmap=False).as_hex(),
-    "Muted": sns.color_palette("muted", as_cmap=False).as_hex(),
-    "Bright": sns.color_palette("bright", as_cmap=False).as_hex(),
-    "Dark": sns.color_palette("dark", as_cmap=False).as_hex(),
-    "Plasma": sns.color_palette("plasma", as_cmap=False).as_hex(),
-    "Inferno": sns.color_palette("inferno", as_cmap=False).as_hex(),
-    "Paired": sns.color_palette("Paired", as_cmap=False).as_hex(),
-    
-    # Custom scientific publication-friendly palettes
-    "Publication": ["#4878D0", "#EE854A", "#6ACC64", "#D65F5F", "#956CB4", "#8C613C", "#DC7EC0", "#797979"],
-    "Nature": ["#1F77B4", "#FF7F0E", "#2CA02C", "#D62728", "#9467BD", "#8C564B", "#E377C2", "#7F7F7F"],
-    "Scientific": ["#3182bd", "#e6550d", "#31a354", "#756bb1", "#636363", "#6baed6", "#fd8d3c", "#74c476"],
-    
-    # Earth/Natural tones for pleasing visualization
-    "Earth Tones": ["#5A8F29", "#8F5F2A", "#0F728F", "#8F2F0F", "#474A51", "#8F8F8F", "#291F19", "#598F8F"],
-    
-    # High contrast palette for maximum distinction
-    "High Contrast": ["#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7", "#000000"],
-    
-    # Blue-focused gradient for sequential data
-    "Blues": sns.color_palette("Blues_r", 8).as_hex(),
-    
-    # Red-focused gradient for sequential data
-    "Reds": sns.color_palette("Reds_r", 8).as_hex()
-}
+
+# DEFAULT_COLORS and DEFAULT_PALETTES are imported from explot_palette
 
 # --- in show_statistical_details, replace all key = ... assignments for latest_pvals with stat_key
 # --- in plot_graph, replace all key = ... and latest_pvals lookups with stat_key
@@ -542,6 +510,7 @@ class ExPlotApp:
     def _plot_xy_base(self, ax, df_plot, x_col, value_col, hue_col, value_cols, errorbar_black, linewidth, allow_legend=True):
         marker_size = self.xy_marker_size_var.get()
         marker_symbol = self.xy_marker_symbol_var.get()
+        marker_mode = self.xy_marker_mode_var.get()
         connect = self.xy_connect_var.get()
         draw_band = self.xy_draw_band_var.get()
         show_mean = self.xy_show_mean_var.get()
@@ -551,18 +520,13 @@ class ExPlotApp:
         line_black = self.xy_line_black_var.get()
 
         if len(value_cols) == 1:
-            color = self.custom_colors.get(self.single_color_var.get(), 'black')
-            palette = [color]
+            palette = [resolve_single_color(self.custom_colors, self.single_color_var.get())]
         else:
-            palette_name = self.palette_var.get()
-            palette_full = self.custom_palettes.get(palette_name, ["#333333"])
             if hue_col and hue_col in df_plot.columns:
-                hue_groups = df_plot[hue_col].dropna().unique()
-                if len(palette_full) < len(hue_groups):
-                    palette_full = (palette_full * ((len(hue_groups) // len(palette_full)) + 1))
-                palette = palette_full[:len(hue_groups)]
+                n = len(df_plot[hue_col].dropna().unique())
             else:
-                palette = palette_full[:len(value_cols)]
+                n = len(value_cols)
+            palette = resolve_palette(self.custom_palettes, self.palette_var.get(), n)
 
         if show_mean:
             groupers = [x_col]
@@ -578,16 +542,15 @@ class ExPlotApp:
 
             if hue_col:
                 group_names = list(df_plot[hue_col].dropna().unique())
-                palette_name = self.palette_var.get()
-                palette_full = self.custom_palettes.get(palette_name, ["#333333"])
-                if len(palette_full) < len(group_names):
-                    palette_full = (palette_full * ((len(group_names) // len(palette_full)) + 1))[:len(group_names)]
+                palette_full = resolve_palette(self.custom_palettes, self.palette_var.get(), len(group_names))
                 color_map = {name: palette_full[i] for i, name in enumerate(group_names)}
-                for name in group_names:
+                markers = resolve_markers(marker_mode, marker_symbol, len(group_names))
+                for gi, name in enumerate(group_names):
                     group = means[means[hue_col] == name]
                     if group.empty:
                         continue
                     c = color_map[name]
+                    ms = markers[gi]
                     x = group[x_col]
                     y = group[value_col]
                     yerr = group['err']
@@ -596,11 +559,11 @@ class ExPlotApp:
                     mec = c
 
                     if show_mean_errorbars:
-                        ax.errorbar(x, y, yerr=yerr, fmt=marker_symbol, color=c, markerfacecolor=mfc, markeredgecolor=mec,
+                        ax.errorbar(x, y, yerr=yerr, fmt=ms, color=c, markerfacecolor=mfc, markeredgecolor=mec,
                                     markersize=marker_size, linewidth=linewidth, capsize=3, ecolor=ecolor,
                                     label=str(name) if allow_legend else '_nolegend_')
                     else:
-                        ax.plot(x, y, marker=marker_symbol, color=c, markerfacecolor=mfc, markeredgecolor=mec,
+                        ax.plot(x, y, marker=ms, color=c, markerfacecolor=mfc, markeredgecolor=mec,
                                 markersize=marker_size, linewidth=linewidth, linestyle='None',
                                 label=str(name) if allow_legend else '_nolegend_')
 
@@ -663,19 +626,18 @@ class ExPlotApp:
         else:
             if hue_col:
                 group_names = list(df_plot[hue_col].dropna().unique())
-                palette_name = self.palette_var.get()
-                palette_full = self.custom_palettes.get(palette_name, ["#333333"])
-                if len(palette_full) < len(group_names):
-                    palette_full = (palette_full * ((len(group_names) // len(palette_full)) + 1))[:len(group_names)]
+                palette_full = resolve_palette(self.custom_palettes, self.palette_var.get(), len(group_names))
                 color_map = {name: palette_full[i] for i, name in enumerate(group_names)}
-                for name in group_names:
+                markers = resolve_markers(marker_mode, marker_symbol, len(group_names))
+                for gi, name in enumerate(group_names):
                     group = df_plot[df_plot[hue_col] == name]
                     if group.empty:
                         continue
                     c = color_map[name]
+                    ms = markers[gi]
                     edge = c
                     face = c if filled else 'none'
-                    ax.scatter(group[x_col], group[value_col], marker=marker_symbol, s=marker_size**2, color=c,
+                    ax.scatter(group[x_col], group[value_col], marker=ms, s=marker_size**2, color=c,
                                label=str(name) if allow_legend else '_nolegend_', edgecolors=edge, facecolors=face,
                                linewidth=linewidth)
                     if draw_band:
@@ -745,10 +707,7 @@ class ExPlotApp:
 
             if hue_col and hue_col in df_plot.columns and len(df_plot[hue_col].unique()) > 1:
                 group_names = df_plot[hue_col].unique()
-                palette_name = self.palette_var.get()
-                palette_full = self.custom_palettes.get(palette_name, ["#333333"])
-                if len(palette_full) < len(group_names):
-                    palette_full = (palette_full * ((len(group_names) // len(palette_full)) + 1))[:len(group_names)]
+                palette_full = resolve_palette(self.custom_palettes, self.palette_var.get(), len(group_names))
                 color_map = {name: palette_full[i] for i, name in enumerate(group_names)}
 
                 any_fit = False
@@ -1671,6 +1630,7 @@ class ExPlotApp:
         self.logscale_var = tk.BooleanVar(value=False)
         self.ylog_base_var = tk.StringVar(value="10")
         # --- XY plot option variables (ensure these are initialized before setup_ui) ---
+        self.xy_marker_mode_var = tk.StringVar(value="Single")  # "Single" or "Varied"
         self.xy_marker_symbol_var = tk.StringVar(value="o")
         self.xy_marker_size_var = tk.DoubleVar(value=5)
         self.xy_filled_var = tk.BooleanVar(value=True)
@@ -1680,7 +1640,23 @@ class ExPlotApp:
         self.xy_show_mean_var = tk.BooleanVar(value=True)
         self.xy_show_mean_errorbars_var = tk.BooleanVar(value=True)
         self.xy_draw_band_var = tk.BooleanVar(value=False)
-        
+
+        # --- Histogram options ---
+        self.hist_bins_var = tk.IntVar(value=20)
+        self.hist_kde_var = tk.BooleanVar(value=False)
+        self.hist_density_var = tk.BooleanVar(value=False)  # True = density, False = count
+        self.hist_stacked_var = tk.BooleanVar(value=False)
+        self.hist_alpha_var = tk.DoubleVar(value=0.7)
+
+        # --- Heatmap options ---
+        self.heatmap_mode_var = tk.StringVar(value="correlation")  # "correlation" or "pivot"
+        self.heatmap_cmap_var = tk.StringVar(value="coolwarm")
+        self.heatmap_annot_var = tk.BooleanVar(value=True)
+        self.heatmap_fmt_var = tk.StringVar(value=".2f")
+        self.heatmap_aggfunc_var = tk.StringVar(value="mean")
+        self.heatmap_cbar_width_var = tk.DoubleVar(value=6.0)  # colorbar width as % of axes
+        self.heatmap_annot_fontsize_var = tk.IntVar(value=0)  # 0 = auto (fontsize - 2)
+
         # --- Legend settings ---
         self.legend_visible_var = tk.BooleanVar(value=True)
         self.legend_position_var = tk.StringVar(value="outside top")
@@ -2049,6 +2025,7 @@ class ExPlotApp:
         file_menu.add_command(label="Open Excel File", command=self.open_file)
         file_menu.add_command(label="Load Example Data", command=self.load_example_data)
         file_menu.add_command(label="Export to Excel", command=self.export_to_excel)
+        file_menu.add_command(label="View Data", command=self.show_data_viewer)
         file_menu.add_separator()
         file_menu.add_command(label="Save PNG", command=lambda: self.save_graph('png'))
         file_menu.add_command(label="Save PDF", command=lambda: self.save_graph('pdf'))
@@ -2069,394 +2046,6 @@ class ExPlotApp:
         help_menu.add_command(label="About", command=self.show_about)
         help_menu.add_command(label="Package Information", command=self.show_package_info)
 
-    def save_project(self):
-        """Save current plot configuration to a project file."""
-        # Check if we have data to save
-        if self.df is None:
-            messagebox.showwarning("No Data", "Please load data before saving a project.")
-            return
-            
-        # Ask user for save location
-        file_path = filedialog.asksaveasfilename(
-            defaultextension=".explt",
-            filetypes=[("ExPlot Projects", "*.explt"), ("All files", "*.*")],
-            title="Save Project"
-        )
-        
-        if not file_path:
-            return  # User cancelled
-            
-        try:
-            # Convert dataframe to JSON-serializable format
-            # We need to convert the DataFrame into a nested dictionary/list structure 
-            # that can be serialized to JSON
-            
-            # First convert to dict with records orientation
-            df_records = self.df.to_dict(orient='records')
-            
-            # Get the columns list
-            df_columns = list(self.df.columns)
-            
-            # Get index if it's not the default RangeIndex
-            df_index = None
-            if not isinstance(self.df.index, pd.RangeIndex):
-                df_index = self.df.index.tolist()
-                    
-            # Create project dictionary with all relevant settings
-            project = {
-                'version': VERSION,
-                'timestamp': pd.Timestamp.now().isoformat(),
-                'excel_file': self.current_excel_file if hasattr(self, 'current_excel_file') else None,
-                'sheet_name': self.selected_sheet.get() if hasattr(self, 'selected_sheet') else None,
-                
-                # Save the data for offline use
-                'data': {
-                    'columns': df_columns,
-                    'records': df_records,
-                    'index': df_index
-                },
-                
-                # Plot configuration
-                'plot_kind': self.plot_kind_var.get(),
-                'x_column': self.xaxis_var.get() if hasattr(self, 'xaxis_var') else None,
-                'y_column': self.selected_y_col.get() if hasattr(self, 'selected_y_col') else None,
-                'hue_column': self.group_var.get() if hasattr(self, 'group_var') and self.group_var.get() != 'None' else None,
-                
-                # Value columns selected in the Basic tab
-                'selected_columns': [col for var, col in self.value_vars if var.get()] if hasattr(self, 'value_vars') else [],
-                
-                # X-axis label renaming and reordering
-                'xaxis_renames': self.xaxis_renames if hasattr(self, 'xaxis_renames') else {},
-                'xaxis_order': self.xaxis_order if hasattr(self, 'xaxis_order') else [],
-                'use_stats': self.use_stats_var.get(),
-                'errorbar_type': self.errorbar_type_var.get(),
-                'errorbar_black': self.errorbar_black_var.get() if hasattr(self, 'errorbar_black_var') else True,
-                'show_stripplot': self.show_stripplot_var.get(),
-                'strip_black': self.strip_black_var.get() if hasattr(self, 'strip_black_var') else True,
-                
-                # Statistics settings
-                'ttest_type': self.ttest_type_var.get(),
-                'ttest_alternative': self.ttest_alternative_var.get(),
-                'anova_type': self.anova_type_var.get(),
-                'posthoc_type': self.posthoc_type_var.get(),
-                'alpha_level': self.alpha_level_var.get(),
-                
-                # Plot appearance
-                'plot_width': self.plot_width_var.get(),
-                'plot_height': self.plot_height_var.get(),
-                'bar_gap_multiplier': self.bar_gap_multiplier_var.get() if hasattr(self, 'bar_gap_multiplier_var') else 0.8,
-                'xlogscale': self.xlogscale_var.get() if hasattr(self, 'xlogscale_var') else False,
-                'xlog_base': self.xlog_base_var.get() if hasattr(self, 'xlog_base_var') else "10",
-                'logscale': self.logscale_var.get() if hasattr(self, 'logscale_var') else False,
-                'ylog_base': self.ylog_base_var.get() if hasattr(self, 'ylog_base_var') else "10",
-                
-                # XY plot settings
-                'xy_marker_symbol': self.xy_marker_symbol_var.get() if hasattr(self, 'xy_marker_symbol_var') else "o",
-                'xy_marker_size': self.xy_marker_size_var.get() if hasattr(self, 'xy_marker_size_var') else 5,
-                'xy_filled': self.xy_filled_var.get() if hasattr(self, 'xy_filled_var') else True,
-                'xy_line_style': self.xy_line_style_var.get() if hasattr(self, 'xy_line_style_var') else "solid",
-                'xy_line_black': self.xy_line_black_var.get() if hasattr(self, 'xy_line_black_var') else False,
-                'xy_connect': self.xy_connect_var.get() if hasattr(self, 'xy_connect_var') else False,
-                'xy_show_mean': self.xy_show_mean_var.get() if hasattr(self, 'xy_show_mean_var') else True,
-                'xy_show_mean_errorbars': self.xy_show_mean_errorbars_var.get() if hasattr(self, 'xy_show_mean_errorbars_var') else True,
-                'xy_draw_band': self.xy_draw_band_var.get() if hasattr(self, 'xy_draw_band_var') else False,
-                
-                # Plot titles/labels
-                'plot_title': self.plot_title_var.get() if hasattr(self, 'plot_title_var') else "",
-                'x_axis_label': self.x_axis_label_var.get() if hasattr(self, 'x_axis_label_var') else "",
-                'y_axis_label': self.y_axis_label_var.get() if hasattr(self, 'y_axis_label_var') else ""
-            }
-            
-            # Save to file
-            with open(file_path, 'w') as f:
-                json.dump(project, f, indent=2)
-                
-            messagebox.showinfo("Success", f"Project saved to {file_path}")
-            
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to save project: {str(e)}")
-            
-    def load_project(self):
-        """Load a saved project file."""
-        file_path = filedialog.askopenfilename(
-            filetypes=[("ExPlot Projects", "*.explt"), ("All files", "*.*")],
-            title="Load Project"
-        )
-        
-        if not file_path:
-            return  # User cancelled
-            
-        try:
-            # Load project file
-            with open(file_path, 'r') as f:
-                project = json.load(f)
-                
-            # Check version compatibility
-            file_version = project.get('version', '0.0.0')
-            if file_version.split('.')[0] != VERSION.split('.')[0]:
-                if not messagebox.askyesno("Version Mismatch", 
-                                      f"Project was created with version {file_version} and may not be compatible with current version {VERSION}. Continue anyway?"):
-                    return
-            
-            # Check if we have embedded data in the project
-            has_embedded_data = 'data' in project and project['data'] is not None
-            
-            # Check if the original Excel file exists
-            excel_file = project.get('excel_file')
-            original_file_exists = excel_file and os.path.exists(excel_file)
-            
-            # Always use embedded data if available
-            use_original_file = False
-            
-            if has_embedded_data:
-                # Proceed with embedded data without asking
-                use_original_file = False
-            elif original_file_exists:
-                # Only use original file if no embedded data is available
-                use_original_file = True
-            else:
-                # No data source available
-                messagebox.showwarning(
-                    "No Data Source", 
-                    "Neither embedded data nor the original Excel file are available. "
-                    "Please select a new data source."
-                )
-                if self.open_file():
-                    # If user successfully selected a new file, continue with that
-                    use_original_file = True
-                else:
-                    # User cancelled file selection
-                    return
-                
-            # Load data from appropriate source
-            if use_original_file:
-                # Use original Excel file
-                self.process_excel_file(excel_file)
-                
-                # Select the right sheet
-                sheet_name = project.get('sheet_name')
-                if sheet_name and hasattr(self, 'selected_sheet') and sheet_name in self.sheet_options:
-                    self.selected_sheet.set(sheet_name)
-                    self.on_sheet_selected()
-            elif has_embedded_data:
-                # Use embedded data
-                try:
-                    # Reconstruct DataFrame from embedded data
-                    data_info = project['data']
-                    columns = data_info.get('columns', [])
-                    
-                    # Get data records - these could be stored in different formats depending on version
-                    records = data_info.get('records')
-                    if records is None:
-                        # Try legacy format
-                        legacy_data = data_info.get('data', {})
-                        if isinstance(legacy_data, dict):
-                            # Handle column-oriented dict format
-                            df_data = {}
-                            for col in columns:
-                                if col in legacy_data:
-                                    df_data[col] = legacy_data[col]
-                                else:
-                                    # Handle missing columns
-                                    df_data[col] = [None] * (len(list(legacy_data.values())[0]) if legacy_data else 0)
-                            self.df = pd.DataFrame(df_data)
-                        elif isinstance(legacy_data, list):
-                            # Handle list format
-                            self.df = pd.DataFrame(legacy_data, columns=columns)
-                        else:
-                            # Cannot process this format
-                            raise ValueError(f"Unrecognized data format in project file")
-                    else:
-                        # Handle standard records format
-                        self.df = pd.DataFrame.from_records(records)
-                    
-                    # Restore index if available
-                    index = data_info.get('index')
-                    if index is not None:
-                        self.df.index = index
-                        
-                    # Set up UI for embedded data
-                    self.current_excel_file = "[Embedded Data]"  # Mark as embedded data
-                    self.excel_file = "[Embedded Data]"
-                    
-                    # Create mock sheet selection for embedded data
-                    self.sheet_options = ['EmbeddedData']
-                    if hasattr(self, 'sheet_dropdown'):
-                        self.sheet_dropdown['values'] = self.sheet_options
-                    
-                    if hasattr(self, 'selected_sheet'):
-                        self.selected_sheet.set('EmbeddedData')
-                    elif hasattr(self, 'sheet_var'):
-                        self.sheet_var.set('EmbeddedData')
-                    
-                    # Update columns in UI
-                    self.update_columns()
-                    
-                except Exception as e:
-                    messagebox.showerror("Error", f"Failed to load embedded data: {str(e)}")
-                    return
-            
-            # Set column selections
-            x_column = project.get('x_column')
-            y_column = project.get('y_column')
-            hue_column = project.get('hue_column')
-            selected_columns = project.get('selected_columns', [])
-            
-            # Set X-axis column
-            if x_column and hasattr(self, 'xaxis_var') and x_column in self.df.columns:
-                self.xaxis_var.set(x_column)
-                
-            # Set Y-axis column (if applicable)
-            if y_column and hasattr(self, 'selected_y_col') and y_column in self.df.columns:
-                self.selected_y_col.set(y_column)
-                
-            # Set group/hue column
-            if hasattr(self, 'group_var'):
-                if hue_column and hue_column in self.df.columns:
-                    self.group_var.set(hue_column)
-                else:
-                    self.group_var.set('None')
-                
-            # Restore the selected value columns in the Basic tab
-            if hasattr(self, 'value_vars') and selected_columns:
-                # Set checkboxes for the selected columns that exist in the current dataframe
-                existing_columns = set(self.df.columns)
-                for var, col in self.value_vars:
-                    if col in selected_columns and col in existing_columns:
-                        var.set(True)
-                    else:
-                        var.set(False)
-                        
-            # Restore X-axis label renaming and reordering
-            if hasattr(self, 'xaxis_renames') and 'xaxis_renames' in project:
-                # Load the saved renames dictionary
-                saved_renames = project.get('xaxis_renames', {})
-                if saved_renames:
-                    # Convert keys to appropriate types if needed (JSON serialization may have converted numeric keys to strings)
-                    self.xaxis_renames = {}
-                    for k, v in saved_renames.items():
-                        # Try to convert numeric strings back to numbers if they were originally numbers
-                        try:
-                            if '.' in k:
-                                # Try as float
-                                num_key = float(k)
-                                self.xaxis_renames[num_key] = v
-                            else:
-                                # Try as integer
-                                num_key = int(k)
-                                self.xaxis_renames[num_key] = v
-                        except ValueError:
-                            # Not a number, use as is
-                            self.xaxis_renames[k] = v
-            
-            if hasattr(self, 'xaxis_order') and 'xaxis_order' in project:
-                # Load the saved order list
-                self.xaxis_order = project.get('xaxis_order', [])
-                
-            # Apply plot settings
-            if 'plot_kind' in project and hasattr(self, 'plot_kind_var'):
-                self.plot_kind_var.set(project['plot_kind'])
-                
-            if 'use_stats' in project and hasattr(self, 'use_stats_var'):
-                self.use_stats_var.set(project['use_stats'])
-                
-            if 'errorbar_type' in project and hasattr(self, 'errorbar_type_var'):
-                self.errorbar_type_var.set(project['errorbar_type'])
-                
-            if 'errorbar_black' in project and hasattr(self, 'errorbar_black_var'):
-                self.errorbar_black_var.set(project['errorbar_black'])
-                
-            if 'show_stripplot' in project and hasattr(self, 'show_stripplot_var'):
-                self.show_stripplot_var.set(project['show_stripplot'])
-                
-            if 'strip_black' in project and hasattr(self, 'strip_black_var'):
-                self.strip_black_var.set(project['strip_black'])
-                
-            # Statistics settings
-            if 'ttest_type' in project and hasattr(self, 'ttest_type_var'):
-                self.ttest_type_var.set(project['ttest_type'])
-                
-            if 'ttest_alternative' in project and hasattr(self, 'ttest_alternative_var'):
-                self.ttest_alternative_var.set(project['ttest_alternative'])
-                
-            if 'anova_type' in project and hasattr(self, 'anova_type_var'):
-                self.anova_type_var.set(project['anova_type'])
-                
-            if 'posthoc_type' in project and hasattr(self, 'posthoc_type_var'):
-                self.posthoc_type_var.set(project['posthoc_type'])
-                
-            if 'alpha_level' in project and hasattr(self, 'alpha_level_var'):
-                self.alpha_level_var.set(project['alpha_level'])
-                
-            # Plot appearance
-            if 'plot_width' in project and hasattr(self, 'plot_width_var'):
-                self.plot_width_var.set(project['plot_width'])
-                
-            if 'plot_height' in project and hasattr(self, 'plot_height_var'):
-                self.plot_height_var.set(project['plot_height'])
-                
-            if 'bar_gap_multiplier' in project and hasattr(self, 'bar_gap_multiplier_var'):
-                self.bar_gap_multiplier_var.set(project['bar_gap_multiplier'])
-                
-            if 'xlogscale' in project and hasattr(self, 'xlogscale_var'):
-                self.xlogscale_var.set(project['xlogscale'])
-                
-            if 'xlog_base' in project and hasattr(self, 'xlog_base_var'):
-                self.xlog_base_var.set(project['xlog_base'])
-                
-            if 'logscale' in project and hasattr(self, 'logscale_var'):
-                self.logscale_var.set(project['logscale'])
-                
-            if 'ylog_base' in project and hasattr(self, 'ylog_base_var'):
-                self.ylog_base_var.set(project['ylog_base'])
-            
-            # XY plot settings
-            if 'xy_marker_symbol' in project and hasattr(self, 'xy_marker_symbol_var'):
-                self.xy_marker_symbol_var.set(project['xy_marker_symbol'])
-                
-            if 'xy_marker_size' in project and hasattr(self, 'xy_marker_size_var'):
-                self.xy_marker_size_var.set(project['xy_marker_size'])
-                
-            if 'xy_filled' in project and hasattr(self, 'xy_filled_var'):
-                self.xy_filled_var.set(project['xy_filled'])
-                
-            if 'xy_line_style' in project and hasattr(self, 'xy_line_style_var'):
-                self.xy_line_style_var.set(project['xy_line_style'])
-                
-            if 'xy_line_black' in project and hasattr(self, 'xy_line_black_var'):
-                self.xy_line_black_var.set(project['xy_line_black'])
-                
-            if 'xy_connect' in project and hasattr(self, 'xy_connect_var'):
-                self.xy_connect_var.set(project['xy_connect'])
-                
-            if 'xy_show_mean' in project and hasattr(self, 'xy_show_mean_var'):
-                self.xy_show_mean_var.set(project['xy_show_mean'])
-                
-            if 'xy_show_mean_errorbars' in project and hasattr(self, 'xy_show_mean_errorbars_var'):
-                self.xy_show_mean_errorbars_var.set(project['xy_show_mean_errorbars'])
-                
-            if 'xy_draw_band' in project and hasattr(self, 'xy_draw_band_var'):
-                self.xy_draw_band_var.set(project['xy_draw_band'])
-                
-            # Plot titles/labels
-            if 'plot_title' in project and hasattr(self, 'plot_title_var'):
-                self.plot_title_var.set(project['plot_title'])
-                
-            if 'x_axis_label' in project and hasattr(self, 'x_axis_label_var'):
-                self.x_axis_label_var.set(project['x_axis_label'])
-                
-            if 'y_axis_label' in project and hasattr(self, 'y_axis_label_var'):
-                self.y_axis_label_var.set(project['y_axis_label'])
-                
-            # Generate the plot
-            if hasattr(self, 'plot_button'):
-                self.plot_button.invoke()
-                
-            messagebox.showinfo("Success", "Project loaded successfully!")
-            
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to load project: {str(e)}")
-            
     def process_excel_file(self, file_path):
         try:
             # Store file paths
@@ -2655,7 +2244,9 @@ class ExPlotApp:
         notebook.add(stats_tab, text='Statistics')
         notebook.add(appearance_tab, text='Appearance')
         notebook.add(bar_graph_tab, text='Bar Graph')
+        heatmap_tab = ttk.Frame(notebook)
         notebook.add(xy_plot_tab, text='XY Plot')
+        notebook.add(heatmap_tab, text='Heatmap')
         notebook.add(colors_tab, text='Colors')
         
         # Variables to hold settings
@@ -2710,6 +2301,7 @@ class ExPlotApp:
         self.settings_ybreak_gap_var = tk.DoubleVar(value=gap_val)
         
         # XY Plot tab
+        self.settings_xy_marker_mode_var = tk.StringVar(value=self.xy_marker_mode_var.get())
         self.settings_xy_marker_symbol_var = tk.StringVar(value=self.xy_marker_symbol_var.get())
         self.settings_xy_marker_size_var = tk.DoubleVar(value=self.xy_marker_size_var.get())
         self.settings_xy_filled_var = tk.BooleanVar(value=self.xy_filled_var.get())
@@ -2720,6 +2312,15 @@ class ExPlotApp:
         self.settings_xy_show_mean_errorbars_var = tk.BooleanVar(value=self.xy_show_mean_errorbars_var.get())
         self.settings_xy_draw_band_var = tk.BooleanVar(value=self.xy_draw_band_var.get())
         
+        # Heatmap tab
+        self.settings_heatmap_mode_var = tk.StringVar(value=self.heatmap_mode_var.get())
+        self.settings_heatmap_cmap_var = tk.StringVar(value=self.heatmap_cmap_var.get())
+        self.settings_heatmap_annot_var = tk.BooleanVar(value=self.heatmap_annot_var.get())
+        self.settings_heatmap_fmt_var = tk.StringVar(value=self.heatmap_fmt_var.get())
+        self.settings_heatmap_aggfunc_var = tk.StringVar(value=self.heatmap_aggfunc_var.get())
+        self.settings_heatmap_cbar_width_var = tk.DoubleVar(value=self.heatmap_cbar_width_var.get())
+        self.settings_heatmap_annot_fontsize_var = tk.IntVar(value=self.heatmap_annot_fontsize_var.get())
+        
         # Colors tab
         self.settings_single_color_var = tk.StringVar(value=self.single_color_var.get() if hasattr(self, 'single_color_var') else list(self.custom_colors.keys())[0])
         self.settings_palette_var = tk.StringVar(value=self.palette_var.get() if hasattr(self, 'palette_var') else list(self.custom_palettes.keys())[0])
@@ -2727,7 +2328,7 @@ class ExPlotApp:
         
         # General Tab Content
         ttk.Label(general_tab, text="Default Plot Type:", anchor="w").grid(row=0, column=0, sticky="w", padx=10, pady=10)
-        ttk.Combobox(general_tab, textvariable=self.settings_plot_kind_var, values=["bar", "box", "violin", "xy"], width=15, state="readonly").grid(row=0, column=1, sticky="w", padx=10, pady=10)
+        ttk.Combobox(general_tab, textvariable=self.settings_plot_kind_var, values=["bar", "box", "violin", "xy", "histogram", "heatmap"], width=15, state="readonly").grid(row=0, column=1, sticky="w", padx=10, pady=10)
 
         ttk.Checkbutton(general_tab, text="Start maximized", variable=self.settings_start_maximized_var).grid(row=1, column=0, columnspan=2, sticky="w", padx=10, pady=5)
         
@@ -2794,22 +2395,46 @@ class ExPlotApp:
         tk.Spinbox(bar_graph_tab, from_=0.5, to=1.0, increment=0.05, textvariable=self.settings_bar_gap_multiplier_var, width=5).grid(row=2, column=1, sticky="w", padx=10, pady=10)
         
         # XY Plot Tab Content
-        ttk.Label(xy_plot_tab, text="Marker Symbol:", anchor="w").grid(row=0, column=0, sticky="w", padx=10, pady=10)
-        ttk.Combobox(xy_plot_tab, textvariable=self.settings_xy_marker_symbol_var, values=["o", "s", "^", "D", "v", "P", "X", "+", "x", "*", "."], width=5, state="readonly").grid(row=0, column=1, sticky="w", padx=10, pady=10)
+        ttk.Label(xy_plot_tab, text="Marker Mode:", anchor="w").grid(row=0, column=0, sticky="w", padx=10, pady=10)
+        ttk.Combobox(xy_plot_tab, textvariable=self.settings_xy_marker_mode_var, values=["Single", "Varied"], width=10, state="readonly").grid(row=0, column=1, sticky="w", padx=10, pady=10)
         
-        ttk.Label(xy_plot_tab, text="Marker Size:", anchor="w").grid(row=1, column=0, sticky="w", padx=10, pady=10)
-        tk.Spinbox(xy_plot_tab, from_=1, to=15, increment=0.5, textvariable=self.settings_xy_marker_size_var, width=5).grid(row=1, column=1, sticky="w", padx=10, pady=10)
+        ttk.Label(xy_plot_tab, text="Marker Symbol:", anchor="w").grid(row=1, column=0, sticky="w", padx=10, pady=10)
+        ttk.Combobox(xy_plot_tab, textvariable=self.settings_xy_marker_symbol_var, values=["o", "s", "^", "D", "v", "P", "X", "+", "x", "*", "."], width=5, state="readonly").grid(row=1, column=1, sticky="w", padx=10, pady=10)
         
-        ttk.Checkbutton(xy_plot_tab, text="Filled Symbols", variable=self.settings_xy_filled_var).grid(row=2, column=0, sticky="w", padx=10, pady=5, columnspan=2)
+        ttk.Label(xy_plot_tab, text="Marker Size:", anchor="w").grid(row=2, column=0, sticky="w", padx=10, pady=10)
+        tk.Spinbox(xy_plot_tab, from_=1, to=15, increment=0.5, textvariable=self.settings_xy_marker_size_var, width=5).grid(row=2, column=1, sticky="w", padx=10, pady=10)
         
-        ttk.Label(xy_plot_tab, text="Line Style:", anchor="w").grid(row=3, column=0, sticky="w", padx=10, pady=10)
-        ttk.Combobox(xy_plot_tab, textvariable=self.settings_xy_line_style_var, values=["solid", "dashed", "dotted", "dashdot"], width=10, state="readonly").grid(row=3, column=1, sticky="w", padx=10, pady=10)
+        ttk.Checkbutton(xy_plot_tab, text="Filled Symbols", variable=self.settings_xy_filled_var).grid(row=3, column=0, sticky="w", padx=10, pady=5, columnspan=2)
         
-        ttk.Checkbutton(xy_plot_tab, text="Lines in Black", variable=self.settings_xy_line_black_var).grid(row=4, column=0, sticky="w", padx=10, pady=5, columnspan=2)
-        ttk.Checkbutton(xy_plot_tab, text="Connect Mean with Lines", variable=self.settings_xy_connect_var).grid(row=5, column=0, sticky="w", padx=10, pady=5, columnspan=2)
-        ttk.Checkbutton(xy_plot_tab, text="Show Mean Values", variable=self.settings_xy_show_mean_var).grid(row=6, column=0, sticky="w", padx=10, pady=5, columnspan=2)
-        ttk.Checkbutton(xy_plot_tab, text="With Error Bars", variable=self.settings_xy_show_mean_errorbars_var).grid(row=7, column=0, sticky="w", padx=30, pady=5, columnspan=2)
-        ttk.Checkbutton(xy_plot_tab, text="Draw Bands", variable=self.settings_xy_draw_band_var).grid(row=8, column=0, sticky="w", padx=10, pady=5, columnspan=2)
+        ttk.Label(xy_plot_tab, text="Line Style:", anchor="w").grid(row=4, column=0, sticky="w", padx=10, pady=10)
+        ttk.Combobox(xy_plot_tab, textvariable=self.settings_xy_line_style_var, values=["solid", "dashed", "dotted", "dashdot"], width=10, state="readonly").grid(row=4, column=1, sticky="w", padx=10, pady=10)
+        
+        ttk.Checkbutton(xy_plot_tab, text="Lines in Black", variable=self.settings_xy_line_black_var).grid(row=5, column=0, sticky="w", padx=10, pady=5, columnspan=2)
+        ttk.Checkbutton(xy_plot_tab, text="Connect Mean with Lines", variable=self.settings_xy_connect_var).grid(row=6, column=0, sticky="w", padx=10, pady=5, columnspan=2)
+        ttk.Checkbutton(xy_plot_tab, text="Show Mean Values", variable=self.settings_xy_show_mean_var).grid(row=7, column=0, sticky="w", padx=10, pady=5, columnspan=2)
+        ttk.Checkbutton(xy_plot_tab, text="With Error Bars", variable=self.settings_xy_show_mean_errorbars_var).grid(row=8, column=0, sticky="w", padx=30, pady=5, columnspan=2)
+        ttk.Checkbutton(xy_plot_tab, text="Draw Bands", variable=self.settings_xy_draw_band_var).grid(row=9, column=0, sticky="w", padx=10, pady=5, columnspan=2)
+        
+        # Heatmap Tab Content
+        ttk.Label(heatmap_tab, text="Mode:", anchor="w").grid(row=0, column=0, sticky="w", padx=10, pady=8)
+        ttk.Combobox(heatmap_tab, textvariable=self.settings_heatmap_mode_var, values=["correlation", "pivot"], width=12, state="readonly").grid(row=0, column=1, sticky="w", padx=10, pady=8)
+        
+        ttk.Label(heatmap_tab, text="Colormap:", anchor="w").grid(row=1, column=0, sticky="w", padx=10, pady=8)
+        ttk.Combobox(heatmap_tab, textvariable=self.settings_heatmap_cmap_var, values=["coolwarm", "viridis", "plasma", "inferno", "magma", "cividis", "RdBu_r", "YlOrRd", "Blues", "Greens"], width=12, state="readonly").grid(row=1, column=1, sticky="w", padx=10, pady=8)
+        
+        ttk.Checkbutton(heatmap_tab, text="Show annotations", variable=self.settings_heatmap_annot_var).grid(row=2, column=0, columnspan=2, sticky="w", padx=10, pady=5)
+        
+        ttk.Label(heatmap_tab, text="Annotation size (0=auto):", anchor="w").grid(row=3, column=0, sticky="w", padx=10, pady=8)
+        tk.Spinbox(heatmap_tab, from_=0, to=24, increment=1, textvariable=self.settings_heatmap_annot_fontsize_var, width=5).grid(row=3, column=1, sticky="w", padx=10, pady=8)
+        
+        ttk.Label(heatmap_tab, text="Format:", anchor="w").grid(row=4, column=0, sticky="w", padx=10, pady=8)
+        ttk.Combobox(heatmap_tab, textvariable=self.settings_heatmap_fmt_var, values=[".2f", ".3f", ".1f", ".0f", ".2g"], width=8, state="readonly").grid(row=4, column=1, sticky="w", padx=10, pady=8)
+        
+        ttk.Label(heatmap_tab, text="Aggregation:", anchor="w").grid(row=5, column=0, sticky="w", padx=10, pady=8)
+        ttk.Combobox(heatmap_tab, textvariable=self.settings_heatmap_aggfunc_var, values=["mean", "median", "sum", "count", "std"], width=8, state="readonly").grid(row=5, column=1, sticky="w", padx=10, pady=8)
+        
+        ttk.Label(heatmap_tab, text="Colorbar width (%):", anchor="w").grid(row=6, column=0, sticky="w", padx=10, pady=8)
+        tk.Spinbox(heatmap_tab, from_=1, to=15, increment=0.5, textvariable=self.settings_heatmap_cbar_width_var, width=5).grid(row=6, column=1, sticky="w", padx=10, pady=8)
         
         # Colors Tab Content
         # Reset colors/palettes section
@@ -2939,6 +2564,14 @@ class ExPlotApp:
                     self.ybreak_gap_entry.insert(0, f"{gap:g}")
             except Exception:
                 pass
+            # Update heatmap settings
+            self.heatmap_mode_var.set(self.settings_heatmap_mode_var.get())
+            self.heatmap_cmap_var.set(self.settings_heatmap_cmap_var.get())
+            self.heatmap_annot_var.set(self.settings_heatmap_annot_var.get())
+            self.heatmap_fmt_var.set(self.settings_heatmap_fmt_var.get())
+            self.heatmap_aggfunc_var.set(self.settings_heatmap_aggfunc_var.get())
+            self.heatmap_cbar_width_var.set(self.settings_heatmap_cbar_width_var.get())
+            self.heatmap_annot_fontsize_var.set(self.settings_heatmap_annot_fontsize_var.get())
             # Then save preferences
             self.save_user_preferences()
             messagebox.showinfo("Settings Saved", "Your preferences have been saved.")
@@ -2954,6 +2587,75 @@ class ExPlotApp:
         ttk.Button(button_frame, text="Save Settings", command=save_settings, width=15).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="Reset All Preferences", command=reset_all_preferences, width=20).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="Cancel", command=window.destroy, width=10).pack(side=tk.RIGHT, padx=5)
+
+    def show_data_viewer(self):
+        """Open a popup window showing the loaded DataFrame in a scrollable table."""
+        if not hasattr(self, 'df') or self.df is None or self.df.empty:
+            messagebox.showinfo("Data Viewer", "No data loaded. Please open a file first.")
+            return
+
+        viewer = tk.Toplevel(self.root)
+        viewer.title("Data Viewer")
+        viewer.geometry("900x600")
+        viewer.transient(self.root)
+
+        # Search / filter bar
+        filter_frame = ttk.Frame(viewer)
+        filter_frame.pack(fill='x', padx=8, pady=(8, 4))
+        ttk.Label(filter_frame, text="Filter:").pack(side='left', padx=(0, 4))
+        filter_var = tk.StringVar()
+        filter_entry = ttk.Entry(filter_frame, textvariable=filter_var, width=30)
+        filter_entry.pack(side='left', padx=(0, 4))
+
+        # Info label
+        info_var = tk.StringVar()
+        ttk.Label(filter_frame, textvariable=info_var).pack(side='right', padx=4)
+
+        # Treeview
+        tree_frame = ttk.Frame(viewer)
+        tree_frame.pack(fill='both', expand=True, padx=8, pady=4)
+
+        cols = list(self.df.columns)
+        tree = ttk.Treeview(tree_frame, columns=cols, show='headings', selectmode='browse')
+
+        # Scrollbars
+        vsb = ttk.Scrollbar(tree_frame, orient='vertical', command=tree.yview)
+        hsb = ttk.Scrollbar(tree_frame, orient='horizontal', command=tree.xview)
+        tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        tree.grid(row=0, column=0, sticky='nsew')
+        vsb.grid(row=0, column=1, sticky='ns')
+        hsb.grid(row=1, column=0, sticky='ew')
+        tree_frame.rowconfigure(0, weight=1)
+        tree_frame.columnconfigure(0, weight=1)
+
+        # Configure columns
+        for col in cols:
+            tree.heading(col, text=str(col), anchor='w')
+            max_width = max(len(str(col)) * 10, 80)
+            tree.column(col, width=min(max_width, 200), minwidth=50, anchor='w')
+
+        def populate(df_display):
+            tree.delete(*tree.get_children())
+            for _, row in df_display.iterrows():
+                tree.insert('', 'end', values=[str(v) for v in row])
+            info_var.set(f"{len(df_display)} rows × {len(df_display.columns)} columns")
+
+        def on_filter(*args):
+            term = filter_var.get().strip().lower()
+            if not term:
+                populate(self.df)
+                return
+            mask = self.df.apply(lambda row: any(term in str(v).lower() for v in row), axis=1)
+            populate(self.df[mask])
+
+        filter_var.trace_add('write', on_filter)
+        populate(self.df)
+
+        # Bottom buttons
+        btn_frame = ttk.Frame(viewer)
+        btn_frame.pack(fill='x', padx=8, pady=(4, 8))
+        ttk.Button(btn_frame, text="Close", command=viewer.destroy).pack(side='right', padx=4)
+        ttk.Button(btn_frame, text="Copy to Clipboard", command=lambda: self.root.clipboard_clear() or self.root.clipboard_append(self.df.to_csv(sep='\t', index=False))).pack(side='right', padx=4)
 
     def show_about(self):
         messagebox.showinfo("About ExPlot", f"ExPlot\nVersion: {self.version}\n\nA tool for plotting Excel data.")
@@ -4971,37 +4673,16 @@ class ExPlotApp:
 
 
     def load_custom_colors_palettes(self):
-        if os.path.exists(self.custom_colors_file):
-            with open(self.custom_colors_file, 'r') as f:
-                self.custom_colors = json.load(f)
-        else:
-            self.custom_colors = DEFAULT_COLORS.copy()
-        if os.path.exists(self.custom_palettes_file):
-            with open(self.custom_palettes_file, 'r') as f:
-                loaded = json.load(f)
-                # Convert all palettes to hex if not already
-                self.custom_palettes = {k: [self._to_hex(c) for c in v] for k, v in loaded.items()}
-        else:
-            self.custom_palettes = {k: [self._to_hex(c) for c in v] for k, v in DEFAULT_PALETTES.items()}
+        self.custom_colors, self.custom_palettes = load_colors_palettes(
+            self.custom_colors_file, self.custom_palettes_file)
 
     def save_custom_colors_palettes(self):
-        with open(self.custom_colors_file, 'w') as f:
-            json.dump(self.custom_colors, f, indent=2)
-        # Always save palettes as hex
-        palettes_hex = {k: [self._to_hex(c) for c in v] for k, v in self.custom_palettes.items()}
-        with open(self.custom_palettes_file, 'w') as f:
-            json.dump(palettes_hex, f, indent=2)
+        save_colors_palettes(
+            self.custom_colors, self.custom_palettes,
+            self.custom_colors_file, self.custom_palettes_file)
 
     def _to_hex(self, color):
-        # Accepts hex, tuple, or list
-        if isinstance(color, str) and color.startswith('#'):
-            return color
-        if isinstance(color, (tuple, list)) and len(color) == 3:
-            # If already 0-1 floats, convert to 0-255
-            if all(isinstance(x, float) and 0 <= x <= 1 for x in color):
-                color = tuple(int(x * 255) for x in color)
-            return '#{:02x}{:02x}{:02x}'.format(*color)
-        return str(color)
+        return to_hex(color)
         
     def _load_theme_settings(self):
         """Load theme settings from JSON file."""
@@ -5054,6 +4735,7 @@ class ExPlotApp:
             'linewidth': 1.0,
             'plot_width': 1.5,
             'plot_height': 1.5,
+            'xy_marker_mode': 'Single',
             'xy_marker_symbol': 'o',
             'xy_marker_size': 5,
             'xy_filled': True,
@@ -5075,7 +4757,15 @@ class ExPlotApp:
             'ybreak_marker_style': "Connected",
             'ybreak_marker_style_user_set': False,
             'ybreak_marker_style_user_set_schema': 1,
-            'ybreak_gap': 0.07
+            'ybreak_gap': 0.07,
+            # Heatmap defaults
+            'heatmap_mode': 'correlation',
+            'heatmap_cmap': 'coolwarm',
+            'heatmap_annot': True,
+            'heatmap_fmt': '.2f',
+            'heatmap_aggfunc': 'mean',
+            'heatmap_cbar_width': 6.0,
+            'heatmap_annot_fontsize': 0,
         }
         
         # Set default colors after loading custom colors
@@ -5226,6 +4916,8 @@ class ExPlotApp:
             self._save_theme_settings(self.theme_name, self.dark_mode)
         
         # XY Plot tab
+        if hasattr(self, 'xy_marker_mode_var') and 'xy_marker_mode' in preferences:
+            self.xy_marker_mode_var.set(preferences['xy_marker_mode'])
         if hasattr(self, 'xy_marker_symbol_var') and 'xy_marker_symbol' in preferences:
             self.xy_marker_symbol_var.set(preferences['xy_marker_symbol'])
         if hasattr(self, 'xy_marker_size_var') and 'xy_marker_size' in preferences:
@@ -5244,7 +4936,33 @@ class ExPlotApp:
             self.xy_show_mean_errorbars_var.set(preferences['xy_show_mean_errorbars'])
         if hasattr(self, 'xy_draw_band_var') and 'xy_draw_band' in preferences:
             self.xy_draw_band_var.set(preferences['xy_draw_band'])
-    
+        # Histogram preferences
+        if 'hist_bins' in preferences:
+            self.hist_bins_var.set(preferences['hist_bins'])
+        if 'hist_kde' in preferences:
+            self.hist_kde_var.set(preferences['hist_kde'])
+        if 'hist_density' in preferences:
+            self.hist_density_var.set(preferences['hist_density'])
+        if 'hist_stacked' in preferences:
+            self.hist_stacked_var.set(preferences['hist_stacked'])
+        if 'hist_alpha' in preferences:
+            self.hist_alpha_var.set(preferences['hist_alpha'])
+        # Heatmap preferences
+        if 'heatmap_mode' in preferences:
+            self.heatmap_mode_var.set(preferences['heatmap_mode'])
+        if 'heatmap_cmap' in preferences:
+            self.heatmap_cmap_var.set(preferences['heatmap_cmap'])
+        if 'heatmap_annot' in preferences:
+            self.heatmap_annot_var.set(preferences['heatmap_annot'])
+        if 'heatmap_fmt' in preferences:
+            self.heatmap_fmt_var.set(preferences['heatmap_fmt'])
+        if 'heatmap_aggfunc' in preferences:
+            self.heatmap_aggfunc_var.set(preferences['heatmap_aggfunc'])
+        if 'heatmap_cbar_width' in preferences:
+            self.heatmap_cbar_width_var.set(preferences['heatmap_cbar_width'])
+        if 'heatmap_annot_fontsize' in preferences:
+            self.heatmap_annot_fontsize_var.set(preferences['heatmap_annot_fontsize'])
+
     def save_user_preferences(self, silent=False):
         """
         Save current UI settings as user preferences to a JSON file.
@@ -5358,6 +5076,8 @@ class ExPlotApp:
             preferences['preview_dpi'] = self.preview_dpi.get()
             
         # XY Plot tab
+        if hasattr(self, 'settings_xy_marker_mode_var'):
+            preferences['xy_marker_mode'] = self.settings_xy_marker_mode_var.get()
         if hasattr(self, 'settings_xy_marker_symbol_var'):
             preferences['xy_marker_symbol'] = self.settings_xy_marker_symbol_var.get()
         if hasattr(self, 'settings_xy_marker_size_var'):
@@ -5376,7 +5096,22 @@ class ExPlotApp:
             preferences['xy_show_mean_errorbars'] = self.settings_xy_show_mean_errorbars_var.get()
         if hasattr(self, 'settings_xy_draw_band_var'):
             preferences['xy_draw_band'] = self.settings_xy_draw_band_var.get()
-            
+
+        # Histogram settings (saved directly from main vars)
+        preferences['hist_bins'] = self.hist_bins_var.get()
+        preferences['hist_kde'] = self.hist_kde_var.get()
+        preferences['hist_density'] = self.hist_density_var.get()
+        preferences['hist_stacked'] = self.hist_stacked_var.get()
+        preferences['hist_alpha'] = self.hist_alpha_var.get()
+        # Heatmap settings
+        preferences['heatmap_mode'] = self.heatmap_mode_var.get()
+        preferences['heatmap_cmap'] = self.heatmap_cmap_var.get()
+        preferences['heatmap_annot'] = self.heatmap_annot_var.get()
+        preferences['heatmap_fmt'] = self.heatmap_fmt_var.get()
+        preferences['heatmap_aggfunc'] = self.heatmap_aggfunc_var.get()
+        preferences['heatmap_cbar_width'] = self.heatmap_cbar_width_var.get()
+        preferences['heatmap_annot_fontsize'] = self.heatmap_annot_fontsize_var.get()
+
         # Save preferences to file
         try:
             # Ensure config directory exists
@@ -5402,6 +5137,7 @@ class ExPlotApp:
             self.linewidth.set(preferences.get('linewidth', 1.0))
             self.plot_width_var.set(preferences.get('plot_width', 1.5))
             self.plot_height_var.set(preferences.get('plot_height', 1.5))
+            self.xy_marker_mode_var.set(preferences.get('xy_marker_mode', 'Single'))
             self.xy_marker_symbol_var.set(preferences.get('xy_marker_symbol', 'o'))
             self.xy_marker_size_var.set(preferences.get('xy_marker_size', 5))
             self.xy_filled_var.set(preferences.get('xy_filled', True))
@@ -5412,7 +5148,21 @@ class ExPlotApp:
             self.xy_show_mean_errorbars_var.set(preferences.get('xy_show_mean_errorbars', True))
             self.xy_draw_band_var.set(preferences.get('xy_draw_band', False))
             self.bar_outline_var.set(preferences.get('bar_outline', False))
-            
+            # Histogram preferences
+            self.hist_bins_var.set(preferences.get('hist_bins', 20))
+            self.hist_kde_var.set(preferences.get('hist_kde', False))
+            self.hist_density_var.set(preferences.get('hist_density', False))
+            self.hist_stacked_var.set(preferences.get('hist_stacked', False))
+            self.hist_alpha_var.set(preferences.get('hist_alpha', 0.7))
+            # Heatmap preferences
+            self.heatmap_mode_var.set(preferences.get('heatmap_mode', 'correlation'))
+            self.heatmap_cmap_var.set(preferences.get('heatmap_cmap', 'coolwarm'))
+            self.heatmap_annot_var.set(preferences.get('heatmap_annot', True))
+            self.heatmap_fmt_var.set(preferences.get('heatmap_fmt', '.2f'))
+            self.heatmap_aggfunc_var.set(preferences.get('heatmap_aggfunc', 'mean'))
+            self.heatmap_cbar_width_var.set(preferences.get('heatmap_cbar_width', 6.0))
+            self.heatmap_annot_fontsize_var.set(preferences.get('heatmap_annot_fontsize', 0))
+
             # Only show success message if not in silent mode
             if not silent:
                 messagebox.showinfo("Settings Saved", "Your preferences have been saved and applied.")
@@ -5425,8 +5175,9 @@ class ExPlotApp:
         main_frame = ttk.Frame(self.root)
         main_frame.pack(fill='both', expand=True)
 
-        left_frame = ttk.Frame(main_frame)
-        left_frame.pack(side='left', fill='both', expand=False)
+        left_frame = ttk.Frame(main_frame, width=480)
+        left_frame.pack(side='left', fill='y', expand=False)
+        left_frame.pack_propagate(False)
 
         self.tab_control = ttk.Notebook(left_frame)
         self.tab_control.pack(fill='both', expand=True)
@@ -5621,16 +5372,28 @@ class ExPlotApp:
         box_radio = ttk.Radiobutton(plot_type_radio_frame, text="Box Plot", variable=self.plot_kind_var, value="box")
         violin_radio = ttk.Radiobutton(plot_type_radio_frame, text="Violin Plot", variable=self.plot_kind_var, value="violin")
         xy_radio = ttk.Radiobutton(plot_type_radio_frame, text="XY Plot", variable=self.plot_kind_var, value="xy")
+        hist_radio = ttk.Radiobutton(plot_type_radio_frame, text="Histogram", variable=self.plot_kind_var, value="histogram")
+        heatmap_radio = ttk.Radiobutton(plot_type_radio_frame, text="Heatmap", variable=self.plot_kind_var, value="heatmap")
         bar_radio.pack(anchor="w")
         box_radio.pack(anchor="w")
         violin_radio.pack(anchor="w")
         xy_radio.pack(anchor="w")
+        hist_radio.pack(anchor="w")
+        heatmap_radio.pack(anchor="w")
         # XY options frame (right)
         self.xy_options_frame = ttk.Frame(type_grp)
         # XY options widgets in xy_options_frame
-        self.xy_marker_symbol_label = ttk.Label(self.xy_options_frame, text="XY Marker Symbol:")
+        self.xy_marker_mode_label = ttk.Label(self.xy_options_frame, text="Marker mode:")
+        self.xy_marker_mode_dropdown = ttk.Combobox(self.xy_options_frame, textvariable=self.xy_marker_mode_var, values=["Single", "Varied"], width=10, state="readonly")
+        self.xy_marker_symbol_label = ttk.Label(self.xy_options_frame, text="Marker symbol:")
         self.xy_marker_symbol_dropdown = ttk.Combobox(self.xy_options_frame, textvariable=self.xy_marker_symbol_var, values=["o", "s", "^", "D", "v", "P", "X", "+", "x", "*", "."], width=10)
-        self.xy_marker_size_label = ttk.Label(self.xy_options_frame, text="XY Marker Size:")
+        def _update_marker_mode_ui(*_):
+            if self.xy_marker_mode_var.get() == "Varied":
+                self.xy_marker_symbol_dropdown.config(state="disabled")
+            else:
+                self.xy_marker_symbol_dropdown.config(state="readonly")
+        self.xy_marker_mode_var.trace_add("write", _update_marker_mode_ui)
+        self.xy_marker_size_label = ttk.Label(self.xy_options_frame, text="Marker size:")
         self.xy_marker_size_entry = ttk.Entry(self.xy_options_frame, textvariable=self.xy_marker_size_var, width=6)
         self.xy_filled_check = ttk.Checkbutton(self.xy_options_frame, text="Filled symbols", variable=self.xy_filled_var)
         self.xy_line_style_label = ttk.Label(self.xy_options_frame, text="Line style:")
@@ -5641,28 +5404,68 @@ class ExPlotApp:
         self.xy_show_mean_errorbars_check = ttk.Checkbutton(self.xy_options_frame, text="With errorbars", variable=self.xy_show_mean_errorbars_var)
         self.xy_draw_band_check = ttk.Checkbutton(self.xy_options_frame, text="Draw bands (min-max or error)", variable=self.xy_draw_band_var)
         # Pack XY widgets in order
-        self.xy_marker_symbol_label.grid(row=0, column=0, sticky="w", padx=4, pady=2)
-        self.xy_marker_symbol_dropdown.grid(row=0, column=1, sticky="w", padx=2, pady=2)
-        self.xy_marker_size_label.grid(row=1, column=0, sticky="w", padx=4, pady=2)
-        self.xy_marker_size_entry.grid(row=1, column=1, sticky="w", padx=2, pady=2)
-        self.xy_connect_check.grid(row=2, column=0, columnspan=2, sticky="w", padx=4, pady=2)
-        self.xy_show_mean_check.grid(row=3, column=0, columnspan=2, sticky="w", padx=4, pady=2)
-        self.xy_show_mean_errorbars_check.grid(row=4, column=0, columnspan=2, sticky="w", padx=24, pady=2)
-        self.xy_draw_band_check.grid(row=5, column=0, columnspan=2, sticky="w", padx=4, pady=2)
-        # Show/hide XY options frame based on plot type
-        def update_xy_options(*args):
-            if self.plot_kind_var.get() == "xy":
+        self.xy_marker_mode_label.grid(row=0, column=0, sticky="w", padx=4, pady=2)
+        self.xy_marker_mode_dropdown.grid(row=0, column=1, sticky="w", padx=2, pady=2)
+        self.xy_marker_symbol_label.grid(row=1, column=0, sticky="w", padx=4, pady=2)
+        self.xy_marker_symbol_dropdown.grid(row=1, column=1, sticky="w", padx=2, pady=2)
+        self.xy_marker_size_label.grid(row=2, column=0, sticky="w", padx=4, pady=2)
+        self.xy_marker_size_entry.grid(row=2, column=1, sticky="w", padx=2, pady=2)
+        self.xy_connect_check.grid(row=3, column=0, columnspan=2, sticky="w", padx=4, pady=2)
+        self.xy_show_mean_check.grid(row=4, column=0, columnspan=2, sticky="w", padx=4, pady=2)
+        self.xy_show_mean_errorbars_check.grid(row=5, column=0, columnspan=2, sticky="w", padx=24, pady=2)
+        self.xy_draw_band_check.grid(row=6, column=0, columnspan=2, sticky="w", padx=4, pady=2)
+        # --- Histogram options frame (right) ---
+        self.hist_options_frame = ttk.Frame(type_grp)
+        ttk.Label(self.hist_options_frame, text="Bins:").grid(row=0, column=0, sticky="w", padx=4, pady=2)
+        ttk.Entry(self.hist_options_frame, textvariable=self.hist_bins_var, width=6).grid(row=0, column=1, sticky="w", padx=2, pady=2)
+        ttk.Checkbutton(self.hist_options_frame, text="Show KDE curve", variable=self.hist_kde_var).grid(row=1, column=0, columnspan=2, sticky="w", padx=4, pady=2)
+        ttk.Checkbutton(self.hist_options_frame, text="Density (normalize)", variable=self.hist_density_var).grid(row=2, column=0, columnspan=2, sticky="w", padx=4, pady=2)
+        ttk.Checkbutton(self.hist_options_frame, text="Stacked groups", variable=self.hist_stacked_var).grid(row=3, column=0, columnspan=2, sticky="w", padx=4, pady=2)
+        ttk.Label(self.hist_options_frame, text="Alpha:").grid(row=4, column=0, sticky="w", padx=4, pady=2)
+        ttk.Entry(self.hist_options_frame, textvariable=self.hist_alpha_var, width=6).grid(row=4, column=1, sticky="w", padx=2, pady=2)
+
+        # --- Heatmap options frame (right) ---
+        self.heatmap_options_frame = ttk.Frame(type_grp)
+        _hw = 8  # uniform widget width for heatmap options
+        self.heatmap_options_frame.columnconfigure(1, weight=1)
+        ttk.Label(self.heatmap_options_frame, text="Mode:").grid(row=0, column=0, sticky="w", padx=4, pady=2)
+        ttk.Combobox(self.heatmap_options_frame, textvariable=self.heatmap_mode_var, values=["correlation", "pivot"], width=_hw).grid(row=0, column=1, sticky="e", padx=2, pady=2)
+        ttk.Label(self.heatmap_options_frame, text="Colormap:").grid(row=1, column=0, sticky="w", padx=4, pady=2)
+        ttk.Combobox(self.heatmap_options_frame, textvariable=self.heatmap_cmap_var,
+                      values=["coolwarm", "viridis", "plasma", "inferno", "magma", "cividis", "RdBu_r", "YlOrRd", "Blues", "Greens"], width=_hw).grid(row=1, column=1, sticky="e", padx=2, pady=2)
+        _annot_row = ttk.Frame(self.heatmap_options_frame)
+        _annot_row.grid(row=2, column=0, columnspan=2, sticky="w", padx=4, pady=1)
+        ttk.Checkbutton(_annot_row, text="Annot.", variable=self.heatmap_annot_var).pack(side="left")
+        ttk.Label(_annot_row, text="size:").pack(side="left", padx=(6,0))
+        ttk.Spinbox(_annot_row, from_=0, to=24, increment=1, textvariable=self.heatmap_annot_fontsize_var, width=3).pack(side="left", padx=2)
+        ttk.Label(self.heatmap_options_frame, text="Format:").grid(row=3, column=0, sticky="w", padx=4, pady=2)
+        ttk.Combobox(self.heatmap_options_frame, textvariable=self.heatmap_fmt_var, values=[".2f", ".3f", ".1f", ".0f", ".2g"], width=_hw).grid(row=3, column=1, sticky="e", padx=2, pady=2)
+        ttk.Label(self.heatmap_options_frame, text="Aggregation:").grid(row=4, column=0, sticky="w", padx=4, pady=2)
+        ttk.Combobox(self.heatmap_options_frame, textvariable=self.heatmap_aggfunc_var, values=["mean", "median", "sum", "count", "std"], width=_hw).grid(row=4, column=1, sticky="e", padx=2, pady=2)
+        ttk.Label(self.heatmap_options_frame, text="Colorbar %:").grid(row=5, column=0, sticky="w", padx=4, pady=2)
+        ttk.Spinbox(self.heatmap_options_frame, from_=1, to=15, increment=0.5, textvariable=self.heatmap_cbar_width_var, width=5).grid(row=5, column=1, sticky="e", padx=2, pady=2)
+
+        # Show/hide options frames based on plot type
+        def update_plot_type_options(*args):
+            kind = self.plot_kind_var.get()
+            self.xy_options_frame.grid_forget()
+            self.hist_options_frame.grid_forget()
+            self.heatmap_options_frame.grid_forget()
+            if kind == "xy":
                 self.xy_options_frame.grid(row=0, column=1, sticky="nw", padx=(16,0))
                 self.show_stripplot_var.set(False)
                 self.update_xy_mean_errorbar_state()
-            elif self.plot_kind_var.get() == "bar":
+            elif kind == "histogram":
+                self.hist_options_frame.grid(row=0, column=1, sticky="nw", padx=(16,0))
+                self.show_stripplot_var.set(False)
+            elif kind == "heatmap":
+                self.heatmap_options_frame.grid(row=0, column=1, sticky="nw", padx=(16,0))
+                self.show_stripplot_var.set(False)
+            elif kind == "bar":
                 self.show_stripplot_var.set(True)
-                self.xy_options_frame.grid_forget()
-            else:
-                self.xy_options_frame.grid_forget()
-            
-        self.plot_kind_var.trace_add('write', update_xy_options)
-        update_xy_options()
+
+        self.plot_kind_var.trace_add('write', update_plot_type_options)
+        update_plot_type_options()
 
     def update_xy_mean_errorbar_state(self):
         if self.xy_show_mean_var.get():
@@ -6184,27 +5987,8 @@ class ExPlotApp:
             messagebox.showerror("Error Saving Project", f"An error occurred: {str(e)}")
             
     def get_outline_color(self, color=None):
-        """Get the outline color based on the outline_color_var setting.
-        
-        Parameters:
-        color: Optional default color (used for as_set mode)
-        
-        Returns:
-        The outline color to use
-        """
-        outline_color_setting = self.outline_color_var.get()
-        
-        if outline_color_setting == "as_set" and color:
-            return color
-        elif outline_color_setting == "black":
-            return "black"
-        elif outline_color_setting == "gray":
-            return "gray"
-        elif outline_color_setting == "white":
-            return "white"
-        else:
-            # Default if no valid selection or no color provided for as_set
-            return "black"
+        """Get the outline color based on the outline_color_var setting."""
+        return get_outline_color(self.outline_color_var.get(), color)
     
     def get_current_settings(self):
         """Gather current application settings for saving"""
@@ -6265,6 +6049,7 @@ class ExPlotApp:
                 'alpha_level': self.alpha_level_var.get() if hasattr(self, 'alpha_level_var') else '0.05'
             },
             'xy_plot': {
+                'marker_mode': self.xy_marker_mode_var.get() if hasattr(self, 'xy_marker_mode_var') else 'Single',
                 'marker_symbol': self.xy_marker_symbol_var.get() if hasattr(self, 'xy_marker_symbol_var') else 'o',
                 'marker_size': self.xy_marker_size_var.get() if hasattr(self, 'xy_marker_size_var') else 5.0,
                 'filled': self.xy_filled_var.get() if hasattr(self, 'xy_filled_var') else True,
@@ -6283,7 +6068,50 @@ class ExPlotApp:
                 'strip_black': self.strip_black_var.get() if hasattr(self, 'strip_black_var') else True
             },
             'x_axis_renames': self.xaxis_renames,
-            'x_axis_order': self.xaxis_order
+            'x_axis_order': self.xaxis_order,
+            'error_bars': {
+                'errorbar_type': self.errorbar_type_var.get() if hasattr(self, 'errorbar_type_var') else 'SD',
+                'errorbar_black': self.errorbar_black_var.get() if hasattr(self, 'errorbar_black_var') else True,
+                'errorbar_capsize': self.errorbar_capsize_var.get() if hasattr(self, 'errorbar_capsize_var') else 'Default',
+                'upward_errorbar': self.upward_errorbar_var.get() if hasattr(self, 'upward_errorbar_var') else True,
+                'show_stripplot': self.show_stripplot_var.get() if hasattr(self, 'show_stripplot_var') else True,
+                'violin_inner_box': self.violin_inner_box_var.get() if hasattr(self, 'violin_inner_box_var') else True
+            },
+            'legend': {
+                'visible': self.legend_visible_var.get() if hasattr(self, 'legend_visible_var') else True,
+                'position': self.legend_position_var.get() if hasattr(self, 'legend_position_var') else 'outside top',
+                'ncol': self.legend_ncol_var.get() if hasattr(self, 'legend_ncol_var') else 0
+            },
+            'axis_ticks': {
+                'x_interval': self.xinterval_entry.get() if hasattr(self, 'xinterval_entry') else '',
+                'x_minor': self.xminor_ticks_entry.get() if hasattr(self, 'xminor_ticks_entry') else '',
+                'y_interval': self.yinterval_entry.get() if hasattr(self, 'yinterval_entry') else '',
+                'y_minor': self.minor_ticks_entry.get() if hasattr(self, 'minor_ticks_entry') else ''
+            },
+            'yaxis_break': {
+                'enabled': self.yaxis_break_var.get() if hasattr(self, 'yaxis_break_var') else False,
+                'break_min': self.ybreak_min_entry.get() if hasattr(self, 'ybreak_min_entry') else '',
+                'break_max': self.ybreak_max_entry.get() if hasattr(self, 'ybreak_max_entry') else '',
+                'ratio': self.ybreak_ratio_entry.get() if hasattr(self, 'ybreak_ratio_entry') else '0.5',
+                'gap': self.ybreak_gap_entry.get() if hasattr(self, 'ybreak_gap_entry') else '0.07',
+                'marker_style': self.ybreak_marker_style_var.get() if hasattr(self, 'ybreak_marker_style_var') else 'Connected'
+            },
+            'histogram': {
+                'bins': self.hist_bins_var.get() if hasattr(self, 'hist_bins_var') else 20,
+                'kde': self.hist_kde_var.get() if hasattr(self, 'hist_kde_var') else False,
+                'density': self.hist_density_var.get() if hasattr(self, 'hist_density_var') else False,
+                'stacked': self.hist_stacked_var.get() if hasattr(self, 'hist_stacked_var') else False,
+                'alpha': self.hist_alpha_var.get() if hasattr(self, 'hist_alpha_var') else 0.7
+            },
+            'heatmap': {
+                'mode': self.heatmap_mode_var.get() if hasattr(self, 'heatmap_mode_var') else 'correlation',
+                'cmap': self.heatmap_cmap_var.get() if hasattr(self, 'heatmap_cmap_var') else 'coolwarm',
+                'annot': self.heatmap_annot_var.get() if hasattr(self, 'heatmap_annot_var') else True,
+                'fmt': self.heatmap_fmt_var.get() if hasattr(self, 'heatmap_fmt_var') else '.2f',
+                'aggfunc': self.heatmap_aggfunc_var.get() if hasattr(self, 'heatmap_aggfunc_var') else 'mean',
+                'cbar_width': self.heatmap_cbar_width_var.get() if hasattr(self, 'heatmap_cbar_width_var') else 6.0,
+                'annot_fontsize': self.heatmap_annot_fontsize_var.get() if hasattr(self, 'heatmap_annot_fontsize_var') else 0
+            }
         }
         
         # Add XY Fitting settings
@@ -6292,7 +6120,10 @@ class ExPlotApp:
             'fitting_model': self.fitting_model_var.get(),
             'fitting_ci': self.fitting_ci_var.get(),
             'fitting_models': self.fitting_models,
-            'parameters': [(name, var.get()) for name, var in self.param_entries]
+            'parameters': [(name, var.get()) for name, var in self.param_entries],
+            'use_black_lines': self.fitting_use_black_lines_var.get() if hasattr(self, 'fitting_use_black_lines_var') else False,
+            'use_black_bands': self.fitting_use_black_bands_var.get() if hasattr(self, 'fitting_use_black_bands_var') else False,
+            'use_group_colors': self.fitting_use_group_colors_var.get() if hasattr(self, 'fitting_use_group_colors_var') else True
         }
         
         return settings
@@ -6452,6 +6283,8 @@ class ExPlotApp:
             # XY plot settings
             if 'xy_plot' in settings:
                 xy = settings['xy_plot']
+                if 'marker_mode' in xy and hasattr(self, 'xy_marker_mode_var'):
+                    self.xy_marker_mode_var.set(xy['marker_mode'])
                 if 'marker_symbol' in xy and hasattr(self, 'xy_marker_symbol_var'):
                     self.xy_marker_symbol_var.set(xy['marker_symbol'])
                 if 'marker_size' in xy and hasattr(self, 'xy_marker_size_var'):
@@ -6494,6 +6327,107 @@ class ExPlotApp:
             if 'x_axis_order' in settings:
                 self.xaxis_order = settings['x_axis_order']
             
+            # Error bar / display settings
+            if 'error_bars' in settings:
+                eb = settings['error_bars']
+                if 'errorbar_type' in eb and hasattr(self, 'errorbar_type_var'):
+                    self.errorbar_type_var.set(eb['errorbar_type'])
+                if 'errorbar_black' in eb and hasattr(self, 'errorbar_black_var'):
+                    self.errorbar_black_var.set(eb['errorbar_black'])
+                if 'errorbar_capsize' in eb and hasattr(self, 'errorbar_capsize_var'):
+                    self.errorbar_capsize_var.set(eb['errorbar_capsize'])
+                if 'upward_errorbar' in eb and hasattr(self, 'upward_errorbar_var'):
+                    self.upward_errorbar_var.set(eb['upward_errorbar'])
+                if 'show_stripplot' in eb and hasattr(self, 'show_stripplot_var'):
+                    self.show_stripplot_var.set(eb['show_stripplot'])
+                if 'violin_inner_box' in eb and hasattr(self, 'violin_inner_box_var'):
+                    self.violin_inner_box_var.set(eb['violin_inner_box'])
+
+            # Legend settings
+            if 'legend' in settings:
+                leg = settings['legend']
+                if 'visible' in leg and hasattr(self, 'legend_visible_var'):
+                    self.legend_visible_var.set(leg['visible'])
+                if 'position' in leg and hasattr(self, 'legend_position_var'):
+                    self.legend_position_var.set(leg['position'])
+                if 'ncol' in leg and hasattr(self, 'legend_ncol_var'):
+                    self.legend_ncol_var.set(leg['ncol'])
+
+            # Axis tick interval settings
+            if 'axis_ticks' in settings:
+                ticks = settings['axis_ticks']
+                if 'x_interval' in ticks and hasattr(self, 'xinterval_entry'):
+                    self.xinterval_entry.delete(0, tk.END)
+                    self.xinterval_entry.insert(0, ticks['x_interval'])
+                if 'x_minor' in ticks and hasattr(self, 'xminor_ticks_entry'):
+                    self.xminor_ticks_entry.delete(0, tk.END)
+                    self.xminor_ticks_entry.insert(0, ticks['x_minor'])
+                if 'y_interval' in ticks and hasattr(self, 'yinterval_entry'):
+                    self.yinterval_entry.delete(0, tk.END)
+                    self.yinterval_entry.insert(0, ticks['y_interval'])
+                if 'y_minor' in ticks and hasattr(self, 'minor_ticks_entry'):
+                    self.minor_ticks_entry.delete(0, tk.END)
+                    self.minor_ticks_entry.insert(0, ticks['y_minor'])
+
+            # Y-axis break settings
+            if 'yaxis_break' in settings:
+                yb = settings['yaxis_break']
+                if 'enabled' in yb and hasattr(self, 'yaxis_break_var'):
+                    self.yaxis_break_var.set(yb['enabled'])
+                if hasattr(self, 'ybreak_min_entry'):
+                    self.ybreak_min_entry.config(state="normal")
+                    self.ybreak_min_entry.delete(0, tk.END)
+                    self.ybreak_min_entry.insert(0, yb.get('break_min', ''))
+                if hasattr(self, 'ybreak_max_entry'):
+                    self.ybreak_max_entry.config(state="normal")
+                    self.ybreak_max_entry.delete(0, tk.END)
+                    self.ybreak_max_entry.insert(0, yb.get('break_max', ''))
+                if hasattr(self, 'ybreak_ratio_entry'):
+                    self.ybreak_ratio_entry.config(state="normal")
+                    self.ybreak_ratio_entry.delete(0, tk.END)
+                    self.ybreak_ratio_entry.insert(0, yb.get('ratio', '0.5'))
+                if hasattr(self, 'ybreak_gap_entry'):
+                    self.ybreak_gap_entry.config(state="normal")
+                    self.ybreak_gap_entry.delete(0, tk.END)
+                    self.ybreak_gap_entry.insert(0, yb.get('gap', '0.07'))
+                if 'marker_style' in yb and hasattr(self, 'ybreak_marker_style_var'):
+                    self.ybreak_marker_style_var.set(yb['marker_style'])
+                # Update enable/disable state of break entries
+                if hasattr(self, 'update_ybreak_options'):
+                    self.update_ybreak_options()
+
+            # Histogram settings
+            if 'histogram' in settings:
+                hist = settings['histogram']
+                if 'bins' in hist and hasattr(self, 'hist_bins_var'):
+                    self.hist_bins_var.set(hist['bins'])
+                if 'kde' in hist and hasattr(self, 'hist_kde_var'):
+                    self.hist_kde_var.set(hist['kde'])
+                if 'density' in hist and hasattr(self, 'hist_density_var'):
+                    self.hist_density_var.set(hist['density'])
+                if 'stacked' in hist and hasattr(self, 'hist_stacked_var'):
+                    self.hist_stacked_var.set(hist['stacked'])
+                if 'alpha' in hist and hasattr(self, 'hist_alpha_var'):
+                    self.hist_alpha_var.set(hist['alpha'])
+
+            # Heatmap settings
+            if 'heatmap' in settings:
+                hm = settings['heatmap']
+                if 'mode' in hm and hasattr(self, 'heatmap_mode_var'):
+                    self.heatmap_mode_var.set(hm['mode'])
+                if 'cmap' in hm and hasattr(self, 'heatmap_cmap_var'):
+                    self.heatmap_cmap_var.set(hm['cmap'])
+                if 'annot' in hm and hasattr(self, 'heatmap_annot_var'):
+                    self.heatmap_annot_var.set(hm['annot'])
+                if 'fmt' in hm and hasattr(self, 'heatmap_fmt_var'):
+                    self.heatmap_fmt_var.set(hm['fmt'])
+                if 'aggfunc' in hm and hasattr(self, 'heatmap_aggfunc_var'):
+                    self.heatmap_aggfunc_var.set(hm['aggfunc'])
+                if 'cbar_width' in hm and hasattr(self, 'heatmap_cbar_width_var'):
+                    self.heatmap_cbar_width_var.set(hm['cbar_width'])
+                if 'annot_fontsize' in hm and hasattr(self, 'heatmap_annot_fontsize_var'):
+                    self.heatmap_annot_fontsize_var.set(hm['annot_fontsize'])
+
             # Apply XY Fitting settings if present
             if 'xy_fitting' in settings and hasattr(self, 'use_fitting_var'):
                 xy_settings = settings['xy_fitting']
@@ -6530,6 +6464,14 @@ class ExPlotApp:
                     for i, (param_name, param_val) in enumerate(params):
                         if i < len(self.param_entries):
                             self.param_entries[i][1].set(param_val)
+
+                # Fitting visual settings
+                if 'use_black_lines' in xy_settings and hasattr(self, 'fitting_use_black_lines_var'):
+                    self.fitting_use_black_lines_var.set(xy_settings['use_black_lines'])
+                if 'use_black_bands' in xy_settings and hasattr(self, 'fitting_use_black_bands_var'):
+                    self.fitting_use_black_bands_var.set(xy_settings['use_black_bands'])
+                if 'use_group_colors' in xy_settings and hasattr(self, 'fitting_use_group_colors_var'):
+                    self.fitting_use_group_colors_var.set(xy_settings['use_group_colors'])
             
         except Exception as e:
             print(f"Error applying settings: {e}")
@@ -8052,6 +7994,14 @@ class ExPlotApp:
         if group_col and self.use_stats_var.get():
             top_margin += 0.4
 
+        # For heatmaps, inflate plot_width so that after make_axes_locatable
+        # steals space for the colorbar, the remaining heatmap area matches
+        # the user's intended plot_width (cells square when w==h).
+        if plot_kind == "heatmap":
+            cbar_pct = self.heatmap_cbar_width_var.get()
+            hm_pad = 0.15  # must match pad in append_axes call
+            plot_width = (plot_width + hm_pad) / (1.0 - cbar_pct / 100.0)
+
         fig_width = plot_width + left_margin + right_margin
         fig_height = plot_height * n_rows + top_margin + bottom_margin
         
@@ -8294,17 +8244,10 @@ class ExPlotApp:
             # --- Palette assignment: always use full palette for groups ---
             if hue_col:
                 palette_name = self.palette_var.get()
-                palette = self.custom_palettes.get(palette_name, "Set2")
-                # Ensure palette is a list of colors and long enough
                 n_hue = len(df_plot[hue_col].dropna().unique())
-                if isinstance(palette, list):
-                    if len(palette) < n_hue:
-                        palette = (palette * ((n_hue // len(palette)) + 1))[:n_hue]
-                else:
-                    palette = [palette] * n_hue
+                palette = resolve_palette(self.custom_palettes, palette_name, n_hue)
             else:
-                single_color_name = self.single_color_var.get()
-                palette = [self.custom_colors.get(single_color_name, 'black')]
+                palette = [resolve_single_color(self.custom_colors, self.single_color_var.get())]
 
             # --- XY Plot: use one color per group from palette ---
             if plot_kind == "xy" and hue_col:
@@ -8332,19 +8275,10 @@ class ExPlotApp:
                 
                 # Handle palette consistently regardless of error bar type
                 if hue_col and hue_col in df_plot.columns:
-                    # For grouped data, use the palette
-                    palette_name = self.palette_var.get()
-                    palette_full = self.custom_palettes.get(palette_name, ["#333333"])
-                    hue_groups = df_plot[hue_col].dropna().unique()
-                    if len(palette_full) < len(hue_groups):
-                        # Repeat the palette to ensure we have enough colors
-                        palette_full = (palette_full * ((len(hue_groups) // len(palette_full)) + 1))
-                    palette = palette_full[:len(hue_groups)]
+                    n_hue = len(df_plot[hue_col].dropna().unique())
+                    palette = resolve_palette(self.custom_palettes, self.palette_var.get(), n_hue)
                 else:
-                    # For ungrouped data, use the single color
-                    single_color_name = self.single_color_var.get()
-                    single_color = self.custom_colors.get(single_color_name, 'black')
-                    palette = [single_color]
+                    palette = [resolve_single_color(self.custom_colors, self.single_color_var.get())]
                 # --- Always use full palette for grouped XY means ---
                 if show_mean:
                     groupers = [x_col]
@@ -8385,6 +8319,7 @@ class ExPlotApp:
                 elif plot_kind == "xy":
                     marker_size = self.xy_marker_size_var.get()
                     marker_symbol = self.xy_marker_symbol_var.get()
+                    marker_mode = self.xy_marker_mode_var.get()
                     connect = self.xy_connect_var.get()
                     draw_band = self.xy_draw_band_var.get()
                     show_mean = self.xy_show_mean_var.get()
@@ -8394,12 +8329,9 @@ class ExPlotApp:
                     line_black = self.xy_line_black_var.get()
                     # Choose color logic for XY plot
                     if len(value_cols) == 1:
-                        color = self.custom_colors.get(self.single_color_var.get(), 'black')
-                        palette = [color]
+                        palette = [resolve_single_color(self.custom_colors, self.single_color_var.get())]
                     else:
-                        palette_name = self.palette_var.get()
-                        palette_full = self.custom_palettes.get(palette_name, ["#333333"])
-                        palette = palette_full[:len(value_cols)]
+                        palette = resolve_palette(self.custom_palettes, self.palette_var.get(), len(value_cols))
                     # --- Always use full palette for grouped XY means ---
                     if show_mean:
                         groupers = [x_col]
@@ -8414,16 +8346,15 @@ class ExPlotApp:
                         means = means.merge(errors, on=groupers)
                         if hue_col:
                             group_names = list(df_plot[hue_col].dropna().unique())
-                            palette_name = self.palette_var.get()
-                            palette_full = self.custom_palettes.get(palette_name, ["#333333"])
-                            if len(palette_full) < len(group_names):
-                                palette_full = (palette_full * ((len(group_names) // len(palette_full)) + 1))[:len(group_names)]
+                            palette_full = resolve_palette(self.custom_palettes, self.palette_var.get(), len(group_names))
                             color_map = {name: palette_full[i] for i, name in enumerate(group_names)}
-                            for name in group_names:
+                            markers = resolve_markers(marker_mode, marker_symbol, len(group_names))
+                            for gi, name in enumerate(group_names):
                                 group = means[means[hue_col] == name]
                                 if group.empty:
                                     continue
                                 c = color_map[name]
+                                ms = markers[gi]
                                 x = group[x_col]
                                 y = group[value_col]
                                 yerr = group['err']
@@ -8431,8 +8362,8 @@ class ExPlotApp:
                                 mfc = c if filled else 'none'
                                 mec = c
                                 if show_mean_errorbars:
-                                    ax.errorbar(x, y, yerr=yerr, fmt=marker_symbol, color=c, markerfacecolor=mfc, markeredgecolor=mec, markersize=marker_size, linewidth=linewidth, capsize=3, ecolor=ecolor, label=str(name))
-                                ax.plot(x, y, marker=marker_symbol, color=c, markerfacecolor=mfc, markeredgecolor=mec, markersize=marker_size, linewidth=linewidth, linestyle='None', label=None if show_mean_errorbars else str(name))
+                                    ax.errorbar(x, y, yerr=yerr, fmt=ms, color=c, markerfacecolor=mfc, markeredgecolor=mec, markersize=marker_size, linewidth=linewidth, capsize=3, ecolor=ecolor, label=str(name))
+                                ax.plot(x, y, marker=ms, color=c, markerfacecolor=mfc, markeredgecolor=mec, markersize=marker_size, linewidth=linewidth, linestyle='None', label=None if show_mean_errorbars else str(name))
                                 if draw_band:
                                     df_band = pd.DataFrame({
                                         'x': pd.to_numeric(x, errors='coerce'),
@@ -8480,23 +8411,20 @@ class ExPlotApp:
                             ax.legend()
                     else:
                         # Plot raw data points (scatter) when show_mean is False
-                        marker_kwargs = dict(marker=marker_symbol, s=marker_size**2)
                         if hue_col:
                             group_names = list(df_plot[hue_col].dropna().unique())
-                            palette_name = self.palette_var.get()
-                            palette_full = self.custom_palettes.get(palette_name, ["#333333"])
-                            if len(palette_full) < len(group_names):
-                                palette_full = (palette_full * ((len(group_names) // len(palette_full)) + 1))[:len(group_names)]
+                            palette_full = resolve_palette(self.custom_palettes, self.palette_var.get(), len(group_names))
                             color_map = {name: palette_full[i] for i, name in enumerate(group_names)}
-                            for name in group_names:
+                            markers = resolve_markers(marker_mode, marker_symbol, len(group_names))
+                            for gi, name in enumerate(group_names):
                                 group = df_plot[df_plot[hue_col] == name]
                                 if group.empty:
                                     continue
                                 c = color_map[name]
-                                # Always show marker edge in group color if not filled
+                                ms = markers[gi]
                                 edge = c
                                 face = c if filled else 'none'
-                                scatter = ax.scatter(group[x_col], group[value_col], marker=marker_symbol, s=marker_size**2, color=c, label=str(name), edgecolors=edge, facecolors=face, linewidth=linewidth)
+                                scatter = ax.scatter(group[x_col], group[value_col], marker=ms, s=marker_size**2, color=c, label=str(name), edgecolors=edge, facecolors=face, linewidth=linewidth)
                                 if draw_band:
                                     x_sorted = np.sort(group[x_col].unique())
                                     min_vals = [group[group[x_col] == x][value_col].min() for x in x_sorted]
@@ -8622,6 +8550,7 @@ class ExPlotApp:
                 elif plot_kind == "xy":
                     marker_size = self.xy_marker_size_var.get()
                     marker_symbol = self.xy_marker_symbol_var.get()
+                    marker_mode = self.xy_marker_mode_var.get()
                     connect = self.xy_connect_var.get()
                     draw_band = self.xy_draw_band_var.get()
                     show_mean = self.xy_show_mean_var.get()
@@ -8631,12 +8560,9 @@ class ExPlotApp:
                     line_black = self.xy_line_black_var.get()
                     # Choose color logic for XY plot
                     if len(value_cols) == 1:
-                        color = self.custom_colors.get(self.single_color_var.get(), 'black')
-                        palette = [color]
+                        palette = [resolve_single_color(self.custom_colors, self.single_color_var.get())]
                     else:
-                        palette_name = self.palette_var.get()
-                        palette_full = self.custom_palettes.get(palette_name, ["#333333"])
-                        palette = palette_full[:len(value_cols)]
+                        palette = resolve_palette(self.custom_palettes, self.palette_var.get(), len(value_cols))
                     # --- Always use full palette for grouped XY means ---
                     if show_mean:
                         groupers = [x_col]
@@ -8651,16 +8577,15 @@ class ExPlotApp:
                         means = means.merge(errors, on=groupers)
                         if hue_col:
                             group_names = list(df_plot[hue_col].dropna().unique())
-                            palette_name = self.palette_var.get()
-                            palette_full = self.custom_palettes.get(palette_name, ["#333333"])
-                            if len(palette_full) < len(group_names):
-                                palette_full = (palette_full * ((len(group_names) // len(palette_full)) + 1))[:len(group_names)]
+                            palette_full = resolve_palette(self.custom_palettes, self.palette_var.get(), len(group_names))
                             color_map = {name: palette_full[i] for i, name in enumerate(group_names)}
-                            for name in group_names:
+                            markers = resolve_markers(marker_mode, marker_symbol, len(group_names))
+                            for gi, name in enumerate(group_names):
                                 group = means[means[hue_col] == name]
                                 if group.empty:
                                     continue
                                 c = color_map[name]
+                                ms = markers[gi]
                                 x = group[x_col]
                                 y = group[value_col]
                                 yerr = group['err']
@@ -8668,14 +8593,14 @@ class ExPlotApp:
                                 mfc = c if filled else 'none'
                                 mec = c
                                 if show_mean_errorbars:
-                                    ax.errorbar(x, y, yerr=yerr, fmt=marker_symbol, color=c, markerfacecolor=mfc, markeredgecolor=mec, markersize=marker_size, linewidth=linewidth, capsize=3, ecolor=ecolor, label=str(name))
+                                    ax.errorbar(x, y, yerr=yerr, fmt=ms, color=c, markerfacecolor=mfc, markeredgecolor=mec, markersize=marker_size, linewidth=linewidth, capsize=3, ecolor=ecolor, label=str(name))
                                 if draw_band:
                                     x_numeric = pd.to_numeric(x, errors='coerce')
                                     y_numeric = pd.to_numeric(y, errors='coerce')
                                     yerr_numeric = pd.to_numeric(yerr, errors='coerce')
                                     ax.fill_between(x_numeric, y_numeric - yerr_numeric, y_numeric + yerr_numeric, color=c, alpha=0.18, zorder=1)
                             else:
-                                ax.plot(x, y, marker=marker_symbol, color=c, markerfacecolor=mfc, markeredgecolor=mec, markersize=marker_size, linewidth=linewidth, linestyle='None', label=str(name))
+                                ax.plot(x, y, marker=ms, color=c, markerfacecolor=mfc, markeredgecolor=mec, markersize=marker_size, linewidth=linewidth, linestyle='None', label=str(name))
                             if connect:
                                 ax.plot(x, y, color='black' if line_black else c, linewidth=linewidth, alpha=0.7, linestyle=line_style)
                     else:
@@ -8709,81 +8634,6 @@ class ExPlotApp:
                             # Use our utility function for consistent legend placement
                             self.place_legend(ax, handles, labels)
                 
-                else:
-                    # Plot raw data points (scatter) when show_mean is False
-                    
-                    marker_kwargs = dict(marker=marker_symbol, s=marker_size**2)
-                    
-                    if hue_col:
-                        group_names = list(df_plot[hue_col].dropna().unique())
-                        palette_name = self.palette_var.get()
-                        palette_full = self.custom_palettes.get(palette_name, ["#333333"])
-                        if len(palette_full) < len(group_names):
-                            palette_full = (palette_full * ((len(group_names) // len(palette_full)) + 1))[:len(group_names)]
-                        color_map = {name: palette_full[i] for i, name in enumerate(group_names)}
-                        for name in group_names:
-                            group = df_plot[df_plot[hue_col] == name]
-                            if group.empty:
-                                continue
-                            c = color_map[name]
-                            # Always show marker edge in group color if not filled
-                            edge = c
-                            face = c if filled else 'none'
-                            scatter = ax.scatter(group[x_col], group['Value'], marker=marker_symbol, s=marker_size**2, color=c, label=str(name), edgecolors=edge, facecolors=face, linewidth=linewidth)
-                            if draw_band:
-                                x_sorted = np.sort(group[x_col].unique())
-                                min_vals = [group[group[x_col] == x]['Value'].min() for x in x_sorted]
-                                max_vals = [group[group[x_col] == x]['Value'].max() for x in x_sorted]
-                                x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
-                                min_vals_numeric = pd.to_numeric(min_vals, errors='coerce')
-                                max_vals_numeric = pd.to_numeric(max_vals, errors='coerce')
-                                ax.fill_between(x_sorted_numeric, min_vals_numeric, max_vals_numeric, color=c, alpha=0.18, zorder=1)
-                            if connect:
-                                # Connect means of raw data at each x value
-                                if hue_col:
-                                    for name in group_names:
-                                        group = df_plot[df_plot[hue_col] == name]
-                                        if group.empty:
-                                            continue
-                                        c = color_map[name]
-                                        # Calculate means at each x value
-                                        x_sorted = np.sort(group[x_col].unique())
-                                        means = [group[group[x_col] == x][value_col].mean() for x in x_sorted]
-                                        x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
-                                        means_numeric = pd.to_numeric(means, errors='coerce')
-                                        ax.plot(x_sorted_numeric, means_numeric, color='black' if line_black else c, linewidth=linewidth, alpha=0.7, linestyle=line_style)
-                                else:
-                                    c = palette[0]
-                                    x_sorted = np.sort(df_plot[x_col].unique())
-                                    means = [df_plot[df_plot[x_col] == x][value_col].mean() for x in x_sorted]
-                                    x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
-                                    means_numeric = pd.to_numeric(means, errors='coerce')
-                                    ax.plot(x_sorted_numeric, means_numeric, color='black' if line_black else c, linewidth=linewidth, alpha=0.7, linestyle=line_style)
-                        handles, labels = ax.get_legend_handles_labels()
-                        if handles and len(handles) > 0:
-                            ax.legend()
-                    else:
-                        c = palette[0]
-                        # Always show marker edge in group color if not filled
-                        edge = c
-                        face = c if filled else 'none'
-                        ax.scatter(df_plot[x_col], df_plot[value_col], marker=marker_symbol, s=marker_size**2, color=c, edgecolors=edge, facecolors=face, linewidth=linewidth)
-                        if draw_band:
-                            x_sorted = np.sort(df_plot[x_col].unique())
-                            min_vals = [df_plot[df_plot[x_col] == x][value_col].min() for x in x_sorted]
-                            max_vals = [df_plot[df_plot[x_col] == x][value_col].max() for x in x_sorted]
-                            x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
-                            min_vals_numeric = pd.to_numeric(min_vals, errors='coerce')
-                            max_vals_numeric = pd.to_numeric(max_vals, errors='coerce')
-                            ax.fill_between(x_sorted_numeric, min_vals_numeric, max_vals_numeric, color=c, alpha=0.18, zorder=1)
-                        if connect:
-                            # Connect means of raw data at each x value
-                            c = palette[0]
-                            x_sorted = np.sort(df_plot[x_col].unique())
-                            means = [df_plot[df_plot[x_col] == x][value_col].mean() for x in x_sorted]
-                            x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
-                            means_numeric = pd.to_numeric(means, errors='coerce')
-                            ax.plot(x_sorted_numeric, means_numeric, color='black' if line_black else c, linewidth=linewidth, alpha=0.7, linestyle=line_style)
                 stripplot_args = dict(
                     data=df_plot, x=x_col, y=value_col, hue=hue_col, dodge=True,
                     jitter=True, marker='o', alpha=0.55,
@@ -8793,16 +8643,10 @@ class ExPlotApp:
             # --- Plotting ---
             # First prepare the palette (common to all plot types)
             if hue_col and hue_col in df_plot.columns:
-                hue_groups = df_plot[hue_col].dropna().unique()
-                palette_name = self.palette_var.get()
-                palette_full = self.custom_palettes.get(palette_name, ["#333333"])
-                if len(palette_full) < len(hue_groups):
-                    palette_full = (palette_full * ((len(hue_groups) // len(palette_full)) + 1))
-                palette = palette_full[:len(hue_groups)]
+                n_hue = len(df_plot[hue_col].dropna().unique())
+                palette = resolve_palette(self.custom_palettes, self.palette_var.get(), n_hue)
             else:
-                # Use single color for non-grouped data
-                single_color_name = self.single_color_var.get()
-                palette = [self.custom_colors.get(single_color_name, 'black')]
+                palette = [resolve_single_color(self.custom_colors, self.single_color_var.get())]
             
             # Create a separate section for each plot type with its own parameters
             # This prevents parameter leakage between plot types
@@ -8901,8 +8745,7 @@ class ExPlotApp:
                         err_kws['color'] = bar_args['color']
                     else:
                         # Use single color from custom colors
-                        color = self.custom_colors.get(self.single_color_var.get(), 'black')
-                        err_kws['color'] = color
+                        err_kws['color'] = resolve_single_color(self.custom_colors, self.single_color_var.get())
 
                 # Always set linewidth
                 err_kws['linewidth'] = linewidth
@@ -9260,18 +9103,13 @@ class ExPlotApp:
                         self.df = self.df.drop('_x_plot', axis=1)
 
                 if len(value_cols) == 1:
-                    color = self.custom_colors.get(self.single_color_var.get(), 'black')
-                    palette = [color]
+                    palette = [resolve_single_color(self.custom_colors, self.single_color_var.get())]
                 else:
-                    palette_name = self.palette_var.get()
-                    palette_full = self.custom_palettes.get(palette_name, ["#333333"])
                     if hue_col and hue_col in df_plot.columns:
-                        hue_groups = df_plot[hue_col].dropna().unique()
-                        if len(palette_full) < len(hue_groups):
-                            palette_full = (palette_full * ((len(hue_groups) // len(palette_full)) + 1))
-                        palette = palette_full[:len(hue_groups)]
+                        n = len(df_plot[hue_col].dropna().unique())
                     else:
-                        palette = palette_full[:len(value_cols)]
+                        n = len(value_cols)
+                    palette = resolve_palette(self.custom_palettes, self.palette_var.get(), n)
 
                 self._plot_xy_base(ax, df_plot, x_col, value_col, hue_col, value_cols, errorbar_black, linewidth, allow_legend=True)
                 self._plot_xy_fitting(ax, df_plot, x_col, value_col, hue_col, palette, linewidth, update_results=True, allow_legend=True)
@@ -9284,8 +9122,144 @@ class ExPlotApp:
 
                 ax.tick_params(axis='x', which='both', direction='in', length=4, width=linewidth, top=False, bottom=True, labeltop=False, labelbottom=True)
 
-            # --- Stripplot (if enabled and not XY plot) ---
-            if show_stripplot and plot_kind != "xy":
+            elif plot_kind == "histogram":
+                hist_bins = self.hist_bins_var.get()
+                hist_kde = self.hist_kde_var.get()
+                hist_density = self.hist_density_var.get()
+                hist_stacked = self.hist_stacked_var.get()
+                hist_alpha = self.hist_alpha_var.get()
+                stat_type = "density" if hist_density else "count"
+
+                if hue_col and hue_col in df_plot.columns:
+                    groups = df_plot[hue_col].dropna().unique()
+                    n_groups = len(groups)
+                    colors = resolve_palette(self.custom_palettes, self.palette_var.get(), n_groups)
+                    if hist_stacked:
+                        data_list = [df_plot[df_plot[hue_col] == g][value_col].dropna().astype(float) for g in groups]
+                        ax.hist(data_list, bins=hist_bins, stacked=True, color=colors[:n_groups],
+                                label=[str(g) for g in groups], alpha=hist_alpha, density=hist_density,
+                                edgecolor='white', linewidth=0.5)
+                    else:
+                        for i, g in enumerate(groups):
+                            vals = df_plot[df_plot[hue_col] == g][value_col].dropna().astype(float)
+                            ax.hist(vals, bins=hist_bins, color=colors[i], label=str(g),
+                                    alpha=hist_alpha, density=hist_density, edgecolor='white', linewidth=0.5)
+                    if hist_kde:
+                        from scipy.stats import gaussian_kde
+                        for i, g in enumerate(groups):
+                            vals = df_plot[df_plot[hue_col] == g][value_col].dropna().astype(float)
+                            if len(vals) > 1:
+                                kde = gaussian_kde(vals)
+                                x_range = np.linspace(vals.min(), vals.max(), 200)
+                                if hist_density:
+                                    ax.plot(x_range, kde(x_range), color=colors[i], linewidth=linewidth * 1.5)
+                                else:
+                                    ax.plot(x_range, kde(x_range) * len(vals) * (vals.max() - vals.min()) / hist_bins,
+                                            color=colors[i], linewidth=linewidth * 1.5)
+                    ax.legend(fontsize=int(self.fontsize_entry.get()))
+                else:
+                    color = resolve_single_color(self.custom_colors, self.single_color_var.get())
+                    vals = df_plot[value_col].dropna().astype(float)
+                    ax.hist(vals, bins=hist_bins, color=color, alpha=hist_alpha,
+                            density=hist_density, edgecolor='white', linewidth=0.5)
+                    if hist_kde and len(vals) > 1:
+                        from scipy.stats import gaussian_kde
+                        kde = gaussian_kde(vals)
+                        x_range = np.linspace(vals.min(), vals.max(), 200)
+                        if hist_density:
+                            ax.plot(x_range, kde(x_range), color='black', linewidth=linewidth * 1.5)
+                        else:
+                            ax.plot(x_range, kde(x_range) * len(vals) * (vals.max() - vals.min()) / hist_bins,
+                                    color='black', linewidth=linewidth * 1.5)
+                ax.set_ylabel("Density" if hist_density else "Count")
+                disable_plot_stat_annotations = True
+
+            elif plot_kind == "heatmap":
+                # Heatmap should only render once, not per value_col
+                if idx > 0:
+                    continue
+
+                heatmap_mode = self.heatmap_mode_var.get()
+                heatmap_cmap = self.heatmap_cmap_var.get()
+                heatmap_annot = self.heatmap_annot_var.get()
+                heatmap_fmt = self.heatmap_fmt_var.get()
+                heatmap_aggfunc = self.heatmap_aggfunc_var.get()
+                fontsize = int(self.fontsize_entry.get())
+
+                # Use string aggfunc for pivot_table (avoids FutureWarning)
+                aggfunc_str_map = {"mean": "mean", "median": "median", "sum": "sum", "count": "count", "std": "std"}
+                agg_fn = aggfunc_str_map.get(heatmap_aggfunc, "mean")
+
+                heatmap_data = None
+                if heatmap_mode == "correlation":
+                    if len(value_cols) > 1:
+                        numeric_df = df_work[value_cols].apply(pd.to_numeric, errors='coerce').dropna()
+                    else:
+                        numeric_cols = df_work.select_dtypes(include=[np.number]).columns.tolist()
+                        numeric_df = df_work[numeric_cols].dropna()
+                    if numeric_df.shape[1] >= 2:
+                        heatmap_data = numeric_df.corr()
+                    else:
+                        ax.text(0.5, 0.5, "Need at least 2 numeric columns\nfor correlation heatmap",
+                                ha='center', va='center', fontsize=fontsize, transform=ax.transAxes)
+                else:  # pivot mode
+                    if hue_col and hue_col in df_plot.columns:
+                        try:
+                            df_pivot = df_plot.copy()
+                            df_pivot[value_col] = pd.to_numeric(df_pivot[value_col], errors='coerce')
+                            heatmap_data = df_pivot.pivot_table(values=value_col, index=x_col, columns=hue_col, aggfunc=agg_fn)
+                        except Exception as e:
+                            ax.text(0.5, 0.5, f"Could not create pivot heatmap:\n{e}",
+                                    ha='center', va='center', fontsize=fontsize - 2, transform=ax.transAxes)
+                    else:
+                        ax.text(0.5, 0.5, "Pivot mode requires a Group column.\nUse 'correlation' mode or select a Group.",
+                                ha='center', va='center', fontsize=fontsize, transform=ax.transAxes)
+
+                if heatmap_data is not None:
+                    from mpl_toolkits.axes_grid1 import make_axes_locatable
+
+                    # Determine annotation font size
+                    annot_fs = self.heatmap_annot_fontsize_var.get()
+                    if annot_fs <= 0:
+                        annot_fs = max(6, fontsize - 2)
+
+                    hm_kwargs = dict(
+                        annot=heatmap_annot, fmt=heatmap_fmt, cmap=heatmap_cmap,
+                        ax=ax, linewidths=linewidth, linecolor='white',
+                        annot_kws={"size": annot_fs},
+                        cbar=False,
+                    )
+                    if heatmap_mode == "correlation":
+                        hm_kwargs.update(vmin=-1, vmax=1)
+
+                    sns.heatmap(heatmap_data, **hm_kwargs)
+
+                    # Colorbar via axes_divider — matches heatmap height exactly
+                    cbar_pct = self.heatmap_cbar_width_var.get()
+                    divider = make_axes_locatable(ax)
+                    cax = divider.append_axes("right", size=f"{cbar_pct}%", pad=0.15)
+                    mappable = ax.collections[0]
+                    cb = self.fig.colorbar(mappable, cax=cax)
+                    cb.outline.set_visible(True)
+                    cb.outline.set_linewidth(linewidth)
+                    cax.tick_params(labelsize=max(6, fontsize - 2))
+
+                    ax.set_xlabel("")
+                    ax.set_ylabel("")
+                    ax.tick_params(axis='both', labelsize=max(6, fontsize - 1), length=0)
+                    # Rotate x-labels but keep seaborn's default centering
+                    for lbl in ax.get_xticklabels():
+                        lbl.set_rotation(45)
+                    for lbl in ax.get_yticklabels():
+                        lbl.set_rotation(0)
+                    try:
+                        self.fig.tight_layout()
+                    except Exception:
+                        pass
+                disable_plot_stat_annotations = True
+
+            # --- Stripplot (if enabled and not XY/histogram/heatmap plot) ---
+            if show_stripplot and plot_kind not in ("xy", "histogram", "heatmap"):
                 # Rebuild stripplot args here so swap_axes is always applied consistently
                 if swap_axes:
                     stripplot_args = dict(
@@ -9315,13 +9289,8 @@ class ExPlotApp:
                     # Use palette colors
                     if hue_col:
                         # Make sure stripplot uses the same palette as the barplot
-                        hue_groups = df_plot[hue_col].dropna().unique()
-                        palette_name = self.palette_var.get()
-                        palette_full = self.custom_palettes.get(palette_name, ["#333333"])
-                        # Ensure we have enough colors for all hue groups
-                        if len(palette_full) < len(hue_groups):
-                            palette_full = (palette_full * ((len(hue_groups) // len(palette_full)) + 1))
-                        stripplot_args["palette"] = palette_full[:len(hue_groups)]
+                        n_hue = len(df_plot[hue_col].dropna().unique())
+                        stripplot_args["palette"] = resolve_palette(self.custom_palettes, self.palette_var.get(), n_hue)
                     else:
                         # For no hue column, use the first color from palette
                         stripplot_args["palette"] = palette
@@ -9351,10 +9320,7 @@ class ExPlotApp:
             if hue_col and (plot_kind == "box" or plot_kind == "violin"):
                 import matplotlib.patches as mpatches
                 hue_levels = list(df_plot[hue_col].dropna().unique())
-                palette_name = self.palette_var.get()
-                palette_full = self.custom_palettes.get(palette_name, ["#333333"])
-                if len(palette_full) < len(hue_levels):
-                    palette_full = (palette_full * ((len(hue_levels) // len(palette_full)) + 1))[:len(hue_levels)]
+                palette_full = resolve_palette(self.custom_palettes, self.palette_var.get(), len(hue_levels))
                 handles = [mpatches.Patch(facecolor=palette_full[i], edgecolor='black', label=str(hue_levels[i])) for i in range(len(hue_levels))]
                 ax.legend(
                     handles,
@@ -9413,28 +9379,28 @@ class ExPlotApp:
                 
                 # Get unique group names and their colors from custom palette (same as XY plot uses)
                 group_names = list(df_plot[hue_col].dropna().unique())
-                palette_name = self.palette_var.get()
-                palette_full = self.custom_palettes.get(palette_name, ["#333333"])
-                if len(palette_full) < len(group_names):
-                    palette_full = (palette_full * ((len(group_names) // len(palette_full)) + 1))[:len(group_names)]
+                palette_full = resolve_palette(self.custom_palettes, self.palette_var.get(), len(group_names))
                 
                 marker_symbol = self.xy_marker_symbol_var.get()
+                marker_mode = self.xy_marker_mode_var.get()
                 marker_size = self.xy_marker_size_var.get()
                 filled = self.xy_filled_var.get()
                 connect = self.xy_connect_var.get()
                 line_style = self.xy_line_style_var.get()
                 line_black = self.xy_line_black_var.get()
+                markers = resolve_markers(marker_mode, marker_symbol, len(group_names))
                 
                 # Create legend handles with markers (and lines if connecting)
                 legend_handles = []
                 legend_labels = []
                 for i, name in enumerate(group_names):
                     color = palette_full[i]
+                    ms = markers[i]
                     line_color = 'black' if line_black else color
                     
                     if connect:
                         # Show both marker and line
-                        marker_handle = Line2D([0], [0], marker=marker_symbol,
+                        marker_handle = Line2D([0], [0], marker=ms,
                                               color=line_color,
                                               markerfacecolor=color if filled else 'none',
                                               markeredgecolor=color,
@@ -9444,7 +9410,7 @@ class ExPlotApp:
                                               linewidth=linewidth)
                     else:
                         # Show only marker
-                        marker_handle = Line2D([0], [0], marker=marker_symbol, color='none',
+                        marker_handle = Line2D([0], [0], marker=ms, color='none',
                                               markerfacecolor=color if filled else 'none',
                                               markeredgecolor=color,
                                               markersize=marker_size * 0.8,
@@ -9549,52 +9515,60 @@ class ExPlotApp:
                 xinterval = _parse_float(self.xinterval_entry.get())
                 xminor_ticks = _parse_int(self.xminor_ticks_entry.get())
 
+                # Read log flags early so we can skip linear locators for log axes
+                use_log_y_early = self.logscale_var.get()
+                use_log_x_early = self.xlogscale_var.get()
+
                 if not swap_axes:
                     # Y-axis settings
                     if ymin is not None or ymax is not None:
                         ax.set_ylim(bottom=ymin, top=ymax)
-                    if yinterval:
+                    if yinterval and not use_log_y_early:
                         ax.yaxis.set_major_locator(MultipleLocator(yinterval))
-                    if minor_ticks:
-                        ax.yaxis.set_minor_locator(AutoMinorLocator(minor_ticks + 1))
-                        ax.tick_params(axis='y', which='minor', direction='in', length=2, width=linewidth, color='black', left=True)
-                    else:
-                        ax.yaxis.set_minor_locator(NullLocator())
-                        ax.tick_params(axis='y', which='minor', length=0)
+                    if not use_log_y_early:
+                        if minor_ticks:
+                            ax.yaxis.set_minor_locator(AutoMinorLocator(minor_ticks + 1))
+                            ax.tick_params(axis='y', which='minor', direction='in', length=2, width=linewidth, color='black', left=True)
+                        else:
+                            ax.yaxis.set_minor_locator(NullLocator())
+                            ax.tick_params(axis='y', which='minor', length=0)
                     # X-axis settings (for XY plots)
                     if xmin is not None or xmax is not None:
                         ax.set_xlim(left=xmin, right=xmax)
-                    if xinterval:
+                    if xinterval and not use_log_x_early:
                         ax.xaxis.set_major_locator(MultipleLocator(xinterval))
-                    if xminor_ticks:
-                        ax.xaxis.set_minor_locator(AutoMinorLocator(xminor_ticks + 1))
-                        ax.tick_params(axis='x', which='minor', direction='in', length=2, width=linewidth, color='black', bottom=True)
-                    else:
-                        ax.xaxis.set_minor_locator(NullLocator())
-                        ax.tick_params(axis='x', which='minor', length=0)
+                    if not use_log_x_early:
+                        if xminor_ticks:
+                            ax.xaxis.set_minor_locator(AutoMinorLocator(xminor_ticks + 1))
+                            ax.tick_params(axis='x', which='minor', direction='in', length=2, width=linewidth, color='black', bottom=True)
+                        else:
+                            ax.xaxis.set_minor_locator(NullLocator())
+                            ax.tick_params(axis='x', which='minor', length=0)
                 else:
                     # X-axis settings (swapped)
                     if ymin is not None or ymax is not None:
                         ax.set_xlim(left=ymin, right=ymax)
-                    if yinterval:
+                    if yinterval and not use_log_y_early:
                         ax.xaxis.set_major_locator(MultipleLocator(yinterval))
-                    if minor_ticks:
-                        ax.xaxis.set_minor_locator(AutoMinorLocator(minor_ticks + 1))
-                        ax.tick_params(axis='x', which='minor', direction='in', length=2, width=linewidth, color='black', bottom=True)
-                    else:
-                        ax.xaxis.set_minor_locator(NullLocator())
-                        ax.tick_params(axis='x', which='minor', length=0)
+                    if not use_log_y_early:
+                        if minor_ticks:
+                            ax.xaxis.set_minor_locator(AutoMinorLocator(minor_ticks + 1))
+                            ax.tick_params(axis='x', which='minor', direction='in', length=2, width=linewidth, color='black', bottom=True)
+                        else:
+                            ax.xaxis.set_minor_locator(NullLocator())
+                            ax.tick_params(axis='x', which='minor', length=0)
                     # Y-axis settings (swapped, for XY plots)
                     if xmin is not None or xmax is not None:
                         ax.set_ylim(bottom=xmin, top=xmax)
-                    if xinterval:
+                    if xinterval and not use_log_x_early:
                         ax.yaxis.set_major_locator(MultipleLocator(xinterval))
-                    if xminor_ticks:
-                        ax.yaxis.set_minor_locator(AutoMinorLocator(xminor_ticks + 1))
-                        ax.tick_params(axis='y', which='minor', direction='in', length=2, width=linewidth, color='black', left=True)
-                    else:
-                        ax.yaxis.set_minor_locator(NullLocator())
-                        ax.tick_params(axis='y', which='minor', length=0)
+                    if not use_log_x_early:
+                        if xminor_ticks:
+                            ax.yaxis.set_minor_locator(AutoMinorLocator(xminor_ticks + 1))
+                            ax.tick_params(axis='y', which='minor', direction='in', length=2, width=linewidth, color='black', left=True)
+                        else:
+                            ax.yaxis.set_minor_locator(NullLocator())
+                            ax.tick_params(axis='y', which='minor', length=0)
             except Exception as e:
                 print(f"Axis setting error: {e}")
 
@@ -9620,77 +9594,59 @@ class ExPlotApp:
                     ax.set_yscale('log', base=x_log_base)
 
             # Apply appropriate tickers/locators for Y-axis
-            minor_ticks_str = self.minor_ticks_entry.get()
+            minor_ticks_str = self.minor_ticks_entry.get().strip()
+            minor_ticks_val = None
             if minor_ticks_str:
                 try:
-                    minor_ticks = int(minor_ticks_str)
-                    if use_log_y:
-                        # Get Y-axis log base for ticks
-                        y_log_base = int(self.ylog_base_var.get())
-                        
-                        # Set up minor ticks appropriate for the log base
-                        if y_log_base == 10:
-                            # For log10, use standard logarithmic ticks (1-9)
-                            if minor_ticks >= 9:
-                                # Use all digits as ticks if user wants many ticks
-                                subs = np.arange(2, 10)
-                            else:
-                                # Distribute the ticks evenly across the decade
-                                step = max(1, int(8 / minor_ticks))
-                                subs = np.arange(2, 10, step)[:minor_ticks]
-                        else:  # log2
-                            # For log2, create appropriate subdivisions between each power of 2
-                            if minor_ticks == 1:
-                                subs = [1.5]  # Just one division at 1.5
-                            elif minor_ticks == 2:
-                                subs = [1.33, 1.66]  # Two evenly spaced points
-                            elif minor_ticks == 3:
-                                subs = [1.25, 1.5, 1.75]  # Three evenly spaced points
-                            else:
-                                # Multiple minor ticks between powers of 2
-                                # Create evenly distributed points between 1 and 2 on a linear scale
-                                # We don't include 1 or 2 as those are the major ticks
-                                subs = np.linspace(1, 2, minor_ticks+2)[1:-1]
-                                
-                        if not swap_axes:
-                            # Apply locators to the appropriate axis
-                            ax.yaxis.set_major_locator(LogLocator(base=y_log_base, numticks=10))
-                            # Fix minor ticks placement with appropriate number of ticks
-                            if y_log_base == 2:
-                                ax.yaxis.set_minor_locator(LogLocator(base=y_log_base, subs=subs, numticks=20))
-                            else:
-                                ax.yaxis.set_minor_locator(LogLocator(base=y_log_base, subs=subs, numticks=10))
-                            # Make sure minor ticks are properly sized and colored
-                            ax.tick_params(axis='y', which='minor', direction='in', length=2, width=linewidth/2, color='black')
+                    minor_ticks_val = int(minor_ticks_str)
+                except ValueError:
+                    pass
+
+            if use_log_y:
+                # Log scale: ignore Major Interval, set up proper LogLocator
+                y_log_base = int(self.ylog_base_var.get())
+                target_axis = ax.yaxis if not swap_axes else ax.xaxis
+                target_axis_name = 'y' if not swap_axes else 'x'
+                target_axis.set_major_locator(LogLocator(base=y_log_base, numticks=10))
+
+                if minor_ticks_val and minor_ticks_val > 0:
+                    # User requested specific number of minor ticks
+                    if y_log_base == 10:
+                        if minor_ticks_val >= 9:
+                            subs = np.arange(2, 10)
                         else:
-                            ax.xaxis.set_major_locator(LogLocator(base=y_log_base, numticks=10))
-                            # Fix minor ticks placement with appropriate number of ticks
-                            if y_log_base == 2:
-                                ax.xaxis.set_minor_locator(LogLocator(base=y_log_base, subs=subs, numticks=20))
-                            else:
-                                ax.xaxis.set_minor_locator(LogLocator(base=y_log_base, subs=subs, numticks=10))
-                            # Make sure minor ticks are properly sized and colored and don't show labels
-                            ax.tick_params(axis='x', which='minor', direction='in', length=2, width=linewidth/2, 
-                                          color='black', labelsize=0, labelbottom=False, labeltop=False, 
-                                          labelleft=False, labelright=False)
+                            step = max(1, int(8 / minor_ticks_val))
+                            subs = np.arange(2, 10, step)[:minor_ticks_val]
                     else:
-                        # Linear scale - use regular tick spacing
-                        if not swap_axes:
-                            ax.yaxis.set_minor_locator(AutoMinorLocator(minor_ticks + 1))
+                        if minor_ticks_val == 1:
+                            subs = [1.5]
+                        elif minor_ticks_val == 2:
+                            subs = [1.33, 1.66]
+                        elif minor_ticks_val == 3:
+                            subs = [1.25, 1.5, 1.75]
                         else:
-                            ax.xaxis.set_minor_locator(AutoMinorLocator(minor_ticks + 1))
-                            
-                    # Style the minor ticks
-                    if not swap_axes:
-                        ax.tick_params(axis='y', which='minor', direction='in', 
-                                      length=2, width=linewidth, color='black', left=True)
-                    else:
-                        ax.tick_params(axis='x', which='minor', direction='in',
-                                      length=2, width=linewidth, color='black', bottom=True)
-                except Exception as e:
-                    print(f"Y-axis minor ticks setting error: {e}")
+                            subs = np.linspace(1, 2, minor_ticks_val + 2)[1:-1]
+                    target_axis.set_minor_locator(LogLocator(base=y_log_base, subs=subs, numticks=20))
+                    ax.tick_params(axis=target_axis_name, which='minor', direction='in',
+                                  length=2, width=linewidth / 2, color='black')
+                else:
+                    # Empty or 0: use default log minor ticks (all subdivisions)
+                    default_subs = np.arange(2, y_log_base) if y_log_base <= 10 else 'auto'
+                    target_axis.set_minor_locator(LogLocator(base=y_log_base, subs=default_subs, numticks=20))
+                    ax.tick_params(axis=target_axis_name, which='minor', direction='in',
+                                  length=2, width=linewidth / 2, color='black')
+            elif minor_ticks_val and minor_ticks_val > 0:
+                # Linear scale with minor ticks
+                if not swap_axes:
+                    ax.yaxis.set_minor_locator(AutoMinorLocator(minor_ticks_val + 1))
+                    ax.tick_params(axis='y', which='minor', direction='in',
+                                  length=2, width=linewidth, color='black', left=True)
+                else:
+                    ax.xaxis.set_minor_locator(AutoMinorLocator(minor_ticks_val + 1))
+                    ax.tick_params(axis='x', which='minor', direction='in',
+                                  length=2, width=linewidth, color='black', bottom=True)
             else:
-                # No minor ticks requested
+                # No minor ticks requested (linear)
                 if not swap_axes:
                     ax.yaxis.set_minor_locator(NullLocator())
                     ax.tick_params(axis='y', which='minor', length=0)
@@ -9699,77 +9655,59 @@ class ExPlotApp:
                     ax.tick_params(axis='x', which='minor', length=0)
                     
             # Apply appropriate tickers/locators for X-axis
-            xminor_ticks_str = self.xminor_ticks_entry.get()
+            xminor_ticks_str = self.xminor_ticks_entry.get().strip()
+            xminor_ticks_val = None
             if xminor_ticks_str:
                 try:
-                    xminor_ticks = int(xminor_ticks_str)
-                    if use_log_x:
-                        # Get X-axis log base for ticks
-                        x_log_base = int(self.xlog_base_var.get())
-                        
-                        # Set up minor ticks appropriate for the log base
-                        if x_log_base == 10:
-                            # For log10, use standard logarithmic ticks (1-9)
-                            if xminor_ticks >= 9:
-                                # Use all digits as ticks if user wants many ticks
-                                subs = np.arange(2, 10)
-                            else:
-                                # Distribute the ticks evenly across the decade
-                                step = max(1, int(8 / xminor_ticks))
-                                subs = np.arange(2, 10, step)[:xminor_ticks]
-                        else:  # log2
-                            # For log2, create appropriate subdivisions between each power of 2
-                            if xminor_ticks == 1:
-                                subs = [1.5]  # Just one division at 1.5
-                            elif xminor_ticks == 2:
-                                subs = [1.33, 1.66]  # Two evenly spaced points
-                            elif xminor_ticks == 3:
-                                subs = [1.25, 1.5, 1.75]  # Three evenly spaced points
-                            else:
-                                # Multiple minor ticks between powers of 2
-                                # Create evenly distributed points between 1 and 2 on a linear scale
-                                # We don't include 1 or 2 as those are the major ticks
-                                subs = np.linspace(1, 2, xminor_ticks+2)[1:-1]
-                                
-                        if not swap_axes:
-                            # Apply locators to the appropriate axis
-                            ax.xaxis.set_major_locator(LogLocator(base=x_log_base, numticks=10))
-                            # Fix minor ticks placement with appropriate number of ticks
-                            if x_log_base == 2:
-                                ax.xaxis.set_minor_locator(LogLocator(base=x_log_base, subs=subs, numticks=20))
-                            else:
-                                ax.xaxis.set_minor_locator(LogLocator(base=x_log_base, subs=subs, numticks=10))
-                            # Make sure minor ticks are properly sized and colored and don't show labels
-                            ax.tick_params(axis='x', which='minor', direction='in', length=2, width=linewidth/2, 
-                                          color='black', labelsize=0, labelbottom=False, labeltop=False, 
-                                          labelleft=False, labelright=False)
+                    xminor_ticks_val = int(xminor_ticks_str)
+                except ValueError:
+                    pass
+
+            if use_log_x:
+                # Log scale: ignore Major Interval, set up proper LogLocator
+                x_log_base = int(self.xlog_base_var.get())
+                target_axis = ax.xaxis if not swap_axes else ax.yaxis
+                target_axis_name = 'x' if not swap_axes else 'y'
+                target_axis.set_major_locator(LogLocator(base=x_log_base, numticks=10))
+
+                if xminor_ticks_val and xminor_ticks_val > 0:
+                    # User requested specific number of minor ticks
+                    if x_log_base == 10:
+                        if xminor_ticks_val >= 9:
+                            subs = np.arange(2, 10)
                         else:
-                            ax.yaxis.set_major_locator(LogLocator(base=x_log_base, numticks=10))
-                            # Fix minor ticks placement with appropriate number of ticks
-                            if x_log_base == 2:
-                                ax.yaxis.set_minor_locator(LogLocator(base=x_log_base, subs=subs, numticks=20))
-                            else:
-                                ax.yaxis.set_minor_locator(LogLocator(base=x_log_base, subs=subs, numticks=10))
-                            # Make sure minor ticks are properly sized and colored
-                            ax.tick_params(axis='y', which='minor', direction='in', length=2, width=linewidth/2, color='black')
+                            step = max(1, int(8 / xminor_ticks_val))
+                            subs = np.arange(2, 10, step)[:xminor_ticks_val]
                     else:
-                        # Linear scale - use regular tick spacing
-                        if not swap_axes:
-                            ax.xaxis.set_minor_locator(AutoMinorLocator(xminor_ticks + 1))
+                        if xminor_ticks_val == 1:
+                            subs = [1.5]
+                        elif xminor_ticks_val == 2:
+                            subs = [1.33, 1.66]
+                        elif xminor_ticks_val == 3:
+                            subs = [1.25, 1.5, 1.75]
                         else:
-                            ax.yaxis.set_minor_locator(AutoMinorLocator(xminor_ticks + 1))
-                            
-                    # Style the minor ticks
-                    if not swap_axes:
-                        ax.tick_params(axis='x', which='minor', direction='in', 
-                                      length=2, width=linewidth, color='black', bottom=True)
-                    else:
-                        ax.tick_params(axis='y', which='minor', direction='in',
-                                      length=2, width=linewidth, color='black', left=True)
-                except Exception as e:
-                    print(f"X-axis minor ticks setting error: {e}")
+                            subs = np.linspace(1, 2, xminor_ticks_val + 2)[1:-1]
+                    target_axis.set_minor_locator(LogLocator(base=x_log_base, subs=subs, numticks=20))
+                    ax.tick_params(axis=target_axis_name, which='minor', direction='in',
+                                  length=2, width=linewidth / 2, color='black')
+                else:
+                    # Empty or 0: use default log minor ticks (all subdivisions)
+                    default_subs = np.arange(2, x_log_base) if x_log_base <= 10 else 'auto'
+                    target_axis.set_minor_locator(LogLocator(base=x_log_base, subs=default_subs, numticks=20))
+                    ax.tick_params(axis=target_axis_name, which='minor', direction='in',
+                                  length=2, width=linewidth / 2, color='black')
+            elif xminor_ticks_val and xminor_ticks_val > 0:
+                # Linear scale with minor ticks
+                if not swap_axes:
+                    ax.xaxis.set_minor_locator(AutoMinorLocator(xminor_ticks_val + 1))
+                    ax.tick_params(axis='x', which='minor', direction='in',
+                                  length=2, width=linewidth, color='black', bottom=True)
+                else:
+                    ax.yaxis.set_minor_locator(AutoMinorLocator(xminor_ticks_val + 1))
+                    ax.tick_params(axis='y', which='minor', direction='in',
+                                  length=2, width=linewidth, color='black', left=True)
             else:
-                # No minor ticks requested
+                # No minor ticks requested (linear)
                 if not swap_axes:
                     ax.xaxis.set_minor_locator(NullLocator())
                     ax.tick_params(axis='x', which='minor', length=0)
@@ -10142,6 +10080,13 @@ class ExPlotApp:
             ax_upper.yaxis.set_minor_locator(copy.deepcopy(lower_minor_loc))
             ax_upper.yaxis.set_major_formatter(copy.deepcopy(lower_major_fmt))
             ax_upper.yaxis.set_minor_formatter(copy.deepcopy(lower_minor_fmt))
+
+            # Mirror minor tick rendering params so minor ticks are visible on upper
+            has_minor = not isinstance(lower_minor_loc, NullLocator)
+            if has_minor:
+                ax_upper.tick_params(axis='y', which='minor', direction='in', length=2, width=linewidth, color='black', left=True)
+            else:
+                ax_upper.tick_params(axis='y', which='minor', length=0)
         except Exception as e:
             try:
                 ax_upper.yaxis.set_major_locator(copy.copy(ax_lower.yaxis.get_major_locator()))

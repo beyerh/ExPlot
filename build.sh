@@ -4,7 +4,7 @@
  
  # Configuration
  APP_NAME="ExPlot"
- VERSION="0.7.3"
+ VERSION="0.7.4"
  BUILD_DIR="build"
  
  VENV_APP=".venv"

@@ -84,7 +84,7 @@ def main():
     
     # Set window size and position
     window_width = 1200
-    window_height = 800
+    window_height = 815
     
     screen_width = root.winfo_screenwidth()
     screen_height = root.winfo_screenheight()
