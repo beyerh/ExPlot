@@ -4,7 +4,7 @@
  
  # Configuration
  APP_NAME="ExPlot"
- VERSION="0.7.4"
+ VERSION="0.7.5"
  BUILD_DIR="build"
  
  VENV_APP=".venv"
@@ -300,6 +300,23 @@
  
    echo -e "Build completed: ${BUILD_DIR}/${APP_NAME}.app"
 
+   # ── Ad-hoc code signing ──────────────────────────────────────────────
+   # Without this step, macOS Gatekeeper will declare the app "damaged"
+   # (not just "unidentified developer") after download, because it has
+   # no code signature at all.  Ad-hoc signing (--sign -) does NOT require
+   # an Apple Developer account.  It gives the app a valid local signature
+   # so Gatekeeper shows the bypassable "unidentified developer" dialog
+   # instead of the fatal "damaged" error.
+   echo
+   echo "Ad-hoc signing ${APP_BUNDLE} ..."
+   /usr/bin/codesign --force --deep --sign - "${APP_BUNDLE}"
+   echo "Verifying signature..."
+   /usr/bin/codesign --verify --deep --strict "${APP_BUNDLE}" && echo "Signature OK" || echo "Warning: signature verification failed"
+
+   # Strip any quarantine attributes that may have been inherited from
+   # downloaded source files during the build.
+   /usr/bin/xattr -cr "${APP_BUNDLE}" 2>/dev/null || true
+
    echo
    echo "Verify arch:"
    /usr/bin/file "${APP_EXE}" || true
@@ -328,7 +345,120 @@
        open "${APP_BUNDLE}"
      fi
    fi
- }
+
+   # ── Packaging step ─────────────────────────────────────────────────
+   # Without an Apple Developer account the app cannot be notarised,
+   # so macOS Gatekeeper will block it on first launch. Users must
+   # manually allow it via System Settings → Security & Privacy.
+   echo
+   echo "Package for distribution (ad-hoc signed app – includes first-launch instructions):"
+   echo "  1) Create DMG (disk image with /Applications shortcut + README)"
+   echo "  2) Skip packaging"
+   read -r -p "Choice [1-2]: " pkg_choice
+
+   if [[ "${pkg_choice}" == "1" ]]; then
+     package_dmg
+   fi
+}
+
+# ── Helper: generate the first-launch README text ────────────────────
+generate_readme() {
+  cat <<'READMEEOF'
+=====================================================================
+  ExPlot – First Launch Instructions (macOS)
+=====================================================================
+
+  This application is ad-hoc signed (not notarised by Apple).
+  macOS Gatekeeper will block it on the FIRST launch only.
+
+  INSTALLATION:
+
+    1. Open the DMG file
+    2. Drag ExPlot.app to the Applications folder
+    3. Eject the DMG
+
+  FIRST LAUNCH:
+
+    1. Try to open ExPlot from Applications
+    2. macOS will show: "ExPlot Not Opened. Apple could not verify
+       ExPlot.app is free of malware..."
+    3. Click "OK" to dismiss the dialog
+    4. Open System Settings (or System Preferences on older macOS)
+    5. Go to: Privacy & Security (or Security & Privacy)
+    6. Scroll down to the Security section
+    7. You will see: "ExPlot.app was blocked..."
+    8. Click "Open Anyway" (or "Allow")
+    9. Confirm by clicking "Open" in the dialog
+
+  After this one-time step, ExPlot will open normally like any
+  other application.
+
+  WHY IS THIS NEEDED?
+  macOS Gatekeeper blocks apps that are not notarised by Apple.
+  This manual approval tells macOS you trust this specific app.
+  This is a standard macOS security feature.
+
+=====================================================================
+READMEEOF
+}
+
+# ── Package as DMG ───────────────────────────────────────────────────
+# Creates a .dmg containing:
+#   - ExPlot.app
+#   - Applications symlink (drag-to-install)
+#   - FIRST LAUNCH – READ ME.txt  (impossible to miss)
+package_dmg() {
+  local arch_suffix=""
+  if [[ "${TARGET}" == "intel_compat" ]]; then
+    arch_suffix="_Intel_Compat"
+  elif [[ "${TARGET}" == "intel" ]]; then
+    arch_suffix="_Intel"
+  else
+    arch_suffix="_AppleSilicon"
+  fi
+
+  local DMG_NAME="${APP_NAME}_v${VERSION}${arch_suffix}"
+  local DMG_STAGING="${BUILD_DIR}/_dmg_staging"
+  local DMG_PATH="${BUILD_DIR}/${DMG_NAME}.dmg"
+
+  echo
+  echo "Creating DMG: ${DMG_PATH}"
+
+  # Clean up any previous staging area
+  rm -rf "${DMG_STAGING}"
+  mkdir -p "${DMG_STAGING}"
+
+  # Copy the .app bundle into the staging directory
+  /bin/cp -R "${BUILD_DIR}/${APP_NAME}.app" "${DMG_STAGING}/"
+
+  # Create an /Applications symlink for drag-to-install
+  /bin/ln -s /Applications "${DMG_STAGING}/Applications"
+
+  # Generate the first-launch README (prominently named)
+  generate_readme > "${DMG_STAGING}/FIRST LAUNCH – READ ME.txt"
+
+  # Remove any previous DMG
+  rm -f "${DMG_PATH}"
+
+  # Create the DMG using hdiutil
+  #   -volname   : name shown when the DMG is mounted
+  #   -srcfolder : directory whose contents become the DMG root
+  #   -ov        : overwrite if exists
+  #   -format UDZO : compressed (zlib) read-only image
+  /usr/bin/hdiutil create \
+    -volname "${APP_NAME} v${VERSION}" \
+    -srcfolder "${DMG_STAGING}" \
+    -ov \
+    -format UDZO \
+    "${DMG_PATH}"
+
+  # Clean up staging
+  rm -rf "${DMG_STAGING}"
+
+  echo "DMG created: ${DMG_PATH}"
+}
+
+ 
  
  if [[ "${MODE}" == "env" || "${MODE}" == "all" ]]; then
    create_env

@@ -12,6 +12,7 @@ build/
 build_apple
 build_intel
 build_intel_compat
+build_win
 develop-eggs/
 dist/
 downloads/

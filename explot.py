@@ -1,6 +1,6 @@
 # ExPlot - Data visualization tool for Excel files
 
-VERSION = "0.7.4"
+VERSION = "0.7.5"
 # =====================================================================
 
 import tkinter as tk
@@ -507,7 +507,7 @@ class ExPlotApp:
         ttk.Button(button_row, text="Cancel", command=win.destroy, width=12).pack(side='right', padx=(4, 0))
         ttk.Button(button_row, text="Save", command=_save_and_close, width=12).pack(side='right')
 
-    def _plot_xy_base(self, ax, df_plot, x_col, value_col, hue_col, value_cols, errorbar_black, linewidth, allow_legend=True):
+    def _plot_xy_base(self, ax, df_plot, x_col, value_col, hue_col, value_cols, errorbar_black, linewidth, allow_legend=True, palette_override=None, marker_override=None):
         marker_size = self.xy_marker_size_var.get()
         marker_symbol = self.xy_marker_symbol_var.get()
         marker_mode = self.xy_marker_mode_var.get()
@@ -518,8 +518,16 @@ class ExPlotApp:
         filled = self.xy_filled_var.get()
         line_style = self.xy_line_style_var.get()
         line_black = self.xy_line_black_var.get()
+        # Apply marker override if provided (used for secondary Y axis)
+        if marker_override is not None:
+            marker_mode = marker_override.get('mode', marker_mode)
+            marker_symbol = marker_override.get('symbol', marker_symbol)
+            if 'size' in marker_override:
+                marker_size = marker_override['size']
 
-        if len(value_cols) == 1:
+        if palette_override is not None:
+            palette = palette_override
+        elif len(value_cols) == 1:
             palette = [resolve_single_color(self.custom_colors, self.single_color_var.get())]
         else:
             if hue_col and hue_col in df_plot.columns:
@@ -542,7 +550,10 @@ class ExPlotApp:
 
             if hue_col:
                 group_names = list(df_plot[hue_col].dropna().unique())
-                palette_full = resolve_palette(self.custom_palettes, self.palette_var.get(), len(group_names))
+                if palette_override is not None:
+                    palette_full = palette_override
+                else:
+                    palette_full = resolve_palette(self.custom_palettes, self.palette_var.get(), len(group_names))
                 color_map = {name: palette_full[i] for i, name in enumerate(group_names)}
                 markers = resolve_markers(marker_mode, marker_symbol, len(group_names))
                 for gi, name in enumerate(group_names):
@@ -626,7 +637,10 @@ class ExPlotApp:
         else:
             if hue_col:
                 group_names = list(df_plot[hue_col].dropna().unique())
-                palette_full = resolve_palette(self.custom_palettes, self.palette_var.get(), len(group_names))
+                if palette_override is not None:
+                    palette_full = palette_override
+                else:
+                    palette_full = resolve_palette(self.custom_palettes, self.palette_var.get(), len(group_names))
                 color_map = {name: palette_full[i] for i, name in enumerate(group_names)}
                 markers = resolve_markers(marker_mode, marker_symbol, len(group_names))
                 for gi, name in enumerate(group_names):
@@ -707,7 +721,10 @@ class ExPlotApp:
 
             if hue_col and hue_col in df_plot.columns and len(df_plot[hue_col].unique()) > 1:
                 group_names = df_plot[hue_col].unique()
-                palette_full = resolve_palette(self.custom_palettes, self.palette_var.get(), len(group_names))
+                if palette is not None and len(palette) == len(group_names):
+                    palette_full = palette
+                else:
+                    palette_full = resolve_palette(self.custom_palettes, self.palette_var.get(), len(group_names))
                 color_map = {name: palette_full[i] for i, name in enumerate(group_names)}
 
                 any_fit = False
@@ -1640,6 +1657,17 @@ class ExPlotApp:
         self.xy_show_mean_var = tk.BooleanVar(value=True)
         self.xy_show_mean_errorbars_var = tk.BooleanVar(value=True)
         self.xy_draw_band_var = tk.BooleanVar(value=False)
+
+        # --- Secondary Y-axis (XY plots) ---
+        self.use_secondary_yaxis_var = tk.BooleanVar(value=False)
+        self.secondary_y_cols_var = tk.StringVar(value="")  # comma-separated column names
+        self.secondary_ylabel_var = tk.StringVar(value="")
+        self.secondary_ylog_var = tk.BooleanVar(value=False)
+        self.secondary_ylog_base_var = tk.StringVar(value="10")
+        self.secondary_yaxis_color_var = tk.StringVar(value="all")  # 'all', 'label_only', 'none'
+        self.secondary_marker_mode_var = tk.StringVar(value="Same as primary")  # 'Same as primary', 'Single', 'Varied'
+        self.secondary_marker_symbol_var = tk.StringVar(value="s")  # default to square
+        self.secondary_marker_size_var = tk.StringVar(value="")  # empty = same as primary; numeric = override
 
         # --- Histogram options ---
         self.hist_bins_var = tk.IntVar(value=20)
@@ -2807,12 +2835,18 @@ class ExPlotApp:
     def open_label_formatter(self, axis_type):
         """Open a dialog for formatting axis labels with rich text capabilities."""
         # Get current label text
-        entry_widget = self.xlabel_entry if axis_type == 'x' else self.ylabel_entry
+        if axis_type == 'x':
+            entry_widget = self.xlabel_entry
+        elif axis_type == 'y2':
+            entry_widget = self.secondary_ylabel_entry
+        else:
+            entry_widget = self.ylabel_entry
         current_text = entry_widget.get()
         
         # Create dialog window
+        axis_titles = {'x': 'X', 'y': 'Y', 'y2': '2nd Y'}
         window = tk.Toplevel(self.root)
-        window.title(f"Format {'X' if axis_type == 'x' else 'Y'}-Axis Label")
+        window.title(f"Format {axis_titles.get(axis_type, 'Y')}-Axis Label")
         window.geometry("650x650")
         window.transient(self.root)
         window.grab_set()
@@ -5188,10 +5222,12 @@ class ExPlotApp:
         self.colors_tab = ttk.Frame(self.tab_control)
         self.stats_settings_tab = ttk.Frame(self.tab_control)
         self.xy_fitting_tab = ttk.Frame(self.tab_control)
+        self.secondary_y_tab = ttk.Frame(self.tab_control)
 
         self.tab_control.add(self.basic_tab, text="Basic")
         self.tab_control.add(self.appearance_tab, text="Appearance")
         self.tab_control.add(self.axis_tab, text="Axis")
+        self.tab_control.add(self.secondary_y_tab, text="2nd Y Axis")
         self.tab_control.add(self.stats_settings_tab, text="Statistics")
         self.tab_control.add(self.xy_fitting_tab, text="XY Fitting")
         self.tab_control.add(self.colors_tab, text="Colors")
@@ -5291,6 +5327,7 @@ class ExPlotApp:
         self.setup_axis_tab()
         self.setup_colors_tab()
         self.setup_xy_fitting_tab()
+        self.setup_secondary_y_tab()
 
     def setup_basic_tab(self):
         frame = self.basic_tab
@@ -5718,7 +5755,7 @@ class ExPlotApp:
         custom_row.pack(fill='x', padx=4, pady=(6, 1))
         ttk.Label(custom_row, text="Custom marks:", width=14, anchor='w').pack(side='left')
         ttk.Button(custom_row, text="Edit…", command=self.open_custom_marks_editor, width=10).pack(side='left')
-        
+
         # --- Y-Axis Break settings ---
         ybreak_grp = ttk.LabelFrame(frame, text="Y-Axis Break", padding=4)
         ybreak_grp.pack(fill='x', padx=4, pady=4)
@@ -5804,6 +5841,79 @@ class ExPlotApp:
         else:
             self.ylog_base_dropdown.config(state="disabled")
     
+    def _update_secondary_yaxis_ui(self):
+        """Enable or disable secondary Y-axis controls based on checkbox state."""
+        enabled = self.use_secondary_yaxis_var.get()
+        state = "normal" if enabled else "disabled"
+        self.secondary_y_listbox.config(state=state)
+        self.secondary_ylabel_entry.config(state=state)
+        self.secondary_ylabel_format_btn.config(state=state)
+        self.secondary_ymin_entry.config(state=state)
+        self.secondary_ymax_entry.config(state=state)
+        self.secondary_yinterval_entry.config(state=state)
+        self.secondary_yminor_entry.config(state=state)
+        self.secondary_ylog_check.config(state=state)
+        combo_state = "readonly" if enabled else "disabled"
+        self.secondary_marker_mode_dropdown.config(state=combo_state)
+        self.secondary_marker_symbol_dropdown.config(state=combo_state)
+        self.secondary_marker_size_entry.config(state=state)
+        if enabled:
+            self._update_secondary_ylog_options()
+            self._refresh_secondary_y_listbox()
+        else:
+            self.secondary_ylog_base_dropdown.config(state="disabled")
+
+    def _update_secondary_ylog_options(self):
+        """Enable or disable secondary Y-axis log base dropdown."""
+        if self.secondary_ylog_var.get() and self.use_secondary_yaxis_var.get():
+            self.secondary_ylog_base_dropdown.config(state="readonly")
+        else:
+            self.secondary_ylog_base_dropdown.config(state="disabled")
+
+    def _refresh_secondary_y_listbox(self):
+        """Populate the secondary Y listbox with hue groups.
+
+        In overlay mode (multiple Y columns) the items are the Y column names.
+        With a group column the items are the unique group values from the data.
+        """
+        self.secondary_y_listbox.delete(0, tk.END)
+        value_cols = [col for var, col in self.value_vars if var.get()]
+        x_col = self.xaxis_var.get()
+        value_cols = [c for c in value_cols if c != x_col]
+
+        group_col = self.group_var.get() if hasattr(self, 'group_var') else ''
+        if not group_col or group_col.strip() == '' or group_col == 'None':
+            group_col = None
+        # Overlay mode is determined by having multiple Y columns selected
+        is_overlay = len(value_cols) > 1
+
+        items = []
+        if is_overlay:
+            # Overlay mode: list Y column names
+            items = list(value_cols)
+        elif group_col and hasattr(self, 'df') and self.df is not None and group_col in self.df.columns:
+            # Grouped data: list unique group values
+            items = [str(v) for v in self.df[group_col].dropna().unique()]
+
+        saved = set(s.strip() for s in self.secondary_y_cols_var.get().split(",") if s.strip())
+        for item in items:
+            self.secondary_y_listbox.insert(tk.END, item)
+        # Restore selection
+        for i, item in enumerate(items):
+            if item in saved:
+                self.secondary_y_listbox.selection_set(i)
+
+    def _on_secondary_y_listbox_select(self, event=None):
+        """Update the secondary_y_cols_var when listbox selection changes."""
+        sel = self.secondary_y_listbox.curselection()
+        cols = [self.secondary_y_listbox.get(i) for i in sel]
+        self.secondary_y_cols_var.set(",".join(cols))
+
+    def _get_secondary_y_cols(self):
+        """Return a set of column names assigned to the secondary Y axis."""
+        raw = self.secondary_y_cols_var.get()
+        return set(s.strip() for s in raw.split(",") if s.strip())
+
     def setup_xy_fitting_tab(self):
         frame = self.xy_fitting_tab
         
@@ -5917,6 +6027,117 @@ class ExPlotApp:
         self.param_entries = []
         self.update_model_parameters()
         
+    def setup_secondary_y_tab(self):
+        frame = self.secondary_y_tab
+
+        # Info label
+        ttk.Label(frame, text="Plot selected Y columns or groups on a second Y axis\n(XY overlay mode or grouped data).",
+                  wraplength=280, foreground="gray").pack(anchor="w", padx=8, pady=(8, 2))
+
+        # Enable checkbox
+        ttk.Checkbutton(frame, text="Enable secondary Y axis",
+                        variable=self.use_secondary_yaxis_var,
+                        command=self._update_secondary_yaxis_ui).pack(anchor="w", padx=8, pady=(4, 2))
+
+        # Column assignment listbox
+        col_grp = ttk.LabelFrame(frame, text="Columns on Secondary Axis", padding=6)
+        col_grp.pack(fill='x', padx=6, pady=(4, 4))
+        self.secondary_y_listbox = tk.Listbox(col_grp, height=5, selectmode=tk.MULTIPLE,
+                                               exportselection=False, state="disabled")
+        self.secondary_y_listbox.pack(fill='x', pady=2)
+        self.secondary_y_listbox.bind('<<ListboxSelect>>', self._on_secondary_y_listbox_select)
+
+        # Axis styling group
+        style_grp = ttk.LabelFrame(frame, text="Axis Settings", padding=6)
+        style_grp.pack(fill='x', padx=6, pady=4)
+
+        sec_grid = tk.Frame(style_grp)
+        sec_grid.pack(fill='x')
+        sec_grid.columnconfigure(1, weight=1)
+
+        # Label row with Format button
+        tk.Label(sec_grid, text="Label:", anchor="w").grid(row=0, column=0, sticky="w", pady=2)
+        self.secondary_ylabel_entry = ttk.Entry(sec_grid, width=22, state="disabled")
+        self.secondary_ylabel_entry.grid(row=0, column=1, sticky="ew", pady=2, padx=(4, 2))
+        self.secondary_ylabel_format_btn = ttk.Button(sec_grid, text="Format",
+                                                       command=lambda: self.open_label_formatter('y2'),
+                                                       state="disabled")
+        self.secondary_ylabel_format_btn.grid(row=0, column=2, sticky="w", pady=2)
+
+        # Min / Max
+        min_max_row = tk.Frame(style_grp)
+        min_max_row.pack(fill='x')
+        tk.Label(min_max_row, text="Minimum:", anchor="w").grid(row=0, column=0, sticky="w", pady=2)
+        self.secondary_ymin_entry = ttk.Entry(min_max_row, width=10, state="disabled")
+        self.secondary_ymin_entry.grid(row=0, column=1, sticky="w", pady=2, padx=(4, 0))
+        tk.Label(min_max_row, text="Maximum:", anchor="w").grid(row=0, column=2, sticky="w", padx=(10, 0), pady=2)
+        self.secondary_ymax_entry = ttk.Entry(min_max_row, width=10, state="disabled")
+        self.secondary_ymax_entry.grid(row=0, column=3, sticky="w", pady=2)
+
+        # Tick interval / minor ticks
+        tk.Label(min_max_row, text="Major Interval:", anchor="w").grid(row=1, column=0, sticky="w", pady=2)
+        self.secondary_yinterval_entry = ttk.Entry(min_max_row, width=10, state="disabled")
+        self.secondary_yinterval_entry.grid(row=1, column=1, sticky="w", pady=2, padx=(4, 0))
+        tk.Label(min_max_row, text="Minor/Major:", anchor="w").grid(row=1, column=2, sticky="w", padx=(10, 0), pady=2)
+        self.secondary_yminor_entry = ttk.Entry(min_max_row, width=10, state="disabled")
+        self.secondary_yminor_entry.grid(row=1, column=3, sticky="w", pady=2)
+
+        # Log scale
+        log_row = ttk.Frame(style_grp)
+        log_row.pack(fill='x', pady=(4, 0))
+        self.secondary_ylog_check = ttk.Checkbutton(log_row, text="Logarithmic",
+                                                     variable=self.secondary_ylog_var,
+                                                     command=self._update_secondary_ylog_options,
+                                                     state="disabled")
+        self.secondary_ylog_check.pack(side='left')
+        tk.Label(log_row, text="  Base:").pack(side='left')
+        self.secondary_ylog_base_dropdown = ttk.Combobox(log_row, textvariable=self.secondary_ylog_base_var,
+                                                          values=["10", "2"], state="disabled", width=5)
+        self.secondary_ylog_base_dropdown.pack(side='left', padx=4)
+
+        # Marker options group
+        marker_grp = ttk.LabelFrame(frame, text="Marker Options", padding=6)
+        marker_grp.pack(fill='x', padx=6, pady=4)
+
+        mk_grid = tk.Frame(marker_grp)
+        mk_grid.pack(fill='x')
+        mk_grid.columnconfigure(1, weight=1)
+
+        tk.Label(mk_grid, text="Marker mode:", anchor="w").grid(row=0, column=0, sticky="w", pady=2)
+        self.secondary_marker_mode_dropdown = ttk.Combobox(
+            mk_grid, textvariable=self.secondary_marker_mode_var,
+            values=["Same as primary", "Single", "Varied"], state="disabled", width=16)
+        self.secondary_marker_mode_dropdown.grid(row=0, column=1, sticky="w", padx=(4, 0), pady=2)
+
+        tk.Label(mk_grid, text="Marker symbol:", anchor="w").grid(row=1, column=0, sticky="w", pady=2)
+        self.secondary_marker_symbol_dropdown = ttk.Combobox(
+            mk_grid, textvariable=self.secondary_marker_symbol_var,
+            values=["o", "s", "^", "D", "v", "P", "X", "p", "*", "+", "x"],
+            state="disabled", width=5)
+        self.secondary_marker_symbol_dropdown.grid(row=1, column=1, sticky="w", padx=(4, 0), pady=2)
+
+        ttk.Label(mk_grid, text="(used when mode is 'Single')", foreground="gray").grid(
+            row=1, column=2, sticky="w", padx=(6, 0), pady=2)
+
+        tk.Label(mk_grid, text="Marker size:", anchor="w").grid(row=2, column=0, sticky="w", pady=2)
+        self.secondary_marker_size_entry = ttk.Entry(
+            mk_grid, textvariable=self.secondary_marker_size_var,
+            state="disabled", width=8)
+        self.secondary_marker_size_entry.grid(row=2, column=1, sticky="w", padx=(4, 0), pady=2)
+        ttk.Label(mk_grid, text="(empty = same as primary)", foreground="gray").grid(
+            row=2, column=2, sticky="w", padx=(6, 0), pady=2)
+
+        # Color mode group
+        color_grp = ttk.LabelFrame(frame, text="Axis Coloring", padding=6)
+        color_grp.pack(fill='x', padx=6, pady=4)
+
+        ttk.Radiobutton(color_grp, text="Color spine, ticks and label",
+                        variable=self.secondary_yaxis_color_var, value="all").pack(anchor="w", pady=1)
+        ttk.Radiobutton(color_grp, text="Color label only (black spine & ticks)",
+                        variable=self.secondary_yaxis_color_var, value="label_only").pack(anchor="w", pady=1)
+        ttk.Radiobutton(color_grp, text="No coloring (all black)",
+                        variable=self.secondary_yaxis_color_var, value="none").pack(anchor="w", pady=1)
+
     def update_model_parameters(self, event=None):
         """Update parameter entry fields based on selected model"""
         # Clear existing parameter entries
@@ -6038,7 +6259,20 @@ class ExPlotApp:
                 'x_log_base': self.xlog_base_var.get() if hasattr(self, 'xlog_base_var') else '10',
                 'y_log_base': self.ylog_base_var.get() if hasattr(self, 'ylog_base_var') else '10',
                 'custom_x_marks': self.custom_x_marks_var.get() if hasattr(self, 'custom_x_marks_var') else '',
-                'custom_y_marks': self.custom_y_marks_var.get() if hasattr(self, 'custom_y_marks_var') else ''
+                'custom_y_marks': self.custom_y_marks_var.get() if hasattr(self, 'custom_y_marks_var') else '',
+                'use_secondary_y': self.use_secondary_yaxis_var.get() if hasattr(self, 'use_secondary_yaxis_var') else False,
+                'secondary_y_cols': self.secondary_y_cols_var.get() if hasattr(self, 'secondary_y_cols_var') else '',
+                'secondary_y_label': self.secondary_ylabel_entry.get() if hasattr(self, 'secondary_ylabel_entry') else '',
+                'secondary_y_min': self.secondary_ymin_entry.get() if hasattr(self, 'secondary_ymin_entry') else '',
+                'secondary_y_max': self.secondary_ymax_entry.get() if hasattr(self, 'secondary_ymax_entry') else '',
+                'secondary_y_interval': self.secondary_yinterval_entry.get() if hasattr(self, 'secondary_yinterval_entry') else '',
+                'secondary_y_minor': self.secondary_yminor_entry.get() if hasattr(self, 'secondary_yminor_entry') else '',
+                'secondary_y_log': self.secondary_ylog_var.get() if hasattr(self, 'secondary_ylog_var') else False,
+                'secondary_y_log_base': self.secondary_ylog_base_var.get() if hasattr(self, 'secondary_ylog_base_var') else '10',
+                'secondary_y_color_axis': self.secondary_yaxis_color_var.get() if hasattr(self, 'secondary_yaxis_color_var') else True,
+                'secondary_marker_mode': self.secondary_marker_mode_var.get() if hasattr(self, 'secondary_marker_mode_var') else 'Same as primary',
+                'secondary_marker_symbol': self.secondary_marker_symbol_var.get() if hasattr(self, 'secondary_marker_symbol_var') else 's',
+                'secondary_marker_size': self.secondary_marker_size_var.get() if hasattr(self, 'secondary_marker_size_var') else ''
             },
             'statistics': {
                 'use_stats': self.use_stats_var.get() if hasattr(self, 'use_stats_var') else False,
@@ -6263,7 +6497,53 @@ class ExPlotApp:
                     self.custom_x_marks_var.set(axis['custom_x_marks'])
                 if 'custom_y_marks' in axis and hasattr(self, 'custom_y_marks_var'):
                     self.custom_y_marks_var.set(axis['custom_y_marks'])
-            
+                # Secondary Y-axis
+                if 'use_secondary_y' in axis and hasattr(self, 'use_secondary_yaxis_var'):
+                    self.use_secondary_yaxis_var.set(axis['use_secondary_y'])
+                if 'secondary_y_cols' in axis and hasattr(self, 'secondary_y_cols_var'):
+                    self.secondary_y_cols_var.set(axis['secondary_y_cols'])
+                if 'secondary_y_label' in axis and hasattr(self, 'secondary_ylabel_entry'):
+                    self.secondary_ylabel_entry.config(state='normal')
+                    self.secondary_ylabel_entry.delete(0, tk.END)
+                    self.secondary_ylabel_entry.insert(0, axis.get('secondary_y_label', ''))
+                if 'secondary_y_min' in axis and hasattr(self, 'secondary_ymin_entry'):
+                    self.secondary_ymin_entry.config(state='normal')
+                    self.secondary_ymin_entry.delete(0, tk.END)
+                    self.secondary_ymin_entry.insert(0, axis.get('secondary_y_min', ''))
+                if 'secondary_y_max' in axis and hasattr(self, 'secondary_ymax_entry'):
+                    self.secondary_ymax_entry.config(state='normal')
+                    self.secondary_ymax_entry.delete(0, tk.END)
+                    self.secondary_ymax_entry.insert(0, axis.get('secondary_y_max', ''))
+                if 'secondary_y_interval' in axis and hasattr(self, 'secondary_yinterval_entry'):
+                    self.secondary_yinterval_entry.config(state='normal')
+                    self.secondary_yinterval_entry.delete(0, tk.END)
+                    self.secondary_yinterval_entry.insert(0, axis.get('secondary_y_interval', ''))
+                if 'secondary_y_minor' in axis and hasattr(self, 'secondary_yminor_entry'):
+                    self.secondary_yminor_entry.config(state='normal')
+                    self.secondary_yminor_entry.delete(0, tk.END)
+                    self.secondary_yminor_entry.insert(0, axis.get('secondary_y_minor', ''))
+                if 'secondary_y_log' in axis and hasattr(self, 'secondary_ylog_var'):
+                    self.secondary_ylog_var.set(axis['secondary_y_log'])
+                if 'secondary_y_log_base' in axis and hasattr(self, 'secondary_ylog_base_var'):
+                    self.secondary_ylog_base_var.set(axis['secondary_y_log_base'])
+                if 'secondary_y_color_axis' in axis and hasattr(self, 'secondary_yaxis_color_var'):
+                    val = axis['secondary_y_color_axis']
+                    # Backwards compat: old saves stored True/False
+                    if val is True:
+                        val = 'all'
+                    elif val is False:
+                        val = 'none'
+                    self.secondary_yaxis_color_var.set(val)
+                if 'secondary_marker_mode' in axis and hasattr(self, 'secondary_marker_mode_var'):
+                    self.secondary_marker_mode_var.set(axis['secondary_marker_mode'])
+                if 'secondary_marker_symbol' in axis and hasattr(self, 'secondary_marker_symbol_var'):
+                    self.secondary_marker_symbol_var.set(axis['secondary_marker_symbol'])
+                if 'secondary_marker_size' in axis and hasattr(self, 'secondary_marker_size_var'):
+                    self.secondary_marker_size_var.set(axis['secondary_marker_size'])
+                # Refresh UI state
+                if hasattr(self, '_update_secondary_yaxis_ui'):
+                    self._update_secondary_yaxis_ui()
+
             # Statistics settings
             if 'statistics' in settings:
                 stats = settings['statistics']
@@ -7905,6 +8185,7 @@ class ExPlotApp:
 
         # Clear any existing statistics when generating a new plot
         self.latest_pvals = {}
+        self._secondary_ax = None  # will be set if secondary Y axis is used
         
         # Prepare the working dataframe
         df_work, x_col, value_cols, group_col = self.prepare_working_dataframe()
@@ -7987,6 +8268,9 @@ class ExPlotApp:
         # Base margins - keep these modest, tight_layout handles the rest for export
         left_margin = 1.0
         right_margin = 0.5
+        # Extra right margin for secondary Y axis label + ticks
+        if plot_kind == "xy" and self.use_secondary_yaxis_var.get() and self._get_secondary_y_cols():
+            right_margin = 1.0
         top_margin = 0.8  # Base top margin
         bottom_margin = 1.5  # Bottom margin for rotated x-tick labels and axis title
         
@@ -8317,168 +8601,9 @@ class ExPlotApp:
                 elif plot_kind == "box":
                     plot_args.update(dict(palette=palette, linewidth=linewidth, showcaps=True, boxprops=dict(linewidth=linewidth), medianprops=dict(linewidth=linewidth), dodge=True, width=0.7))
                 elif plot_kind == "xy":
-                    marker_size = self.xy_marker_size_var.get()
-                    marker_symbol = self.xy_marker_symbol_var.get()
-                    marker_mode = self.xy_marker_mode_var.get()
-                    connect = self.xy_connect_var.get()
-                    draw_band = self.xy_draw_band_var.get()
-                    show_mean = self.xy_show_mean_var.get()
-                    show_mean_errorbars = self.xy_show_mean_errorbars_var.get()
-                    filled = self.xy_filled_var.get()
-                    line_style = self.xy_line_style_var.get()
-                    line_black = self.xy_line_black_var.get()
-                    # Choose color logic for XY plot
-                    if len(value_cols) == 1:
-                        palette = [resolve_single_color(self.custom_colors, self.single_color_var.get())]
-                    else:
-                        palette = resolve_palette(self.custom_palettes, self.palette_var.get(), len(value_cols))
-                    # --- Always use full palette for grouped XY means ---
-                    if show_mean:
-                        groupers = [x_col]
-                        if hue_col:
-                            groupers.append(hue_col)
-                        grouped = df_plot.groupby(groupers)[value_col]
-                        means = grouped.mean().reset_index()
-                        if self.errorbar_type_var.get() == "SEM":
-                            errors = grouped.apply(lambda x: np.std(x.dropna().astype(float), ddof=1) / np.sqrt(len(x.dropna())) if len(x.dropna()) > 1 else 0).reset_index(name='err')
-                        else:
-                            errors = grouped.std(ddof=1).reset_index(name='err')
-                        means = means.merge(errors, on=groupers)
-                        if hue_col:
-                            group_names = list(df_plot[hue_col].dropna().unique())
-                            palette_full = resolve_palette(self.custom_palettes, self.palette_var.get(), len(group_names))
-                            color_map = {name: palette_full[i] for i, name in enumerate(group_names)}
-                            markers = resolve_markers(marker_mode, marker_symbol, len(group_names))
-                            for gi, name in enumerate(group_names):
-                                group = means[means[hue_col] == name]
-                                if group.empty:
-                                    continue
-                                c = color_map[name]
-                                ms = markers[gi]
-                                x = group[x_col]
-                                y = group[value_col]
-                                yerr = group['err']
-                                ecolor = 'black' if errorbar_black else c
-                                mfc = c if filled else 'none'
-                                mec = c
-                                if show_mean_errorbars:
-                                    ax.errorbar(x, y, yerr=yerr, fmt=ms, color=c, markerfacecolor=mfc, markeredgecolor=mec, markersize=marker_size, linewidth=linewidth, capsize=3, ecolor=ecolor, label=str(name))
-                                ax.plot(x, y, marker=ms, color=c, markerfacecolor=mfc, markeredgecolor=mec, markersize=marker_size, linewidth=linewidth, linestyle='None', label=None if show_mean_errorbars else str(name))
-                                if draw_band:
-                                    df_band = pd.DataFrame({
-                                        'x': pd.to_numeric(x, errors='coerce'),
-                                        'y': pd.to_numeric(y, errors='coerce'),
-                                        'yerr': pd.to_numeric(yerr, errors='coerce')
-                                    }).dropna().sort_values('x')
-                                    if not df_band.empty:
-                                        ax.fill_between(
-                                            df_band['x'],
-                                            df_band['y'] - df_band['yerr'],
-                                            df_band['y'] + df_band['yerr'],
-                                            color=c, alpha=0.18, zorder=1
-                                        )
-                                if connect:
-                                    ax.plot(x, y, color='black' if line_black else c, linewidth=linewidth, alpha=0.7, linestyle=line_style)
-                        else:
-                            c = palette[0]
-                            x = means[x_col]
-                            y = means[value_col]
-                            yerr = means['err']
-                            ecolor = 'black' if errorbar_black else c
-                            mfc = c if filled else 'none'
-                            mec = c
-                            if show_mean_errorbars:
-                                ax.errorbar(x, y, yerr=yerr, fmt=marker_symbol, color=c, markerfacecolor=mfc, markeredgecolor=mec, markersize=marker_size, linewidth=linewidth, capsize=3, ecolor=ecolor)
-                            ax.plot(x, y, marker=marker_symbol, color=c, markerfacecolor=mfc, markeredgecolor=mec, markersize=marker_size, linewidth=linewidth, linestyle='None')
-                            if draw_band:
-                                df_band = pd.DataFrame({
-                                    'x': pd.to_numeric(x, errors='coerce'),
-                                    'y': pd.to_numeric(y, errors='coerce'),
-                                    'yerr': pd.to_numeric(yerr, errors='coerce')
-                                }).dropna().sort_values('x')
-                                if not df_band.empty:
-                                    ax.fill_between(
-                                        df_band['x'],
-                                        df_band['y'] - df_band['yerr'],
-                                        df_band['y'] + df_band['yerr'],
-                                        color=c, alpha=0.18, zorder=1
-                                    )
-                            if connect:
-                                ax.plot(x, y, color='black' if line_black else c, linewidth=linewidth, alpha=0.7, linestyle=line_style)
-                        if hue_col:
-                            handles, labels = ax.get_legend_handles_labels()
-                        if handles and len(handles) > 0:
-                            ax.legend()
-                    else:
-                        # Plot raw data points (scatter) when show_mean is False
-                        if hue_col:
-                            group_names = list(df_plot[hue_col].dropna().unique())
-                            palette_full = resolve_palette(self.custom_palettes, self.palette_var.get(), len(group_names))
-                            color_map = {name: palette_full[i] for i, name in enumerate(group_names)}
-                            markers = resolve_markers(marker_mode, marker_symbol, len(group_names))
-                            for gi, name in enumerate(group_names):
-                                group = df_plot[df_plot[hue_col] == name]
-                                if group.empty:
-                                    continue
-                                c = color_map[name]
-                                ms = markers[gi]
-                                edge = c
-                                face = c if filled else 'none'
-                                scatter = ax.scatter(group[x_col], group[value_col], marker=ms, s=marker_size**2, color=c, label=str(name), edgecolors=edge, facecolors=face, linewidth=linewidth)
-                                if draw_band:
-                                    x_sorted = np.sort(group[x_col].unique())
-                                    min_vals = [group[group[x_col] == x][value_col].min() for x in x_sorted]
-                                    max_vals = [group[group[x_col] == x][value_col].max() for x in x_sorted]
-                                    x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
-                                    min_vals_numeric = pd.to_numeric(min_vals, errors='coerce')
-                                    max_vals_numeric = pd.to_numeric(max_vals, errors='coerce')
-                                    ax.fill_between(x_sorted_numeric, min_vals_numeric, max_vals_numeric, color=c, alpha=0.18, zorder=1)
-                                if connect:
-                                    # Connect means of raw data at each x value
-                                    if hue_col:
-                                        for name in group_names:
-                                            group = df_plot[df_plot[hue_col] == name]
-                                            if group.empty:
-                                                continue
-                                            c = color_map[name]
-                                            # Calculate means at each x value
-                                            x_sorted = np.sort(group[x_col].unique())
-                                            means = [group[group[x_col] == x][value_col].mean() for x in x_sorted]
-                                            x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
-                                            means_numeric = pd.to_numeric(means, errors='coerce')
-                                            ax.plot(x_sorted_numeric, means_numeric, color='black' if line_black else c, linewidth=linewidth, alpha=0.7, linestyle=line_style)
-                                    else:
-                                        c = palette[0]
-                                        x_sorted = np.sort(df_plot[x_col].unique())
-                                        means = [df_plot[df_plot[x_col] == x][value_col].mean() for x in x_sorted]
-                                        x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
-                                        means_numeric = pd.to_numeric(means, errors='coerce')
-                                        ax.plot(x_sorted_numeric, means_numeric, color='black' if line_black else c, linewidth=linewidth, alpha=0.7, linestyle=line_style)
-                            handles, labels = ax.get_legend_handles_labels()
-                        if handles and len(handles) > 0:
-                            ax.legend()
-                        else:
-                            c = palette[0]
-                            # Always show marker edge in group color if not filled
-                            edge = c
-                            face = c if filled else 'none'
-                            ax.scatter(df_plot[x_col], df_plot[value_col], marker=marker_symbol, s=marker_size**2, color=c, edgecolors=edge, facecolors=face, linewidth=linewidth)
-                            if draw_band:
-                                x_sorted = np.sort(df_plot[x_col].unique())
-                                min_vals = [df_plot[df_plot[x_col] == x][value_col].min() for x in x_sorted]
-                                max_vals = [df_plot[df_plot[x_col] == x][value_col].max() for x in x_sorted]
-                                x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
-                                min_vals_numeric = pd.to_numeric(min_vals, errors='coerce')
-                                max_vals_numeric = pd.to_numeric(max_vals, errors='coerce')
-                                ax.fill_between(x_sorted_numeric, min_vals_numeric, max_vals_numeric, color=c, alpha=0.18, zorder=1)
-                            if connect:
-                                # Connect means of raw data at each x value
-                                c = palette[0]
-                                x_sorted = np.sort(df_plot[x_col].unique())
-                                means = [df_plot[df_plot[x_col] == x][value_col].mean() for x in x_sorted]
-                                x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
-                                means_numeric = pd.to_numeric(means, errors='coerce')
-                                ax.plot(x_sorted_numeric, means_numeric, color='black' if line_black else c, linewidth=linewidth, alpha=0.7, linestyle=line_style)
+                    # XY plotting is fully handled by _plot_xy_base in the main
+                    # plot_kind section below — no pre-plotting needed here.
+                    pass
                 stripplot_args = dict(
                     data=df_plot, y=x_col, x=value_col, hue=hue_col, dodge=True,
                     jitter=True, marker='o', alpha=0.55,
@@ -8548,91 +8673,9 @@ class ExPlotApp:
                         **violin_specific_args  # Add violin-specific arguments separately
                     ))
                 elif plot_kind == "xy":
-                    marker_size = self.xy_marker_size_var.get()
-                    marker_symbol = self.xy_marker_symbol_var.get()
-                    marker_mode = self.xy_marker_mode_var.get()
-                    connect = self.xy_connect_var.get()
-                    draw_band = self.xy_draw_band_var.get()
-                    show_mean = self.xy_show_mean_var.get()
-                    show_mean_errorbars = self.xy_show_mean_errorbars_var.get()
-                    filled = self.xy_filled_var.get()
-                    line_style = self.xy_line_style_var.get()
-                    line_black = self.xy_line_black_var.get()
-                    # Choose color logic for XY plot
-                    if len(value_cols) == 1:
-                        palette = [resolve_single_color(self.custom_colors, self.single_color_var.get())]
-                    else:
-                        palette = resolve_palette(self.custom_palettes, self.palette_var.get(), len(value_cols))
-                    # --- Always use full palette for grouped XY means ---
-                    if show_mean:
-                        groupers = [x_col]
-                        if hue_col:
-                            groupers.append(hue_col)
-                        grouped = df_plot.groupby(groupers)[value_col]
-                        means = grouped.mean().reset_index()
-                        if self.errorbar_type_var.get() == "SEM":
-                            errors = grouped.apply(lambda x: np.std(x.dropna().astype(float), ddof=1) / np.sqrt(len(x.dropna())) if len(x.dropna()) > 1 else 0).reset_index(name='err')
-                        else:
-                            errors = grouped.std(ddof=1).reset_index(name='err')
-                        means = means.merge(errors, on=groupers)
-                        if hue_col:
-                            group_names = list(df_plot[hue_col].dropna().unique())
-                            palette_full = resolve_palette(self.custom_palettes, self.palette_var.get(), len(group_names))
-                            color_map = {name: palette_full[i] for i, name in enumerate(group_names)}
-                            markers = resolve_markers(marker_mode, marker_symbol, len(group_names))
-                            for gi, name in enumerate(group_names):
-                                group = means[means[hue_col] == name]
-                                if group.empty:
-                                    continue
-                                c = color_map[name]
-                                ms = markers[gi]
-                                x = group[x_col]
-                                y = group[value_col]
-                                yerr = group['err']
-                                ecolor = 'black' if errorbar_black else c
-                                mfc = c if filled else 'none'
-                                mec = c
-                                if show_mean_errorbars:
-                                    ax.errorbar(x, y, yerr=yerr, fmt=ms, color=c, markerfacecolor=mfc, markeredgecolor=mec, markersize=marker_size, linewidth=linewidth, capsize=3, ecolor=ecolor, label=str(name))
-                                if draw_band:
-                                    x_numeric = pd.to_numeric(x, errors='coerce')
-                                    y_numeric = pd.to_numeric(y, errors='coerce')
-                                    yerr_numeric = pd.to_numeric(yerr, errors='coerce')
-                                    ax.fill_between(x_numeric, y_numeric - yerr_numeric, y_numeric + yerr_numeric, color=c, alpha=0.18, zorder=1)
-                            else:
-                                ax.plot(x, y, marker=ms, color=c, markerfacecolor=mfc, markeredgecolor=mec, markersize=marker_size, linewidth=linewidth, linestyle='None', label=str(name))
-                            if connect:
-                                ax.plot(x, y, color='black' if line_black else c, linewidth=linewidth, alpha=0.7, linestyle=line_style)
-                    else:
-                        # When show_mean is False, plot raw data points
-                        c = palette[0]
-                        # Always show marker edge in group color if not filled
-                        edge = c
-                        face = c if filled else 'none'
-                        ax.scatter(df_plot[x_col], df_plot[value_col], marker=marker_symbol, s=marker_size**2, color=c, edgecolors=edge, facecolors=face, linewidth=linewidth)
-                        if draw_band:
-                            x_sorted = np.sort(df_plot[x_col].unique())
-                            min_vals = [df_plot[df_plot[x_col] == x][value_col].min() for x in x_sorted]
-                            max_vals = [df_plot[df_plot[x_col] == x][value_col].max() for x in x_sorted]
-                            x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
-                            min_vals_numeric = pd.to_numeric(min_vals, errors='coerce')
-                            max_vals_numeric = pd.to_numeric(max_vals, errors='coerce')
-                            ax.fill_between(x_sorted_numeric, min_vals_numeric, max_vals_numeric, color=c, alpha=0.18, zorder=1)
-                        if connect:
-                            # Connect means of raw data at each x value
-                            c = palette[0]
-                            x_sorted = np.sort(df_plot[x_col].unique())
-                            y_means = [df_plot[df_plot[x_col] == x][value_col].mean() for x in x_sorted]
-                            x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
-                            y_means_numeric = pd.to_numeric(y_means, errors='coerce')
-                            ax.plot(x_sorted_numeric, y_means_numeric, color='black' if line_black else c, linewidth=linewidth, alpha=0.7, linestyle=line_style)
-                        
-                    if hue_col:
-                        handles, labels = ax.get_legend_handles_labels()
-                        
-                        if handles and len(handles) > 0:
-                            # Use our utility function for consistent legend placement
-                            self.place_legend(ax, handles, labels)
+                    # XY plotting is fully handled by _plot_xy_base in the main
+                    # plot_kind section below — no pre-plotting needed here.
+                    pass
                 
                 stripplot_args = dict(
                     data=df_plot, x=x_col, y=value_col, hue=hue_col, dodge=True,
@@ -9096,6 +9139,12 @@ class ExPlotApp:
                 
                 # Stripplots will be handled by the global show_stripplot functionality
             elif plot_kind == "xy":
+                # In overlay mode the first iteration already melts ALL
+                # value_cols, so skip subsequent iterations to avoid
+                # double-plotting the same data.
+                if plot_mode == 'overlay' and len(value_cols) > 1 and idx > 0:
+                    continue
+
                 # For XY plots, always use original X values (not categorical)
                 if hasattr(self, 'x_categorical_map'):
                     delattr(self, 'x_categorical_map')
@@ -9111,8 +9160,130 @@ class ExPlotApp:
                         n = len(value_cols)
                     palette = resolve_palette(self.custom_palettes, self.palette_var.get(), n)
 
-                self._plot_xy_base(ax, df_plot, x_col, value_col, hue_col, value_cols, errorbar_black, linewidth, allow_legend=True)
-                self._plot_xy_fitting(ax, df_plot, x_col, value_col, hue_col, palette, linewidth, update_results=True, allow_legend=True)
+                # --- Secondary Y-axis handling ---
+                # Works with overlay mode (multiple Y columns, hue='Measurement')
+                # AND with grouped data (single Y column, hue=group_col).
+                use_sec = (self.use_secondary_yaxis_var.get()
+                           and hue_col
+                           and hue_col in df_plot.columns
+                           and len(df_plot[hue_col].dropna().unique()) > 1)
+                sec_cols = self._get_secondary_y_cols() if use_sec else set()
+                all_hue_groups = list(df_plot[hue_col].dropna().unique()) if use_sec else []
+                # Only activate if at least one group is on each axis
+                use_sec = use_sec and sec_cols and (sec_cols != set(str(g) for g in all_hue_groups))
+
+                if use_sec:
+                    # Build full palette colour map across ALL groups
+                    all_groups = list(df_plot[hue_col].dropna().unique())
+                    full_palette = resolve_palette(self.custom_palettes, self.palette_var.get(), len(all_groups))
+                    color_map = {name: full_palette[i] for i, name in enumerate(all_groups)}
+
+                    # sec_cols stores strings; group values may be other types
+                    primary_groups = [g for g in all_groups if str(g) not in sec_cols]
+                    secondary_groups = [g for g in all_groups if str(g) in sec_cols]
+
+                    # --- Resolve secondary marker settings ---
+                    sec_mk_mode = self.secondary_marker_mode_var.get()
+                    sec_mk_symbol = self.secondary_marker_symbol_var.get()
+                    sec_mk_size_str = self.secondary_marker_size_var.get().strip()
+                    try:
+                        sec_mk_size = float(sec_mk_size_str) if sec_mk_size_str else None
+                    except ValueError:
+                        sec_mk_size = None
+                    if sec_mk_mode == "Same as primary" and sec_mk_size is None:
+                        sec_marker_override = None  # use primary settings entirely
+                    else:
+                        sec_marker_override = {}
+                        if sec_mk_mode != "Same as primary":
+                            sec_marker_override['mode'] = sec_mk_mode
+                            sec_marker_override['symbol'] = sec_mk_symbol
+                        if sec_mk_size is not None:
+                            sec_marker_override['size'] = sec_mk_size
+
+                    # --- Primary axis ---
+                    df_primary = df_plot[df_plot[hue_col].isin(primary_groups)]
+                    pal_primary = [color_map[g] for g in primary_groups]
+                    self._plot_xy_base(ax, df_primary, x_col, value_col, hue_col,
+                                       primary_groups, errorbar_black, linewidth,
+                                       allow_legend=False, palette_override=pal_primary)
+                    self._plot_xy_fitting(ax, df_primary, x_col, value_col, hue_col,
+                                          pal_primary, linewidth, update_results=True, allow_legend=False)
+
+                    # --- Secondary axis ---
+                    ax2 = ax.twinx()
+                    self._secondary_ax = ax2  # store for later styling
+                    # Ensure primary axis data is visible through the secondary axes:
+                    # make ax2 background transparent and draw primary on top.
+                    ax2.patch.set_visible(False)
+                    ax.set_zorder(ax2.get_zorder() + 1)
+                    ax.patch.set_visible(False)
+                    df_secondary = df_plot[df_plot[hue_col].isin(secondary_groups)]
+                    pal_secondary = [color_map[g] for g in secondary_groups]
+                    self._plot_xy_base(ax2, df_secondary, x_col, value_col, hue_col,
+                                       secondary_groups, errorbar_black, linewidth,
+                                       allow_legend=False, palette_override=pal_secondary,
+                                       marker_override=sec_marker_override)
+                    self._plot_xy_fitting(ax2, df_secondary, x_col, value_col, hue_col,
+                                          pal_secondary, linewidth, update_results=False, allow_legend=False)
+
+                    # --- Merged legend ---
+                    # Build legend manually so both axes share a single legend.
+                    # Use separate marker lists for primary and secondary axes so
+                    # that different marker settings are reflected correctly.
+                    from matplotlib.lines import Line2D
+                    pri_marker_mode = self.xy_marker_mode_var.get()
+                    pri_marker_symbol = self.xy_marker_symbol_var.get()
+                    pri_marker_size = self.xy_marker_size_var.get()
+                    sec_marker_size = sec_mk_size if sec_mk_size is not None else pri_marker_size
+                    filled = self.xy_filled_var.get()
+                    connect = self.xy_connect_var.get()
+                    line_style = self.xy_line_style_var.get()
+                    line_black = self.xy_line_black_var.get()
+
+                    # Resolve markers per axis independently
+                    pri_markers = resolve_markers(pri_marker_mode, pri_marker_symbol, len(primary_groups))
+                    if sec_mk_mode == "Same as primary":
+                        sec_markers = resolve_markers(pri_marker_mode, pri_marker_symbol, len(secondary_groups))
+                    else:
+                        sec_markers = resolve_markers(sec_mk_mode, sec_mk_symbol, len(secondary_groups))
+
+                    # Map group -> marker symbol and size
+                    marker_map = {}
+                    size_map = {}
+                    for i, g in enumerate(primary_groups):
+                        marker_map[g] = pri_markers[i]
+                        size_map[g] = pri_marker_size
+                    for i, g in enumerate(secondary_groups):
+                        marker_map[g] = sec_markers[i]
+                        size_map[g] = sec_marker_size
+
+                    all_handles = []
+                    all_labels = []
+                    for g in all_groups:
+                        c = color_map[g]
+                        ms = marker_map[g]
+                        msz = size_map[g]
+                        line_color = 'black' if line_black else c
+                        if connect:
+                            handle = Line2D([0], [0], marker=ms, color=line_color,
+                                            markerfacecolor=c if filled else 'none',
+                                            markeredgecolor=c, markersize=msz * 0.8,
+                                            markeredgewidth=linewidth,
+                                            linestyle=line_style, linewidth=linewidth)
+                        else:
+                            handle = Line2D([0], [0], marker=ms, color='none',
+                                            markerfacecolor=c if filled else 'none',
+                                            markeredgecolor=c, markersize=msz * 0.8,
+                                            markeredgewidth=linewidth,
+                                            linestyle='none')
+                        all_handles.append(handle)
+                        all_labels.append(str(g))
+                    if all_handles:
+                        self.place_legend(ax, all_handles, all_labels)
+                else:
+                    self._secondary_ax = None
+                    self._plot_xy_base(ax, df_plot, x_col, value_col, hue_col, value_cols, errorbar_black, linewidth, allow_legend=True)
+                    self._plot_xy_fitting(ax, df_plot, x_col, value_col, hue_col, palette, linewidth, update_results=True, allow_legend=True)
 
                 if self.ybreak_enabled and self.ax_upper is not None:
                     self._plot_xy_base(self.ax_upper, df_plot, x_col, value_col, hue_col, value_cols, errorbar_black, linewidth, allow_legend=False)
@@ -9373,7 +9544,7 @@ class ExPlotApp:
                         fontsize=fontsize,
                         ncol=self.optimize_legend_layout(ax, bar_handles, bar_labels, fontsize=fontsize)
                     )
-            elif hue_col and plot_kind == "xy":
+            elif hue_col and plot_kind == "xy" and not getattr(self, '_secondary_ax', None):
                 # Build legend with marker symbols using palette colors directly
                 from matplotlib.lines import Line2D
                 
@@ -9722,6 +9893,76 @@ class ExPlotApp:
             ax.tick_params(axis='both', which='minor', labelsize=0, labelbottom=False, labeltop=False, 
                            labelleft=False, labelright=False)
 
+            # --- Apply secondary Y-axis styling ---
+            if hasattr(self, '_secondary_ax') and self._secondary_ax is not None:
+                ax2 = self._secondary_ax
+                try:
+                    # Label
+                    sec_label = self.secondary_ylabel_entry.get().strip() if hasattr(self, 'secondary_ylabel_entry') else ''
+                    if sec_label:
+                        ax2.set_ylabel(sec_label, fontsize=fontsize)
+
+                    # Limits
+                    sec_ymin_str = self.secondary_ymin_entry.get().strip() if hasattr(self, 'secondary_ymin_entry') else ''
+                    sec_ymax_str = self.secondary_ymax_entry.get().strip() if hasattr(self, 'secondary_ymax_entry') else ''
+                    sec_ymin = float(sec_ymin_str) if sec_ymin_str else None
+                    sec_ymax = float(sec_ymax_str) if sec_ymax_str else None
+                    if sec_ymin is not None or sec_ymax is not None:
+                        ax2.set_ylim(bottom=sec_ymin, top=sec_ymax)
+
+                    # Log scale
+                    sec_log = self.secondary_ylog_var.get()
+                    if sec_log:
+                        sec_log_base = int(self.secondary_ylog_base_var.get())
+                        ax2.set_yscale('log', base=sec_log_base)
+                        ax2.yaxis.set_major_locator(LogLocator(base=sec_log_base, numticks=10))
+                    else:
+                        # Major interval
+                        sec_interval_str = self.secondary_yinterval_entry.get().strip() if hasattr(self, 'secondary_yinterval_entry') else ''
+                        if sec_interval_str:
+                            sec_interval = float(sec_interval_str)
+                            if sec_interval > 0:
+                                ax2.yaxis.set_major_locator(MultipleLocator(sec_interval))
+                        # Minor ticks
+                        sec_minor_str = self.secondary_yminor_entry.get().strip() if hasattr(self, 'secondary_yminor_entry') else ''
+                        if sec_minor_str:
+                            sec_minor = int(sec_minor_str)
+                            if sec_minor > 0:
+                                ax2.yaxis.set_minor_locator(AutoMinorLocator(sec_minor + 1))
+                                ax2.tick_params(axis='y', which='minor', direction='in', length=2, width=linewidth, right=True)
+                            else:
+                                ax2.yaxis.set_minor_locator(NullLocator())
+                        else:
+                            ax2.yaxis.set_minor_locator(NullLocator())
+
+                    # Tick formatting
+                    ax2.tick_params(axis='y', which='both', direction='in', width=linewidth, labelsize=fontsize)
+                    ax2.tick_params(axis='y', which='major', length=4)
+
+                    # Frame / spines — always show right spine for secondary axis
+                    for spine_name in ['top', 'bottom', 'left']:
+                        ax2.spines[spine_name].set_visible(False)
+                    ax2.spines['right'].set_visible(True)
+                    ax2.spines['right'].set_linewidth(linewidth)
+
+                    # Color axis to match data
+                    color_mode = self.secondary_yaxis_color_var.get()  # 'all', 'label_only', 'none'
+                    if color_mode in ('all', 'label_only'):
+                        sec_cols_set = self._get_secondary_y_cols()
+                        if hue_col and hue_col in df_plot.columns:
+                            all_groups = list(df_plot[hue_col].dropna().unique())
+                            full_palette = resolve_palette(self.custom_palettes, self.palette_var.get(), len(all_groups))
+                            color_map = {name: full_palette[i] for i, name in enumerate(all_groups)}
+                            sec_groups = [g for g in all_groups if g in sec_cols_set]
+                            if len(sec_groups) == 1:
+                                axis_color = color_map[sec_groups[0]]
+                                ax2.yaxis.label.set_color(axis_color)
+                                if color_mode == 'all':
+                                    ax2.spines['right'].set_color(axis_color)
+                                    ax2.tick_params(axis='y', colors=axis_color)
+                except Exception as e:
+                    print(f"Secondary Y-axis styling error: {e}")
+
             if plot_kind == "bar":
                 if swap_axes:
                     ax.tick_params(axis='y', which='both', length=0)
@@ -9764,6 +10005,8 @@ class ExPlotApp:
                            plot_width / fig_width,
                            plot_height / fig_height]
             ax.set_position(ax_position)
+            if hasattr(self, '_secondary_ax') and self._secondary_ax is not None:
+                self._secondary_ax.set_position(ax_position)
 
             # --- Statistics/Annotations ---
             # In overlay mode, all iterations produce identical melted data,
