@@ -8,7 +8,7 @@ No warranty is given or implied. Use at your own risk and after testing and vali
 
 Demo video (ExPlot version 0.7.5):
 
-https://github.com/user-attachments/assets/516ae7d0-7fe9-4325-9af9-1f52f6283e2b
+https://github.com/user-attachments/assets/fe1fece0-aa67-49ea-b91b-0498f7f278af
 
 # macOS Installation & First Launch
 
