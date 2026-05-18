@@ -1,6 +1,6 @@
 # ExPlot
 
-A modern cross-platform Python/Tkinter app to plot data from Excel sheets using *seaborn* and *matplotlib*, featuring theming with ttkbootstrap. Fully developed with Claude 3.7 / 4.5 Sonnet, Claude Opus 4.6, Cascade Base, SWE-1, and GPT-4.1 / GPT-5.2 using Windsurf.
+A cross-platform Python/Tkinter app to plot data from Excel (`.xlsx`/`.xls`), CSV (`.csv`), and TSV (`.tsv`/`.txt`) files using *seaborn* and *matplotlib*, featuring theming with ttkbootstrap. Developed with Claude 3.7 / 4.5 Sonnet, Claude Opus 4.6, Cascade Base, SWE-1, and GPT-4.1 / GPT-5.2 using Windsurf.
 
 No warranty is given or implied. Use at your own risk and after testing and validation of functionality.
 
@@ -12,7 +12,7 @@ https://github.com/user-attachments/assets/fe1fece0-aa67-49ea-b91b-0498f7f278af
 
 # macOS Installation & First Launch
 
-ExPlot is **ad-hoc signed** (not notarised by Apple), so macOS Gatekeeper will block it on first launch.
+ExPlot is ad-hoc signed (not notarised by Apple), so macOS Gatekeeper will block it on first launch.
 
 ## Installation Steps
 
@@ -34,7 +34,7 @@ When you first try to open ExPlot from Applications, macOS will show:
 
 # Data structure
 
-Provide an Excel file with one or several sheets for different data sets to be plotted. The data should be one of the following format:
+Provide an Excel file with one or several sheets, or a CSV/TSV file, for the data sets to be plotted. The data should be in one of the following formats:
 
 
 | x_category | y_value | group   |
@@ -52,7 +52,7 @@ Provide an Excel file with one or several sheets for different data sets to be p
 | B          | 22      | Control |
 | B          | 21      | Control |
 
-The *group* column can be used to plot data as grouped elements. The *x_category* column contains the categories to be plotted on the x-axis, the *y_value* column contains the values to be plotted on the y-axis, and the *group* column contains the categories to be used for grouping data. Alternatively, provide several *y_value* columns, each with a different name.Instead of a single *group* column, you can provide multiple *y_value* columns, each with a different name:
+The *group* column can be used to plot data as grouped elements. The *x_category* column contains the categories to be plotted on the x-axis, the *y_value* column contains the values to be plotted on the y-axis, and the *group* column contains the categories to be used for grouping data. Alternatively, provide several *y_value* columns, each with a different name. Instead of a single *group* column, you can provide multiple *y_value* columns, each with a different name:
 
 
 | x_category | Treated | Control |
@@ -66,7 +66,6 @@ The *group* column can be used to plot data as grouped elements. The *x_category
 
 Rows with identical x_categories will be averaged and used to derive error estimates, or they might be plotted as individual data points. The *group* column can be used to plot data as grouped elements.
 
-
 # Features
 
 - **Plot Types**: Bar graphs, Box plots, Violin plots, Strip plots, XY plots, Histograms, Heatmaps
@@ -79,7 +78,7 @@ Rows with identical x_categories will be averaged and used to derive error estim
   - **ANOVA**: One-way, Welch's, Repeated measures
   - **Non-parametric ANOVA**: Kruskal-Wallis H test, Friedman test
   - **Post-hoc**: Tukey's HSD, Tamhane's T2, Scheffe's, Dunn's, Conover's, Nemenyi
-- **Data Management**: Save/load projects, Excel export, multi-sheet support
+- **Data Management**: Save/load projects, Excel/CSV/TSV input, Excel export, multi-sheet support
 - **Customization**: Custom colors, palettes, themes, LaTeX labels
 - **App themes** (`View > Themes`): Nord, Nordic, and standard light/dark themes
 
@@ -122,7 +121,7 @@ source .venv/bin/activate
 python explot.py
 ```
 
-# Generate environments and/or package ExPlot on macOS arm64 using Nuitka
+# Generating environments and/or packaging ExPlot on macOS arm64 using Nuitka
 
 ```bash
 chmod +x build.sh
@@ -148,7 +147,7 @@ Installer (3.12.10): https://www.python.org/downloads/release/python-31210/
 # Packaging Windows using PyInstaller
 
 ```bash
-source .venv/Scripts/activate
+.venv/Scripts/activate
 pip install pyinstaller
 pyinstaller ExPlot.spec
 ```

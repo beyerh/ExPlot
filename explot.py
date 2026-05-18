@@ -1,6 +1,6 @@
 # ExPlot - Data visualization tool for Excel files
 
-VERSION = "0.7.5"
+VERSION = "0.7.6"
 # =====================================================================
 
 import tkinter as tk
@@ -1627,6 +1627,12 @@ class ExPlotApp:
         self.upward_errorbar_var = tk.BooleanVar(value=True)  # True = upward-only, False = bidirectional
         self.strip_black_var = tk.BooleanVar(value=True)
         self.show_stripplot_var = tk.BooleanVar(value=True)
+        self.strip_color_mode_var = tk.StringVar(value="Black")
+        self.strip_custom_color_var = tk.StringVar(value="#000000")
+        self.strip_size_var = tk.DoubleVar(value=5.0)
+        self.strip_alpha_var = tk.DoubleVar(value=0.55)
+        self.strip_jitter_var = tk.StringVar(value="Auto")
+        self.strip_marker_var = tk.StringVar(value="o")
         self.bar_outline_var = tk.BooleanVar(value=False)
         self.violin_inner_box_var = tk.BooleanVar(value=True)  # Show box inside violin plots
         self.bar_gap_multiplier_var = tk.DoubleVar(value=0.75)  # Multiplier for bar gap width (higher = less gap)
@@ -2080,11 +2086,18 @@ class ExPlotApp:
             self.excel_file = file_path
             self.current_excel_file = file_path  # Store path for project saving/loading
             
-            if file_path.lower().endswith('.csv'):
-                # Handle CSV files
-                self.df = pd.read_csv(file_path, dtype=object)
-                # Create a single sheet for CSV
+            lower_path = file_path.lower()
+            if lower_path.endswith('.csv') or lower_path.endswith('.tsv') or lower_path.endswith('.txt'):
+                # Handle CSV/TSV files. Let pandas infer dtypes so numeric
+                # columns are not loaded as strings (which would break plotting).
+                if lower_path.endswith('.tsv') or lower_path.endswith('.txt'):
+                    self.df = pd.read_csv(file_path, sep='\t')
+                else:
+                    self.df = pd.read_csv(file_path)
+                # Create a single sheet name for delimited text files
                 self.sheet_options = ['Sheet1']
+                if hasattr(self, 'sheet_dropdown'):
+                    self.sheet_dropdown['values'] = self.sheet_options
                 self.sheet_var.set('Sheet1')
                 
                 # Initialize both raw and modified dataframes
@@ -2138,7 +2151,13 @@ class ExPlotApp:
             bool: True if a file was successfully loaded, False otherwise.
         """
         file_path = filedialog.askopenfilename(
-            filetypes=[("Excel files", "*.xlsx *.xls"), ("CSV files", "*.csv"), ("All files", "*.*")],
+            filetypes=[
+                ("All supported", "*.xlsx *.xls *.csv *.tsv *.txt"),
+                ("Excel files", "*.xlsx *.xls"),
+                ("CSV files", "*.csv"),
+                ("TSV files", "*.tsv *.txt"),
+                ("All files", "*.*"),
+            ],
             title="Open Data File"
         )
         
@@ -2284,7 +2303,12 @@ class ExPlotApp:
         
         # Plot Settings tab
         self.settings_show_stripplot_var = tk.BooleanVar(value=self.show_stripplot_var.get())
-        self.settings_strip_black_var = tk.BooleanVar(value=self.strip_black_var.get())
+        self.settings_strip_color_mode_var = tk.StringVar(value=self.strip_color_mode_var.get())
+        self.settings_strip_custom_color_var = tk.StringVar(value=self.strip_custom_color_var.get())
+        self.settings_strip_size_var = tk.DoubleVar(value=self.strip_size_var.get())
+        self.settings_strip_alpha_var = tk.DoubleVar(value=self.strip_alpha_var.get())
+        self.settings_strip_jitter_var = tk.StringVar(value=self.strip_jitter_var.get())
+        self.settings_strip_marker_var = tk.StringVar(value=self.strip_marker_var.get())
         self.settings_errorbar_type_var = tk.StringVar(value=self.errorbar_type_var.get())
         self.settings_errorbar_black_var = tk.BooleanVar(value=self.errorbar_black_var.get())
         self.settings_errorbar_capsize_var = tk.StringVar(value=self.errorbar_capsize_var.get())
@@ -2361,16 +2385,47 @@ class ExPlotApp:
         ttk.Checkbutton(general_tab, text="Start maximized", variable=self.settings_start_maximized_var).grid(row=1, column=0, columnspan=2, sticky="w", padx=10, pady=5)
         
         # Plot Settings Tab Content
-        ttk.Checkbutton(plot_settings_tab, text="Show stripplot", variable=self.settings_show_stripplot_var).grid(row=0, column=0, sticky="w", padx=10, pady=5)
-        ttk.Checkbutton(plot_settings_tab, text="Use black stripplot", variable=self.settings_strip_black_var).grid(row=1, column=0, sticky="w", padx=10, pady=5)
+        # Stripplot section with compact 2-column layout
+        strip_frame = ttk.LabelFrame(plot_settings_tab, text="Stripplot", padding=5)
+        strip_frame.grid(row=0, column=0, columnspan=2, sticky="ew", padx=10, pady=5)
         
-        ttk.Label(plot_settings_tab, text="Error bar type:", anchor="w").grid(row=2, column=0, sticky="w", padx=10, pady=10)
-        ttk.Combobox(plot_settings_tab, textvariable=self.settings_errorbar_type_var, values=["SD", "SEM"], width=15, state="readonly").grid(row=2, column=1, sticky="w", padx=10, pady=10)
+        ttk.Checkbutton(strip_frame, text="Overlay single data points (Stripplot)", variable=self.settings_show_stripplot_var).grid(row=0, column=0, columnspan=2, sticky="w", pady=2)
         
-        ttk.Checkbutton(plot_settings_tab, text="Black error bars", variable=self.settings_errorbar_black_var).grid(row=3, column=0, sticky="w", padx=10, pady=5)
+        # Row 1: Color and Marker
+        ttk.Label(strip_frame, text="Color:").grid(row=1, column=0, sticky="w", padx=2, pady=2)
+        self.strip_color_combo = ttk.Combobox(strip_frame, textvariable=self.settings_strip_color_mode_var, values=["Black", "Palette", "Single color", "Custom"], width=12, state="readonly")
+        self.strip_color_combo.grid(row=1, column=1, sticky="w", padx=2, pady=2)
+        self.strip_color_combo.bind('<<ComboboxSelected>>', lambda e: self._update_strip_color_ui())
         
-        ttk.Label(plot_settings_tab, text="Error bar capsize:", anchor="w").grid(row=4, column=0, sticky="w", padx=10, pady=10)
-        ttk.Combobox(plot_settings_tab, textvariable=self.settings_errorbar_capsize_var, values=["Default", "None", "Small", "Medium", "Large"], width=15, state="readonly").grid(row=4, column=1, sticky="w", padx=10, pady=10)
+        ttk.Label(strip_frame, text="Marker:").grid(row=1, column=2, sticky="w", padx=(8,2), pady=2)
+        ttk.Combobox(strip_frame, textvariable=self.settings_strip_marker_var, values=["o", "s", "^", "D", "v", "P", "X", "+", "x", "*", "."], width=12, state="readonly").grid(row=1, column=3, sticky="w", padx=2, pady=2)
+        
+        # Row 2: Size and Alpha
+        ttk.Label(strip_frame, text="Size:").grid(row=2, column=0, sticky="w", padx=2, pady=2)
+        tk.Spinbox(strip_frame, from_=1, to=20, increment=0.5, textvariable=self.settings_strip_size_var, width=6).grid(row=2, column=1, sticky="w", padx=2, pady=2)
+        
+        ttk.Label(strip_frame, text="Alpha:").grid(row=2, column=2, sticky="w", padx=(8,2), pady=2)
+        tk.Spinbox(strip_frame, from_=0.05, to=1.0, increment=0.05, textvariable=self.settings_strip_alpha_var, width=6).grid(row=2, column=3, sticky="w", padx=2, pady=2)
+        
+        # Row 3: Placement and Custom color
+        ttk.Label(strip_frame, text="Placement:").grid(row=3, column=0, sticky="w", padx=2, pady=2)
+        ttk.Combobox(strip_frame, textvariable=self.settings_strip_jitter_var, values=["None", "Tight", "Auto", "Wide"], width=12, state="readonly").grid(row=3, column=1, sticky="w", padx=2, pady=2)
+        
+        # Custom color picker (initially hidden, in column 2-3)
+        self.strip_color_button = ttk.Button(strip_frame, text="Choose", 
+                                           style='Accent.TButton', width=8,
+                                           command=lambda: self._choose_strip_color())
+        
+        # Initialize UI state
+        self._update_strip_color_ui()
+        
+        ttk.Label(plot_settings_tab, text="Error bar type:", anchor="w").grid(row=1, column=0, sticky="w", padx=10, pady=10)
+        ttk.Combobox(plot_settings_tab, textvariable=self.settings_errorbar_type_var, values=["SD", "SEM"], width=15, state="readonly").grid(row=1, column=1, sticky="w", padx=10, pady=10)
+        
+        ttk.Checkbutton(plot_settings_tab, text="Black error bars", variable=self.settings_errorbar_black_var).grid(row=2, column=0, sticky="w", padx=10, pady=5)
+        
+        ttk.Label(plot_settings_tab, text="Error bar capsize:", anchor="w").grid(row=3, column=0, sticky="w", padx=10, pady=10)
+        ttk.Combobox(plot_settings_tab, textvariable=self.settings_errorbar_capsize_var, values=["Default", "None", "Small", "Medium", "Large"], width=15, state="readonly").grid(row=3, column=1, sticky="w", padx=10, pady=10)
         
         # Statistics Tab Content
         # Use statistics checkbox at the top
@@ -4753,6 +4808,12 @@ class ExPlotApp:
             'plot_kind': 'bar',
             'show_stripplot': True,
             'strip_black': True,
+            'strip_color_mode': 'Black',
+            'strip_custom_color': '#000000',
+            'strip_size': 5.0,
+            'strip_alpha': 0.55,
+            'strip_jitter': 'Auto',
+            'strip_marker': 'o',
             'errorbar_type': 'SD',
             'errorbar_black': True,
             'errorbar_capsize': 'Default',
@@ -4864,6 +4925,20 @@ class ExPlotApp:
             self.show_stripplot_var.set(preferences['show_stripplot'])
         if hasattr(self, 'strip_black_var') and 'strip_black' in preferences:
             self.strip_black_var.set(preferences['strip_black'])
+        if hasattr(self, 'strip_custom_color_var') and 'strip_custom_color' in preferences:
+            self.strip_custom_color_var.set(preferences['strip_custom_color'])
+        if hasattr(self, 'strip_color_mode_var') and 'strip_color_mode' in preferences:
+            self.strip_color_mode_var.set(preferences['strip_color_mode'])
+        elif hasattr(self, 'strip_color_mode_var'):
+            self.strip_color_mode_var.set('Black' if preferences.get('strip_black', True) else 'Palette')
+        if hasattr(self, 'strip_size_var') and 'strip_size' in preferences:
+            self.strip_size_var.set(preferences['strip_size'])
+        if hasattr(self, 'strip_alpha_var') and 'strip_alpha' in preferences:
+            self.strip_alpha_var.set(preferences['strip_alpha'])
+        if hasattr(self, 'strip_jitter_var') and 'strip_jitter' in preferences:
+            self.strip_jitter_var.set(preferences['strip_jitter'])
+        if hasattr(self, 'strip_marker_var') and 'strip_marker' in preferences:
+            self.strip_marker_var.set(preferences['strip_marker'])
         if hasattr(self, 'errorbar_type_var') and 'errorbar_type' in preferences:
             self.errorbar_type_var.set(preferences['errorbar_type'])
         if hasattr(self, 'errorbar_black_var') and 'errorbar_black' in preferences:
@@ -5052,8 +5127,18 @@ class ExPlotApp:
         # Plot Settings
         if hasattr(self, 'settings_show_stripplot_var'):
             preferences['show_stripplot'] = self.settings_show_stripplot_var.get()
-        if hasattr(self, 'settings_strip_black_var'):
-            preferences['strip_black'] = self.settings_strip_black_var.get()
+        if hasattr(self, 'settings_strip_custom_color_var'):
+            preferences['strip_custom_color'] = self.settings_strip_custom_color_var.get()
+        if hasattr(self, 'settings_strip_color_mode_var'):
+            preferences['strip_color_mode'] = self.settings_strip_color_mode_var.get()
+        if hasattr(self, 'settings_strip_size_var'):
+            preferences['strip_size'] = self.settings_strip_size_var.get()
+        if hasattr(self, 'settings_strip_alpha_var'):
+            preferences['strip_alpha'] = self.settings_strip_alpha_var.get()
+        if hasattr(self, 'settings_strip_jitter_var'):
+            preferences['strip_jitter'] = self.settings_strip_jitter_var.get()
+        if hasattr(self, 'settings_strip_marker_var'):
+            preferences['strip_marker'] = self.settings_strip_marker_var.get()
         if hasattr(self, 'settings_errorbar_type_var'):
             preferences['errorbar_type'] = self.settings_errorbar_type_var.get()
         if hasattr(self, 'settings_errorbar_black_var'):
@@ -5159,6 +5244,12 @@ class ExPlotApp:
             self.plot_kind_var.set(preferences.get('plot_kind', 'bar'))
             self.show_stripplot_var.set(preferences.get('show_stripplot', True))
             self.strip_black_var.set(preferences.get('strip_black', True))
+            self.strip_custom_color_var.set(preferences.get('strip_custom_color', '#000000'))
+            self.strip_color_mode_var.set(preferences.get('strip_color_mode', 'Black' if preferences.get('strip_black', True) else 'Palette'))
+            self.strip_size_var.set(preferences.get('strip_size', 5.0))
+            self.strip_alpha_var.set(preferences.get('strip_alpha', 0.55))
+            self.strip_jitter_var.set(preferences.get('strip_jitter', 'Auto'))
+            self.strip_marker_var.set(preferences.get('strip_marker', 'o'))
             self.errorbar_type_var.set(preferences.get('errorbar_type', 'SD'))
             self.errorbar_black_var.set(preferences.get('errorbar_black', True))
             self.errorbar_capsize_var.set(preferences.get('errorbar_capsize', 'Default'))
@@ -5334,7 +5425,7 @@ class ExPlotApp:
         # File/Sheet group
         file_grp = ttk.LabelFrame(frame, text="File/Sheet", padding=6)
         file_grp.pack(fill='x', padx=6, pady=(8,4))
-        ttk.Button(file_grp, text='Load Excel File', command=self.load_file).pack(fill='x', pady=2)
+        ttk.Button(file_grp, text='Load Data File', command=self.load_file).pack(fill='x', pady=2)
         ttk.Label(file_grp, text="Sheet:").pack(anchor="w")
         self.sheet_var = tk.StringVar()
         self.sheet_dropdown = ttk.Combobox(file_grp, textvariable=self.sheet_var, width=18)
@@ -5372,39 +5463,40 @@ class ExPlotApp:
         opt_grp = ttk.LabelFrame(frame, text="Options", padding=6)
         opt_grp.pack(fill='x', padx=6, pady=4)
         
-        # Statistics settings
-        stats_frame = ttk.Frame(opt_grp)
-        stats_frame.pack(anchor="w", pady=2)
-        ttk.Label(stats_frame, text="Statistics:").pack(side="left")
-        ttk.Checkbutton(stats_frame, text="Use statistics", variable=self.use_stats_var).pack(side="left")
+        # Grid layout for options
+        opt_grp.columnconfigure(0, weight=1)
+        opt_grp.columnconfigure(1, weight=1)
+        
+        # Row 0: Statistics
+        ttk.Checkbutton(opt_grp, text="Use statistics", variable=self.use_stats_var).grid(row=0, column=0, sticky="w", pady=1)
         
         # Add checkbox for showing statistical annotations
         self.show_statistics_annotations_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(opt_grp, text="Show statistical annotations on plot", variable=self.show_statistics_annotations_var).pack(anchor="w", pady=1)
+        ttk.Checkbutton(opt_grp, text="Show annotations", variable=self.show_statistics_annotations_var).grid(row=0, column=1, sticky="w", pady=1)
         
-        # --- Error bar type (SD/SEM) ---
-        # We use the errorbar_type_var that was initialized in __init__
-        # No need to create it again here
-            
+        # Row 1: Error bars
         errorbar_frame = ttk.Frame(opt_grp)
-        errorbar_frame.pack(anchor="w", pady=2)
-        ttk.Label(errorbar_frame, text="Error bars:").pack(side="left")
-        ttk.Radiobutton(errorbar_frame, text="SD", variable=self.errorbar_type_var, value="SD").pack(side="left")
-        ttk.Radiobutton(errorbar_frame, text="SEM", variable=self.errorbar_type_var, value="SEM").pack(side="left")
+        errorbar_frame.grid(row=1, column=0, sticky="w", pady=1)
+        ttk.Label(errorbar_frame, text="Err:").pack(side="left")
+        ttk.Radiobutton(errorbar_frame, text="SD", variable=self.errorbar_type_var, value="SD").pack(side="left", padx=(4,0))
+        ttk.Radiobutton(errorbar_frame, text="SEM", variable=self.errorbar_type_var, value="SEM").pack(side="left", padx=(4,0))
+        
         # Black errorbars option
         self.errorbar_black_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(opt_grp, text="Black errorbars", variable=self.errorbar_black_var).pack(anchor="w", pady=1)
-        btn_fr = ttk.Frame(opt_grp)
-        btn_fr.pack(fill='x', pady=(2,0))
-        ttk.Button(btn_fr, text="Modify X categories", command=self.modify_x_categories, width=20).pack(side="left", padx=1)
+        ttk.Checkbutton(opt_grp, text="Black errorbars", variable=self.errorbar_black_var).grid(row=1, column=1, sticky="w", pady=1)
+        
+        # Row 2: Modify categories button
+        ttk.Button(opt_grp, text="Modify X categories", command=self.modify_x_categories).grid(row=2, column=0, columnspan=2, sticky="ew", pady=(4,0))
         
         # Plot Type group
         type_grp = ttk.LabelFrame(frame, text="Plot Type", padding=6)
         type_grp.pack(fill='x', padx=6, pady=4)
+        type_grp.columnconfigure(2, weight=1)
+
         # Frame for radio buttons (left)
         plot_type_radio_frame = ttk.Frame(type_grp)
         plot_type_radio_frame.grid(row=0, column=0, sticky="nw")
-        ttk.Label(plot_type_radio_frame, text="Plot Type:").pack(anchor="w")
+        ttk.Label(plot_type_radio_frame, text="Plot Type:", font=(None, 9, 'bold')).pack(anchor="w", pady=(0,2))
         bar_radio = ttk.Radiobutton(plot_type_radio_frame, text="Bar Graph", variable=self.plot_kind_var, value="bar")
         box_radio = ttk.Radiobutton(plot_type_radio_frame, text="Box Plot", variable=self.plot_kind_var, value="box")
         violin_radio = ttk.Radiobutton(plot_type_radio_frame, text="Violin Plot", variable=self.plot_kind_var, value="violin")
@@ -5417,70 +5509,105 @@ class ExPlotApp:
         xy_radio.pack(anchor="w")
         hist_radio.pack(anchor="w")
         heatmap_radio.pack(anchor="w")
-        # XY options frame (right)
-        self.xy_options_frame = ttk.Frame(type_grp)
-        # XY options widgets in xy_options_frame
-        self.xy_marker_mode_label = ttk.Label(self.xy_options_frame, text="Marker mode:")
-        self.xy_marker_mode_dropdown = ttk.Combobox(self.xy_options_frame, textvariable=self.xy_marker_mode_var, values=["Single", "Varied"], width=10, state="readonly")
-        self.xy_marker_symbol_label = ttk.Label(self.xy_options_frame, text="Marker symbol:")
-        self.xy_marker_symbol_dropdown = ttk.Combobox(self.xy_options_frame, textvariable=self.xy_marker_symbol_var, values=["o", "s", "^", "D", "v", "P", "X", "+", "x", "*", "."], width=10)
+
+        # Divider for visual hierarchy
+        ttk.Separator(type_grp, orient='vertical').grid(row=0, column=1, sticky="ns", padx=10)
+
+        # Options container frame (right of divider)
+        self.options_container = ttk.Frame(type_grp)
+        self.options_container.grid(row=0, column=2, sticky="nsew")
+        self.options_container.columnconfigure(0, weight=1)
+
+        # XY options frame
+        self.xy_options_frame = ttk.Frame(self.options_container)
+        # Row 0: Marker and Symbol
+        ttk.Label(self.xy_options_frame, text="Mark:").grid(row=0, column=0, sticky="w", padx=1, pady=1)
+        ttk.Combobox(self.xy_options_frame, textvariable=self.xy_marker_mode_var, values=["Single", "Varied"], width=7, state="readonly").grid(row=0, column=1, sticky="w", padx=1, pady=1)
+        ttk.Label(self.xy_options_frame, text="Sym:").grid(row=0, column=2, sticky="w", padx=(4,1), pady=1)
+        self.xy_marker_symbol_dropdown = ttk.Combobox(self.xy_options_frame, textvariable=self.xy_marker_symbol_var, values=["o", "s", "^", "D", "v", "P", "X", "+", "x", "*", "."], width=3)
+        self.xy_marker_symbol_dropdown.grid(row=0, column=3, sticky="w", padx=1, pady=1)
+        
         def _update_marker_mode_ui(*_):
             if self.xy_marker_mode_var.get() == "Varied":
                 self.xy_marker_symbol_dropdown.config(state="disabled")
             else:
                 self.xy_marker_symbol_dropdown.config(state="readonly")
         self.xy_marker_mode_var.trace_add("write", _update_marker_mode_ui)
-        self.xy_marker_size_label = ttk.Label(self.xy_options_frame, text="Marker size:")
-        self.xy_marker_size_entry = ttk.Entry(self.xy_options_frame, textvariable=self.xy_marker_size_var, width=6)
-        self.xy_filled_check = ttk.Checkbutton(self.xy_options_frame, text="Filled symbols", variable=self.xy_filled_var)
-        self.xy_line_style_label = ttk.Label(self.xy_options_frame, text="Line style:")
-        self.xy_line_style_dropdown = ttk.Combobox(self.xy_options_frame, textvariable=self.xy_line_style_var, values=["solid", "dashed", "dotted", "dashdot"], width=10)
-        self.xy_line_black_check = ttk.Checkbutton(self.xy_options_frame, text="Lines in black", variable=self.xy_line_black_var)
-        self.xy_connect_check = ttk.Checkbutton(self.xy_options_frame, text="Connect mean with lines", variable=self.xy_connect_var)
-        self.xy_show_mean_check = ttk.Checkbutton(self.xy_options_frame, text="Show mean values", variable=self.xy_show_mean_var, command=self.update_xy_mean_errorbar_state)
-        self.xy_show_mean_errorbars_check = ttk.Checkbutton(self.xy_options_frame, text="With errorbars", variable=self.xy_show_mean_errorbars_var)
-        self.xy_draw_band_check = ttk.Checkbutton(self.xy_options_frame, text="Draw bands (min-max or error)", variable=self.xy_draw_band_var)
-        # Pack XY widgets in order
-        self.xy_marker_mode_label.grid(row=0, column=0, sticky="w", padx=4, pady=2)
-        self.xy_marker_mode_dropdown.grid(row=0, column=1, sticky="w", padx=2, pady=2)
-        self.xy_marker_symbol_label.grid(row=1, column=0, sticky="w", padx=4, pady=2)
-        self.xy_marker_symbol_dropdown.grid(row=1, column=1, sticky="w", padx=2, pady=2)
-        self.xy_marker_size_label.grid(row=2, column=0, sticky="w", padx=4, pady=2)
-        self.xy_marker_size_entry.grid(row=2, column=1, sticky="w", padx=2, pady=2)
-        self.xy_connect_check.grid(row=3, column=0, columnspan=2, sticky="w", padx=4, pady=2)
-        self.xy_show_mean_check.grid(row=4, column=0, columnspan=2, sticky="w", padx=4, pady=2)
-        self.xy_show_mean_errorbars_check.grid(row=5, column=0, columnspan=2, sticky="w", padx=24, pady=2)
-        self.xy_draw_band_check.grid(row=6, column=0, columnspan=2, sticky="w", padx=4, pady=2)
-        # --- Histogram options frame (right) ---
-        self.hist_options_frame = ttk.Frame(type_grp)
-        ttk.Label(self.hist_options_frame, text="Bins:").grid(row=0, column=0, sticky="w", padx=4, pady=2)
-        ttk.Entry(self.hist_options_frame, textvariable=self.hist_bins_var, width=6).grid(row=0, column=1, sticky="w", padx=2, pady=2)
-        ttk.Checkbutton(self.hist_options_frame, text="Show KDE curve", variable=self.hist_kde_var).grid(row=1, column=0, columnspan=2, sticky="w", padx=4, pady=2)
-        ttk.Checkbutton(self.hist_options_frame, text="Density (normalize)", variable=self.hist_density_var).grid(row=2, column=0, columnspan=2, sticky="w", padx=4, pady=2)
-        ttk.Checkbutton(self.hist_options_frame, text="Stacked groups", variable=self.hist_stacked_var).grid(row=3, column=0, columnspan=2, sticky="w", padx=4, pady=2)
-        ttk.Label(self.hist_options_frame, text="Alpha:").grid(row=4, column=0, sticky="w", padx=4, pady=2)
-        ttk.Entry(self.hist_options_frame, textvariable=self.hist_alpha_var, width=6).grid(row=4, column=1, sticky="w", padx=2, pady=2)
+        
+        # Row 1: Size and Style
+        ttk.Label(self.xy_options_frame, text="Size:").grid(row=1, column=0, sticky="w", padx=1, pady=1)
+        ttk.Entry(self.xy_options_frame, textvariable=self.xy_marker_size_var, width=5).grid(row=1, column=1, sticky="w", padx=1, pady=1)
+        ttk.Label(self.xy_options_frame, text="Style:").grid(row=1, column=2, sticky="w", padx=(4,1), pady=1)
+        ttk.Combobox(self.xy_options_frame, textvariable=self.xy_line_style_var, values=["solid", "dashed", "dotted", "dashdot"], width=7).grid(row=1, column=3, sticky="w", padx=1, pady=1)
+        
+        # Row 2: Checkboxes (2 columns)
+        ttk.Checkbutton(self.xy_options_frame, text="Filled", variable=self.xy_filled_var).grid(row=2, column=0, columnspan=2, sticky="w", padx=1, pady=1)
+        ttk.Checkbutton(self.xy_options_frame, text="Black lines", variable=self.xy_line_black_var).grid(row=2, column=2, columnspan=2, sticky="w", padx=(4,1), pady=1)
+        
+        # Row 3: Connect and Mean
+        ttk.Checkbutton(self.xy_options_frame, text="Connect", variable=self.xy_connect_var).grid(row=3, column=0, columnspan=2, sticky="w", padx=1, pady=1)
+        ttk.Checkbutton(self.xy_options_frame, text="Mean", variable=self.xy_show_mean_var, command=self.update_xy_mean_errorbar_state).grid(row=3, column=2, columnspan=2, sticky="w", padx=(4,1), pady=1)
+        
+        # Row 4: Errorbars and Bands
+        self.xy_show_mean_errorbars_check = ttk.Checkbutton(self.xy_options_frame, text="With errbars", variable=self.xy_show_mean_errorbars_var)
+        self.xy_show_mean_errorbars_check.grid(row=4, column=0, columnspan=2, sticky="w", padx=10, pady=1)
+        ttk.Checkbutton(self.xy_options_frame, text="Bands", variable=self.xy_draw_band_var).grid(row=4, column=2, columnspan=2, sticky="w", padx=(4,1), pady=1)
 
-        # --- Heatmap options frame (right) ---
-        self.heatmap_options_frame = ttk.Frame(type_grp)
-        _hw = 8  # uniform widget width for heatmap options
+        # --- Histogram options frame ---
+        self.hist_options_frame = ttk.Frame(self.options_container)
+        ttk.Label(self.hist_options_frame, text="Bins:").grid(row=0, column=0, sticky="w", padx=1, pady=1)
+        ttk.Entry(self.hist_options_frame, textvariable=self.hist_bins_var, width=5).grid(row=0, column=1, sticky="w", padx=1, pady=1)
+        ttk.Label(self.hist_options_frame, text="Alpha:").grid(row=0, column=2, sticky="w", padx=(4,1), pady=1)
+        ttk.Entry(self.hist_options_frame, textvariable=self.hist_alpha_var, width=5).grid(row=0, column=3, sticky="w", padx=1, pady=1)
+        
+        ttk.Checkbutton(self.hist_options_frame, text="Show KDE", variable=self.hist_kde_var).grid(row=1, column=0, columnspan=2, sticky="w", padx=1, pady=1)
+        ttk.Checkbutton(self.hist_options_frame, text="Density (normalize)", variable=self.hist_density_var).grid(row=1, column=2, columnspan=2, sticky="w", padx=(4,1), pady=1)
+        ttk.Checkbutton(self.hist_options_frame, text="Stacked groups", variable=self.hist_stacked_var).grid(row=2, column=0, columnspan=4, sticky="w", padx=1, pady=1)
+
+        # --- Heatmap options frame ---
+        self.heatmap_options_frame = ttk.Frame(self.options_container)
+        # Configure columns for better alignment
         self.heatmap_options_frame.columnconfigure(1, weight=1)
-        ttk.Label(self.heatmap_options_frame, text="Mode:").grid(row=0, column=0, sticky="w", padx=4, pady=2)
-        ttk.Combobox(self.heatmap_options_frame, textvariable=self.heatmap_mode_var, values=["correlation", "pivot"], width=_hw).grid(row=0, column=1, sticky="e", padx=2, pady=2)
-        ttk.Label(self.heatmap_options_frame, text="Colormap:").grid(row=1, column=0, sticky="w", padx=4, pady=2)
+        self.heatmap_options_frame.columnconfigure(3, weight=1)
+        
+        # Row 0: Mode and Colormap
+        ttk.Label(self.heatmap_options_frame, text="Mode:").grid(row=0, column=0, sticky="w", padx=1, pady=1)
+        ttk.Combobox(self.heatmap_options_frame, textvariable=self.heatmap_mode_var, values=["correlation", "pivot"], width=10, state="readonly").grid(row=0, column=1, sticky="w", padx=1, pady=1)
+        ttk.Label(self.heatmap_options_frame, text="Colormap:").grid(row=0, column=2, sticky="w", padx=(4,1), pady=1)
         ttk.Combobox(self.heatmap_options_frame, textvariable=self.heatmap_cmap_var,
-                      values=["coolwarm", "viridis", "plasma", "inferno", "magma", "cividis", "RdBu_r", "YlOrRd", "Blues", "Greens"], width=_hw).grid(row=1, column=1, sticky="e", padx=2, pady=2)
-        _annot_row = ttk.Frame(self.heatmap_options_frame)
-        _annot_row.grid(row=2, column=0, columnspan=2, sticky="w", padx=4, pady=1)
-        ttk.Checkbutton(_annot_row, text="Annot.", variable=self.heatmap_annot_var).pack(side="left")
-        ttk.Label(_annot_row, text="size:").pack(side="left", padx=(6,0))
-        ttk.Spinbox(_annot_row, from_=0, to=24, increment=1, textvariable=self.heatmap_annot_fontsize_var, width=3).pack(side="left", padx=2)
-        ttk.Label(self.heatmap_options_frame, text="Format:").grid(row=3, column=0, sticky="w", padx=4, pady=2)
-        ttk.Combobox(self.heatmap_options_frame, textvariable=self.heatmap_fmt_var, values=[".2f", ".3f", ".1f", ".0f", ".2g"], width=_hw).grid(row=3, column=1, sticky="e", padx=2, pady=2)
-        ttk.Label(self.heatmap_options_frame, text="Aggregation:").grid(row=4, column=0, sticky="w", padx=4, pady=2)
-        ttk.Combobox(self.heatmap_options_frame, textvariable=self.heatmap_aggfunc_var, values=["mean", "median", "sum", "count", "std"], width=_hw).grid(row=4, column=1, sticky="e", padx=2, pady=2)
-        ttk.Label(self.heatmap_options_frame, text="Colorbar %:").grid(row=5, column=0, sticky="w", padx=4, pady=2)
-        ttk.Spinbox(self.heatmap_options_frame, from_=1, to=15, increment=0.5, textvariable=self.heatmap_cbar_width_var, width=5).grid(row=5, column=1, sticky="e", padx=2, pady=2)
+                      values=["coolwarm", "viridis", "plasma", "inferno", "magma", "cividis", "RdBu_r", "YlOrRd", "Blues", "Greens"], width=10, state="readonly").grid(row=0, column=3, sticky="w", padx=1, pady=1)
+        
+        # Row 1: Annotation options
+        ttk.Checkbutton(self.heatmap_options_frame, text="Annotations", variable=self.heatmap_annot_var).grid(row=1, column=0, sticky="w", padx=1, pady=1)
+        ttk.Label(self.heatmap_options_frame, text="Size:").grid(row=1, column=2, sticky="w", padx=(4,1), pady=1)
+        ttk.Spinbox(self.heatmap_options_frame, from_=0, to=24, increment=1, textvariable=self.heatmap_annot_fontsize_var, width=4).grid(row=1, column=3, sticky="w", padx=1, pady=1)
+        
+        # Row 2: Format and Aggregation
+        ttk.Label(self.heatmap_options_frame, text="Format:").grid(row=2, column=0, sticky="w", padx=1, pady=1)
+        ttk.Combobox(self.heatmap_options_frame, textvariable=self.heatmap_fmt_var, values=[".2f", ".3f", ".1f", ".0f", ".2g"], width=6, state="readonly").grid(row=2, column=1, sticky="w", padx=1, pady=1)
+        ttk.Label(self.heatmap_options_frame, text="Aggregation:").grid(row=2, column=2, sticky="w", padx=(4,1), pady=1)
+        ttk.Combobox(self.heatmap_options_frame, textvariable=self.heatmap_aggfunc_var, values=["mean", "median", "sum", "count", "std"], width=8, state="readonly").grid(row=2, column=3, sticky="w", padx=1, pady=1)
+        
+        # Row 3: Colorbar width
+        ttk.Label(self.heatmap_options_frame, text="Colorbar %:").grid(row=3, column=0, sticky="w", padx=1, pady=1)
+        ttk.Spinbox(self.heatmap_options_frame, from_=1, to=15, increment=0.5, textvariable=self.heatmap_cbar_width_var, width=5).grid(row=3, column=1, sticky="w", padx=1, pady=1)
+
+        # --- Bar Graph options frame ---
+        self.bar_options_frame = ttk.Frame(self.options_container)
+        ttk.Checkbutton(self.bar_options_frame, text="Outlines", variable=self.bar_outline_var).grid(row=0, column=0, columnspan=2, sticky="w", padx=2, pady=1)
+        ttk.Checkbutton(self.bar_options_frame, text="Upward Error Bars", variable=self.upward_errorbar_var).grid(row=0, column=2, columnspan=2, sticky="w", padx=(8,2), pady=1)
+        ttk.Label(self.bar_options_frame, text="Gap mult:").grid(row=1, column=0, sticky="w", padx=2, pady=1)
+        tk.Spinbox(self.bar_options_frame, from_=0.5, to=1.0, increment=0.05, textvariable=self.bar_gap_multiplier_var, width=5).grid(row=1, column=1, sticky="w", padx=2, pady=1)
+        self._setup_stripplot_ui(self.bar_options_frame, start_row=2)
+
+        # --- Box Plot options frame ---
+        self.box_options_frame = ttk.Frame(self.options_container)
+        self._setup_stripplot_ui(self.box_options_frame, start_row=0)
+
+        # --- Violin Plot options frame ---
+        self.violin_options_frame = ttk.Frame(self.options_container)
+        ttk.Checkbutton(self.violin_options_frame, text="Show box inside", variable=self.violin_inner_box_var).grid(row=0, column=0, columnspan=4, sticky="w", padx=2, pady=1)
+        self._setup_stripplot_ui(self.violin_options_frame, start_row=1)
 
         # Show/hide options frames based on plot type
         def update_plot_type_options(*args):
@@ -5488,21 +5615,70 @@ class ExPlotApp:
             self.xy_options_frame.grid_forget()
             self.hist_options_frame.grid_forget()
             self.heatmap_options_frame.grid_forget()
+            self.bar_options_frame.grid_forget()
+            self.box_options_frame.grid_forget()
+            self.violin_options_frame.grid_forget()
+            
             if kind == "xy":
-                self.xy_options_frame.grid(row=0, column=1, sticky="nw", padx=(16,0))
+                self.xy_options_frame.grid(row=0, column=0, sticky="nsew")
                 self.show_stripplot_var.set(False)
                 self.update_xy_mean_errorbar_state()
             elif kind == "histogram":
-                self.hist_options_frame.grid(row=0, column=1, sticky="nw", padx=(16,0))
+                self.hist_options_frame.grid(row=0, column=0, sticky="nsew")
                 self.show_stripplot_var.set(False)
             elif kind == "heatmap":
-                self.heatmap_options_frame.grid(row=0, column=1, sticky="nw", padx=(16,0))
+                self.heatmap_options_frame.grid(row=0, column=0, sticky="nsew")
                 self.show_stripplot_var.set(False)
             elif kind == "bar":
+                self.bar_options_frame.grid(row=0, column=0, sticky="nsew")
                 self.show_stripplot_var.set(True)
+            elif kind == "box":
+                self.box_options_frame.grid(row=0, column=0, sticky="nsew")
+                self.show_stripplot_var.set(True)
+            elif kind == "violin":
+                self.violin_options_frame.grid(row=0, column=0, sticky="nsew")
+                self.show_stripplot_var.set(True)
+            
+            # Update stripplot color button visibility for the newly shown frame
+            self._update_strip_color_ui()
 
         self.plot_kind_var.trace_add('write', update_plot_type_options)
-        update_plot_type_options()
+        update_plot_type_options()  # Initialize display
+
+    def _setup_stripplot_ui(self, parent, start_row=0):
+        """Helper to add compact stripplot options to a frame."""
+        # Main toggle
+        ttk.Checkbutton(parent, text="Overlay data points (Stripplot)", 
+                        variable=self.show_stripplot_var).grid(row=start_row, column=0, columnspan=4, sticky="w", padx=2, pady=(4, 2))
+        
+        # Color and Marker row
+        ttk.Label(parent, text="Color:").grid(row=start_row+1, column=0, sticky="w", padx=2, pady=1)
+        strip_color_combo = ttk.Combobox(parent, textvariable=self.strip_color_mode_var, 
+                                        values=["Black", "Palette", "Single color", "Custom"], width=10, state="readonly")
+        strip_color_combo.grid(row=start_row+1, column=1, sticky="w", padx=2, pady=1)
+        strip_color_combo.bind('<<ComboboxSelected>>', lambda e: self._update_strip_color_ui())
+        
+        ttk.Label(parent, text="Mark:").grid(row=start_row+1, column=2, sticky="w", padx=(4,2), pady=1)
+        ttk.Combobox(parent, textvariable=self.strip_marker_var, 
+                     values=["o", "s", "^", "D", "v", "P", "X", "+", "x", "*", "."], width=3, state="readonly").grid(row=start_row+1, column=3, sticky="w", padx=2, pady=1)
+        
+        # Size and Alpha row
+        ttk.Label(parent, text="Size:").grid(row=start_row+2, column=0, sticky="w", padx=2, pady=1)
+        tk.Spinbox(parent, from_=1, to=20, increment=0.5, textvariable=self.strip_size_var, width=5).grid(row=start_row+2, column=1, sticky="w", padx=2, pady=1)
+        
+        ttk.Label(parent, text="Alpha:").grid(row=start_row+2, column=2, sticky="w", padx=(4,2), pady=1)
+        tk.Spinbox(parent, from_=0.05, to=1.0, increment=0.05, textvariable=self.strip_alpha_var, width=4).grid(row=start_row+2, column=3, sticky="w", padx=2, pady=1)
+        
+        # Jitter and Color Button row
+        ttk.Label(parent, text="Jitter:").grid(row=start_row+3, column=0, sticky="w", padx=2, pady=1)
+        ttk.Combobox(parent, textvariable=self.strip_jitter_var, 
+                     values=["None", "Tight", "Auto", "Wide"], width=10, state="readonly").grid(row=start_row+3, column=1, sticky="w", padx=2, pady=1)
+        
+        # Special case: choose button needs to be placed correctly
+        setattr(parent, 'strip_color_button', ttk.Button(parent, text="Choose", style='Accent.TButton', width=8,
+                                           command=self._choose_strip_color))
+        
+        return strip_color_combo, getattr(parent, 'strip_color_button')
 
     def update_xy_mean_errorbar_state(self):
         if self.xy_show_mean_var.get():
@@ -5538,45 +5714,7 @@ class ExPlotApp:
                                         values=["Default", "Narrow", "Wide", "Wider", "None"], width=10)
         self.capsize_dropdown.grid(row=2, column=1, sticky="ew", padx=2, pady=2)
         font_grp.columnconfigure(1, weight=1)
-        # --- Bar Graph group ---
-        bar_grp = ttk.LabelFrame(frame, text="Bar Graph", padding=6)
-        bar_grp.pack(fill='x', padx=6, pady=4)
-        ttk.Checkbutton(bar_grp, text="Draw bar outlines", variable=self.bar_outline_var).pack(anchor="w", pady=1)
-        ttk.Checkbutton(bar_grp, text="Upward-only error bars", variable=self.upward_errorbar_var).pack(anchor="w", pady=1)
-        
-        # Bar gap multiplier control
-        bar_gap_frame = ttk.Frame(bar_grp)
-        bar_gap_frame.pack(anchor="w", pady=1, fill='x')
-        ttk.Label(bar_gap_frame, text="Bar gap multiplier:").pack(side="left")
-        tk.Spinbox(bar_gap_frame, from_=0.5, to=1.0, increment=0.05, 
-                  textvariable=self.bar_gap_multiplier_var, width=5).pack(side="left", padx=4)
-        
-        # --- Violin Plot group ---
-        violin_grp = ttk.LabelFrame(frame, text="Violin Plot", padding=6)
-        violin_grp.pack(fill='x', padx=6, pady=4)
-        ttk.Checkbutton(violin_grp, text="Show box inside violin", variable=self.violin_inner_box_var).pack(anchor="w", pady=1)
-        
-        # --- XY Plot group ---
-        xy_grp = ttk.LabelFrame(frame, text="XY Plot", padding=6)
-        xy_grp.pack(fill='x', padx=6, pady=4)
-        ttk.Checkbutton(xy_grp, text="Filled symbols", variable=self.xy_filled_var).pack(anchor="w", pady=1)
-        
-        # Line style
-        line_style_frame = ttk.Frame(xy_grp)
-        line_style_frame.pack(anchor="w", pady=1, fill='x')
-        ttk.Label(line_style_frame, text="Line style:").pack(side="left")
-        ttk.Combobox(line_style_frame, textvariable=self.xy_line_style_var, 
-                    values=["solid", "dashed", "dotted", "dashdot"], width=10).pack(side="left", padx=4)
-        
-        ttk.Checkbutton(xy_grp, text="Lines in black", variable=self.xy_line_black_var).pack(anchor="w", pady=1)
-        
-        # --- Stripplot group ---
-        strip_grp = ttk.LabelFrame(frame, text="Stripplot", padding=6)
-        strip_grp.pack(fill='x', padx=6, pady=4)
-        self.strip_black_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(strip_grp, text="Show stripplot with black dots", variable=self.strip_black_var).pack(anchor="w", pady=1)
-        self.show_stripplot_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(strip_grp, text="Show stripplot", variable=self.show_stripplot_var).pack(anchor="w", pady=1)
+
         # --- Display Options and Legend in same row ---
         display_legend_row = ttk.Frame(frame)
         display_legend_row.pack(fill='x', padx=6, pady=4)
@@ -6244,7 +6382,12 @@ class ExPlotApp:
                 'show_frame': self.show_frame_var.get() if hasattr(self, 'show_frame_var') else False,
                 'show_hgrid': self.show_hgrid_var.get() if hasattr(self, 'show_hgrid_var') else False,
                 'show_vgrid': self.show_vgrid_var.get() if hasattr(self, 'show_vgrid_var') else False,
-                'bar_gap_multiplier': self.bar_gap_multiplier_var.get() if hasattr(self, 'bar_gap_multiplier_var') else 0.75
+                'bar_gap_multiplier': self.bar_gap_multiplier_var.get() if hasattr(self, 'bar_gap_multiplier_var') else 0.75,
+                'strip_size': self.strip_size_var.get() if hasattr(self, 'strip_size_var') else 5.0,
+                'strip_alpha': self.strip_alpha_var.get() if hasattr(self, 'strip_alpha_var') else 0.55,
+                'strip_jitter': self.strip_jitter_var.get() if hasattr(self, 'strip_jitter_var') else 'Auto',
+                'strip_marker': self.strip_marker_var.get() if hasattr(self, 'strip_marker_var') else 'o',
+                'strip_custom_color': self.strip_custom_color_var.get() if hasattr(self, 'strip_custom_color_var') else '#000000'
             },
             'axis': {
                 'x_label': self.xlabel_entry.get() if hasattr(self, 'xlabel_entry') else '',
@@ -6299,7 +6442,9 @@ class ExPlotApp:
                 'palette': self.palette_var.get() if hasattr(self, 'palette_var') else list(self.custom_palettes.keys())[0],
                 'bar_outline': self.bar_outline_var.get() if hasattr(self, 'bar_outline_var') else False,
                 'outline_color': self.outline_color_var.get() if hasattr(self, 'outline_color_var') else 'as_set',
-                'strip_black': self.strip_black_var.get() if hasattr(self, 'strip_black_var') else True
+                'strip_black': self.strip_black_var.get() if hasattr(self, 'strip_black_var') else True,
+                'strip_color_mode': self.strip_color_mode_var.get() if hasattr(self, 'strip_color_mode_var') else 'Black',
+                'strip_custom_color': self.strip_custom_color_var.get() if hasattr(self, 'strip_custom_color_var') else '#000000'
             },
             'x_axis_renames': self.xaxis_renames,
             'x_axis_order': self.xaxis_order,
@@ -6600,7 +6745,26 @@ class ExPlotApp:
                     self.outline_color_var.set(colors['outline_color'])
                 if 'strip_black' in colors and hasattr(self, 'strip_black_var'):
                     self.strip_black_var.set(colors['strip_black'])
+                if 'strip_custom_color' in colors and hasattr(self, 'strip_custom_color_var'):
+                    self.strip_custom_color_var.set(colors['strip_custom_color'])
+                if 'strip_color_mode' in colors and hasattr(self, 'strip_color_mode_var'):
+                    self.strip_color_mode_var.set(colors['strip_color_mode'])
+                elif hasattr(self, 'strip_color_mode_var'):
+                    self.strip_color_mode_var.set('Black' if colors.get('strip_black', True) else 'Palette')
             
+            if 'appearance' in settings:
+                appearance = settings['appearance']
+                if 'strip_custom_color' in appearance and hasattr(self, 'strip_custom_color_var'):
+                    self.strip_custom_color_var.set(appearance['strip_custom_color'])
+                if 'strip_size' in appearance and hasattr(self, 'strip_size_var'):
+                    self.strip_size_var.set(appearance['strip_size'])
+                if 'strip_alpha' in appearance and hasattr(self, 'strip_alpha_var'):
+                    self.strip_alpha_var.set(appearance['strip_alpha'])
+                if 'strip_jitter' in appearance and hasattr(self, 'strip_jitter_var'):
+                    self.strip_jitter_var.set(appearance['strip_jitter'])
+                if 'strip_marker' in appearance and hasattr(self, 'strip_marker_var'):
+                    self.strip_marker_var.set(appearance['strip_marker'])
+
             # X-axis customizations
             if 'x_axis_renames' in settings:
                 self.xaxis_renames = settings['x_axis_renames']
@@ -7214,6 +7378,60 @@ class ExPlotApp:
         if hasattr(self, 'settings_palette_dropdown'):
             self.settings_palette_dropdown['values'] = list(self.custom_palettes.keys())
 
+    def _update_strip_color_ui(self):
+        """Update stripplot color UI based on selected mode."""
+        try:
+            mode = self.strip_color_mode_var.get()
+        except (AttributeError, tk.TclError):
+            return
+
+        # Handle the settings dialog widgets if they exist and are valid
+        if hasattr(self, 'strip_color_combo') and hasattr(self, 'strip_color_button'):
+            try:
+                # Check if widgets still exist (not destroyed)
+                if self.strip_color_combo.winfo_exists() and self.strip_color_button.winfo_exists():
+                    if mode == 'Custom':
+                        self.strip_color_button.grid(row=3, column=2, columnspan=2, sticky="w", padx=2, pady=1)
+                    else:
+                        self.strip_color_button.grid_remove()
+            except (tk.TclError, AttributeError):
+                # Widget likely destroyed or not yet initialized
+                pass
+
+        # List of frames that contain stripplot options
+        frames = []
+        if hasattr(self, 'bar_options_frame'): frames.append(self.bar_options_frame)
+        if hasattr(self, 'box_options_frame'): frames.append(self.box_options_frame)
+        if hasattr(self, 'violin_options_frame'): frames.append(self.violin_options_frame)
+        
+        for frame in frames:
+            try:
+                if frame.winfo_exists() and hasattr(frame, 'strip_color_button'):
+                    btn = getattr(frame, 'strip_color_button')
+                    if btn.winfo_exists():
+                        if mode == 'Custom':
+                            # Determine start_row based on frame type
+                            if frame == getattr(self, 'bar_options_frame', None):
+                                start_row = 2
+                            elif frame == getattr(self, 'violin_options_frame', None):
+                                start_row = 1
+                            else: # box_options_frame
+                                start_row = 0
+                            
+                            # The Choose button should be on the Jitter row
+                            btn.grid(row=start_row+3, column=2, columnspan=2, sticky="w", padx=(4,2), pady=1)
+                        else:
+                            btn.grid_remove()
+            except (tk.TclError, AttributeError):
+                continue
+    
+    def _choose_strip_color(self):
+        """Open color chooser for stripplot custom color."""
+        from tkinter import colorchooser
+        color = colorchooser.askcolor(initialcolor=self.strip_custom_color_var.get())
+        if color[1]:  # User didn't cancel
+            self.strip_custom_color_var.set(color[1])
+
     def create_dropdown(self, parent, label_text, attr_name):
         tk.Label(parent, text=label_text).pack()
         var = tk.StringVar()
@@ -7229,11 +7447,23 @@ class ExPlotApp:
         return entry
 
     def load_file(self, file_path=None):
-        """Load an Excel file either from a provided path or by prompting the user to select one"""
+        """Load a data file (Excel/CSV/TSV) either from a provided path or by prompting the user."""
         if file_path is None:
-            file_path = filedialog.askopenfilename(filetypes=[("Excel Files", "*.xlsx")])
-            
+            file_path = filedialog.askopenfilename(filetypes=[
+                ("All supported", "*.xlsx *.xls *.csv *.tsv *.txt"),
+                ("Excel Files", "*.xlsx *.xls"),
+                ("CSV files", "*.csv"),
+                ("TSV files", "*.tsv *.txt"),
+                ("All files", "*.*"),
+            ])
+
         if file_path:
+            lower_path = file_path.lower()
+            if lower_path.endswith('.csv') or lower_path.endswith('.tsv') or lower_path.endswith('.txt'):
+                # Delegate to the unified loader for delimited text files
+                self.process_excel_file(file_path)
+                return
+
             self.excel_file = file_path
             xls = pd.ExcelFile(self.excel_file)
             # Filter out sheets starting with underscore as they're meant for internal use
@@ -7293,8 +7523,15 @@ class ExPlotApp:
                 
                 self.current_sheet_type = 'modified'
             elif selected_sheet not in ['Raw Embedded Data', 'Modified Embedded Data']:
-                # Load from Excel file for normal sheets
-                self.df = pd.read_excel(self.excel_file, sheet_name=selected_sheet, dtype=object)
+                # Load from file for normal sheets (Excel/CSV/TSV)
+                _src = getattr(self, 'excel_file', '') or ''
+                _src_lower = _src.lower()
+                if _src_lower.endswith('.csv'):
+                    self.df = pd.read_csv(_src)
+                elif _src_lower.endswith('.tsv') or _src_lower.endswith('.txt'):
+                    self.df = pd.read_csv(_src, sep='\t')
+                else:
+                    self.df = pd.read_excel(self.excel_file, sheet_name=selected_sheet, dtype=object)
                 # When loading a new sheet, create a raw copy and initialize modifications
                 self.raw_df = self.df.copy()
                 self.modified_df = self.df.copy()
@@ -9431,31 +9668,59 @@ class ExPlotApp:
 
             # --- Stripplot (if enabled and not XY/histogram/heatmap plot) ---
             if show_stripplot and plot_kind not in ("xy", "histogram", "heatmap"):
+                strip_jitter_map = {
+                    'None': False,
+                    'Tight': 0.08,
+                    'Auto': True,
+                    'Wide': 0.25,
+                }
+                strip_alpha = max(0.0, min(1.0, float(self.strip_alpha_var.get())))
+                strip_size = max(0.5, float(self.strip_size_var.get()))
+                strip_marker = self.strip_marker_var.get().strip() or 'o'
+                strip_color_mode = self.strip_color_mode_var.get() if hasattr(self, 'strip_color_mode_var') else 'Black'
+                strip_jitter = strip_jitter_map.get(self.strip_jitter_var.get(), True)
                 # Rebuild stripplot args here so swap_axes is always applied consistently
                 if swap_axes:
                     stripplot_args = dict(
                         data=df_plot, y=x_col, x=value_col, hue=hue_col, dodge=True,
-                        jitter=True, marker='o', alpha=0.55,
+                        jitter=strip_jitter, marker=strip_marker, alpha=strip_alpha, size=strip_size,
                         ax=ax
                     )
                 else:
                     stripplot_args = dict(
                         data=df_plot, x=x_col, y=value_col, hue=hue_col, dodge=True,
-                        jitter=True, marker='o', alpha=0.55,
+                        jitter=strip_jitter, marker=strip_marker, alpha=strip_alpha, size=strip_size,
                         ax=ax
                     )
 
                 # First, prepare all the parameters for a single stripplot call
                 
-                # Check if "Show stripplot with black dots" option is selected
-                strip_black = self.strip_black_var.get()
-                
-                if strip_black:
+                # Apply color mode
+                if strip_color_mode == 'Black':
                     # If black dots option is selected, use black color
                     stripplot_args["color"] = "black"
                     # Remove any palette parameter if it exists
                     if "palette" in stripplot_args:
                         del stripplot_args["palette"]
+                elif strip_color_mode == 'Single color':
+                    if hue_col:
+                        # For grouped data with single color, create a single-color palette
+                        single_color = resolve_single_color(self.custom_colors, self.single_color_var.get())
+                        n_hue = len(df_plot[hue_col].dropna().unique())
+                        stripplot_args["palette"] = [single_color] * n_hue
+                    else:
+                        stripplot_args["color"] = resolve_single_color(self.custom_colors, self.single_color_var.get())
+                        if "palette" in stripplot_args:
+                            del stripplot_args["palette"]
+                elif strip_color_mode == 'Custom':
+                    if hue_col:
+                        # For grouped data with custom color, create a single-color palette
+                        n_hue = len(df_plot[hue_col].dropna().unique())
+                        stripplot_args["palette"] = [self.strip_custom_color_var.get()] * n_hue
+                    else:
+                        stripplot_args["color"] = self.strip_custom_color_var.get()
+                        if "palette" in stripplot_args:
+                            del stripplot_args["palette"]
                 else:
                     # Use palette colors
                     if hue_col:
@@ -9469,7 +9734,8 @@ class ExPlotApp:
                 # Set specific parameters for bar plots without hue
                 if plot_kind == 'bar' and not hue_col:
                     # Reduce jitter for more precise positioning
-                    stripplot_args['jitter'] = 0.2
+                    if self.strip_jitter_var.get() == 'Auto':
+                        stripplot_args['jitter'] = 0.2
                     stripplot_args['dodge'] = False  # Prevent automatic dodging
                 
                 # Set z-order higher than bars (10) to ensure stripplot points are visible
