@@ -1,6 +1,6 @@
 # ExPlot - Data visualization tool for Excel files
 
-VERSION = "0.7.6"
+VERSION = "0.7.7"
 # =====================================================================
 
 import tkinter as tk
@@ -1690,6 +1690,9 @@ class ExPlotApp:
         self.heatmap_aggfunc_var = tk.StringVar(value="mean")
         self.heatmap_cbar_width_var = tk.DoubleVar(value=6.0)  # colorbar width as % of axes
         self.heatmap_annot_fontsize_var = tk.IntVar(value=0)  # 0 = auto (fontsize - 2)
+        self.heatmap_vmin_var = tk.StringVar(value="")  # empty = auto
+        self.heatmap_vmax_var = tk.StringVar(value="")  # empty = auto
+        self.heatmap_cmap_invert_var = tk.BooleanVar(value=False)  # invert colormap
 
         # --- Legend settings ---
         self.legend_visible_var = tk.BooleanVar(value=True)
@@ -2372,6 +2375,9 @@ class ExPlotApp:
         self.settings_heatmap_aggfunc_var = tk.StringVar(value=self.heatmap_aggfunc_var.get())
         self.settings_heatmap_cbar_width_var = tk.DoubleVar(value=self.heatmap_cbar_width_var.get())
         self.settings_heatmap_annot_fontsize_var = tk.IntVar(value=self.heatmap_annot_fontsize_var.get())
+        self.settings_heatmap_vmin_var = tk.StringVar(value=self.heatmap_vmin_var.get())
+        self.settings_heatmap_vmax_var = tk.StringVar(value=self.heatmap_vmax_var.get())
+        self.settings_heatmap_cmap_invert_var = tk.BooleanVar(value=self.heatmap_cmap_invert_var.get())
         
         # Colors tab
         self.settings_single_color_var = tk.StringVar(value=self.single_color_var.get() if hasattr(self, 'single_color_var') else list(self.custom_colors.keys())[0])
@@ -2503,7 +2509,13 @@ class ExPlotApp:
         ttk.Combobox(heatmap_tab, textvariable=self.settings_heatmap_mode_var, values=["correlation", "pivot"], width=12, state="readonly").grid(row=0, column=1, sticky="w", padx=10, pady=8)
         
         ttk.Label(heatmap_tab, text="Colormap:", anchor="w").grid(row=1, column=0, sticky="w", padx=10, pady=8)
-        ttk.Combobox(heatmap_tab, textvariable=self.settings_heatmap_cmap_var, values=["coolwarm", "viridis", "plasma", "inferno", "magma", "cividis", "RdBu_r", "YlOrRd", "Blues", "Greens"], width=12, state="readonly").grid(row=1, column=1, sticky="w", padx=10, pady=8)
+        ttk.Combobox(heatmap_tab, textvariable=self.settings_heatmap_cmap_var, values=["coolwarm", "RdBu", "viridis", "plasma",
+                              "inferno", "magma", "cividis",
+                              "YlOrRd", "YlGnBu", "Blues",
+                              "Greens", "Reds", "Oranges",
+                              "Purples", "Greys",
+                              "Spectral", "bwr", "seismic",
+                              "turbo", "jet", "rainbow"], width=14, state="readonly").grid(row=1, column=1, sticky="w", padx=10, pady=8)
         
         ttk.Checkbutton(heatmap_tab, text="Show annotations", variable=self.settings_heatmap_annot_var).grid(row=2, column=0, columnspan=2, sticky="w", padx=10, pady=5)
         
@@ -2518,6 +2530,14 @@ class ExPlotApp:
         
         ttk.Label(heatmap_tab, text="Colorbar width (%):", anchor="w").grid(row=6, column=0, sticky="w", padx=10, pady=8)
         tk.Spinbox(heatmap_tab, from_=1, to=15, increment=0.5, textvariable=self.settings_heatmap_cbar_width_var, width=5).grid(row=6, column=1, sticky="w", padx=10, pady=8)
+        
+        ttk.Label(heatmap_tab, text="Colorbar min (blank=auto):", anchor="w").grid(row=7, column=0, sticky="w", padx=10, pady=8)
+        ttk.Entry(heatmap_tab, textvariable=self.settings_heatmap_vmin_var, width=10).grid(row=7, column=1, sticky="w", padx=10, pady=8)
+        
+        ttk.Label(heatmap_tab, text="Colorbar max (blank=auto):", anchor="w").grid(row=8, column=0, sticky="w", padx=10, pady=8)
+        ttk.Entry(heatmap_tab, textvariable=self.settings_heatmap_vmax_var, width=10).grid(row=8, column=1, sticky="w", padx=10, pady=8)
+        
+        ttk.Checkbutton(heatmap_tab, text="Invert colormap", variable=self.settings_heatmap_cmap_invert_var).grid(row=9, column=0, columnspan=2, sticky="w", padx=10, pady=5)
         
         # Colors Tab Content
         # Reset colors/palettes section
@@ -2655,6 +2675,9 @@ class ExPlotApp:
             self.heatmap_aggfunc_var.set(self.settings_heatmap_aggfunc_var.get())
             self.heatmap_cbar_width_var.set(self.settings_heatmap_cbar_width_var.get())
             self.heatmap_annot_fontsize_var.set(self.settings_heatmap_annot_fontsize_var.get())
+            self.heatmap_vmin_var.set(self.settings_heatmap_vmin_var.get())
+            self.heatmap_vmax_var.set(self.settings_heatmap_vmax_var.get())
+            self.heatmap_cmap_invert_var.set(self.settings_heatmap_cmap_invert_var.get())
             # Then save preferences
             self.save_user_preferences()
             messagebox.showinfo("Settings Saved", "Your preferences have been saved.")
@@ -4861,6 +4884,9 @@ class ExPlotApp:
             'heatmap_aggfunc': 'mean',
             'heatmap_cbar_width': 6.0,
             'heatmap_annot_fontsize': 0,
+            'heatmap_vmin': '',
+            'heatmap_vmax': '',
+            'heatmap_cmap_invert': False,
         }
         
         # Set default colors after loading custom colors
@@ -5071,6 +5097,12 @@ class ExPlotApp:
             self.heatmap_cbar_width_var.set(preferences['heatmap_cbar_width'])
         if 'heatmap_annot_fontsize' in preferences:
             self.heatmap_annot_fontsize_var.set(preferences['heatmap_annot_fontsize'])
+        if 'heatmap_vmin' in preferences:
+            self.heatmap_vmin_var.set(preferences['heatmap_vmin'])
+        if 'heatmap_vmax' in preferences:
+            self.heatmap_vmax_var.set(preferences['heatmap_vmax'])
+        if 'heatmap_cmap_invert' in preferences:
+            self.heatmap_cmap_invert_var.set(preferences['heatmap_cmap_invert'])
 
     def save_user_preferences(self, silent=False):
         """
@@ -5230,6 +5262,9 @@ class ExPlotApp:
         preferences['heatmap_aggfunc'] = self.heatmap_aggfunc_var.get()
         preferences['heatmap_cbar_width'] = self.heatmap_cbar_width_var.get()
         preferences['heatmap_annot_fontsize'] = self.heatmap_annot_fontsize_var.get()
+        preferences['heatmap_vmin'] = self.heatmap_vmin_var.get()
+        preferences['heatmap_vmax'] = self.heatmap_vmax_var.get()
+        preferences['heatmap_cmap_invert'] = self.heatmap_cmap_invert_var.get()
 
         # Save preferences to file
         try:
@@ -5287,6 +5322,9 @@ class ExPlotApp:
             self.heatmap_aggfunc_var.set(preferences.get('heatmap_aggfunc', 'mean'))
             self.heatmap_cbar_width_var.set(preferences.get('heatmap_cbar_width', 6.0))
             self.heatmap_annot_fontsize_var.set(preferences.get('heatmap_annot_fontsize', 0))
+            self.heatmap_vmin_var.set(preferences.get('heatmap_vmin', ''))
+            self.heatmap_vmax_var.set(preferences.get('heatmap_vmax', ''))
+            self.heatmap_cmap_invert_var.set(preferences.get('heatmap_cmap_invert', False))
 
             # Only show success message if not in silent mode
             if not silent:
@@ -5575,7 +5613,14 @@ class ExPlotApp:
         ttk.Combobox(self.heatmap_options_frame, textvariable=self.heatmap_mode_var, values=["correlation", "pivot"], width=10, state="readonly").grid(row=0, column=1, sticky="w", padx=1, pady=1)
         ttk.Label(self.heatmap_options_frame, text="Colormap:").grid(row=0, column=2, sticky="w", padx=(4,1), pady=1)
         ttk.Combobox(self.heatmap_options_frame, textvariable=self.heatmap_cmap_var,
-                      values=["coolwarm", "viridis", "plasma", "inferno", "magma", "cividis", "RdBu_r", "YlOrRd", "Blues", "Greens"], width=10, state="readonly").grid(row=0, column=3, sticky="w", padx=1, pady=1)
+                      values=["coolwarm", "RdBu", "viridis", "plasma",
+                              "inferno", "magma", "cividis",
+                              "YlOrRd", "YlGnBu", "Blues",
+                              "Greens", "Reds", "Oranges",
+                              "Purples", "Greys",
+                              "Spectral", "bwr", "seismic",
+                              "turbo", "jet", "rainbow"],
+                      width=12, state="readonly").grid(row=0, column=3, sticky="w", padx=1, pady=1)
         
         # Row 1: Annotation options
         ttk.Checkbutton(self.heatmap_options_frame, text="Annotations", variable=self.heatmap_annot_var).grid(row=1, column=0, sticky="w", padx=1, pady=1)
@@ -5588,9 +5633,16 @@ class ExPlotApp:
         ttk.Label(self.heatmap_options_frame, text="Aggregation:").grid(row=2, column=2, sticky="w", padx=(4,1), pady=1)
         ttk.Combobox(self.heatmap_options_frame, textvariable=self.heatmap_aggfunc_var, values=["mean", "median", "sum", "count", "std"], width=8, state="readonly").grid(row=2, column=3, sticky="w", padx=1, pady=1)
         
-        # Row 3: Colorbar width
+        # Row 3: Colorbar width and vmin/vmax
         ttk.Label(self.heatmap_options_frame, text="Colorbar %:").grid(row=3, column=0, sticky="w", padx=1, pady=1)
         ttk.Spinbox(self.heatmap_options_frame, from_=1, to=15, increment=0.5, textvariable=self.heatmap_cbar_width_var, width=5).grid(row=3, column=1, sticky="w", padx=1, pady=1)
+        ttk.Label(self.heatmap_options_frame, text="Min:").grid(row=3, column=2, sticky="w", padx=(4,1), pady=1)
+        ttk.Entry(self.heatmap_options_frame, textvariable=self.heatmap_vmin_var, width=6).grid(row=3, column=3, sticky="w", padx=1, pady=1)
+        
+        # Row 4: Max and Invert
+        ttk.Label(self.heatmap_options_frame, text="Max:").grid(row=4, column=2, sticky="w", padx=(4,1), pady=1)
+        ttk.Entry(self.heatmap_options_frame, textvariable=self.heatmap_vmax_var, width=6).grid(row=4, column=3, sticky="w", padx=1, pady=1)
+        ttk.Checkbutton(self.heatmap_options_frame, text="Invert colors", variable=self.heatmap_cmap_invert_var).grid(row=4, column=0, columnspan=2, sticky="w", padx=1, pady=1)
 
         # --- Bar Graph options frame ---
         self.bar_options_frame = ttk.Frame(self.options_container)
@@ -6489,7 +6541,10 @@ class ExPlotApp:
                 'fmt': self.heatmap_fmt_var.get() if hasattr(self, 'heatmap_fmt_var') else '.2f',
                 'aggfunc': self.heatmap_aggfunc_var.get() if hasattr(self, 'heatmap_aggfunc_var') else 'mean',
                 'cbar_width': self.heatmap_cbar_width_var.get() if hasattr(self, 'heatmap_cbar_width_var') else 6.0,
-                'annot_fontsize': self.heatmap_annot_fontsize_var.get() if hasattr(self, 'heatmap_annot_fontsize_var') else 0
+                'annot_fontsize': self.heatmap_annot_fontsize_var.get() if hasattr(self, 'heatmap_annot_fontsize_var') else 0,
+                'vmin': self.heatmap_vmin_var.get() if hasattr(self, 'heatmap_vmin_var') else '',
+                'vmax': self.heatmap_vmax_var.get() if hasattr(self, 'heatmap_vmax_var') else '',
+                'cmap_invert': self.heatmap_cmap_invert_var.get() if hasattr(self, 'heatmap_cmap_invert_var') else False
             }
         }
         
@@ -6871,6 +6926,12 @@ class ExPlotApp:
                     self.heatmap_cbar_width_var.set(hm['cbar_width'])
                 if 'annot_fontsize' in hm and hasattr(self, 'heatmap_annot_fontsize_var'):
                     self.heatmap_annot_fontsize_var.set(hm['annot_fontsize'])
+                if 'vmin' in hm and hasattr(self, 'heatmap_vmin_var'):
+                    self.heatmap_vmin_var.set(hm['vmin'])
+                if 'vmax' in hm and hasattr(self, 'heatmap_vmax_var'):
+                    self.heatmap_vmax_var.set(hm['vmax'])
+                if 'cmap_invert' in hm and hasattr(self, 'heatmap_cmap_invert_var'):
+                    self.heatmap_cmap_invert_var.set(hm['cmap_invert'])
 
             # Apply XY Fitting settings if present
             if 'xy_fitting' in settings and hasattr(self, 'use_fitting_var'):
@@ -9631,14 +9692,39 @@ class ExPlotApp:
                     if annot_fs <= 0:
                         annot_fs = max(6, fontsize - 2)
 
+                    # Apply colormap inversion if requested
+                    effective_cmap = heatmap_cmap
+                    if self.heatmap_cmap_invert_var.get():
+                        if heatmap_cmap.endswith('_r'):
+                            effective_cmap = heatmap_cmap[:-2]
+                        else:
+                            effective_cmap = heatmap_cmap + '_r'
+
                     hm_kwargs = dict(
-                        annot=heatmap_annot, fmt=heatmap_fmt, cmap=heatmap_cmap,
+                        annot=heatmap_annot, fmt=heatmap_fmt, cmap=effective_cmap,
                         ax=ax, linewidths=linewidth, linecolor='white',
                         annot_kws={"size": annot_fs},
                         cbar=False,
                     )
+                    # Parse user-defined vmin/vmax (empty = auto)
+                    vmin_str = self.heatmap_vmin_var.get().strip()
+                    vmax_str = self.heatmap_vmax_var.get().strip()
+                    if vmin_str:
+                        try:
+                            hm_kwargs['vmin'] = float(vmin_str)
+                        except ValueError:
+                            pass
+                    if vmax_str:
+                        try:
+                            hm_kwargs['vmax'] = float(vmax_str)
+                        except ValueError:
+                            pass
+                    # Default to -1/1 for correlation mode when not user-specified
                     if heatmap_mode == "correlation":
-                        hm_kwargs.update(vmin=-1, vmax=1)
+                        if 'vmin' not in hm_kwargs:
+                            hm_kwargs['vmin'] = -1
+                        if 'vmax' not in hm_kwargs:
+                            hm_kwargs['vmax'] = 1
 
                     sns.heatmap(heatmap_data, **hm_kwargs)
 
