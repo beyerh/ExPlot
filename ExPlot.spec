@@ -1,3 +1,6 @@
+# -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_data_files
+
 block_cipher = None
 
 a = Analysis(
@@ -7,7 +10,7 @@ a = Analysis(
     datas=[
         ('explot.icns', '.'),
         ('example_data.xlsx', '.')
-    ],
+    ] + collect_data_files('ttkbootstrap'),
     hiddenimports=['openpyxl.cell._writer', 'matplotlib.backends.backend_pdf'],
     hookspath=[],
     hooksconfig={},
