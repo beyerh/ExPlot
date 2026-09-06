@@ -292,12 +292,21 @@ def setup_theme(root, dark_mode=None, theme_name=None):
     LIGHT_THEMES = [
         'cosmo', 'flatly', 'journal', 'litera', 'lumen', 
         'minty', 'pulse', 'sandstone', 'united', 'yeti',
-        'morph', 'simplex', 'cerculean'
+        'morph', 'simplex', 'cerculean',
+        # v2.2.2 new themes
+        'bootstrap-light', 'catppuccin-light', 'dracula-light',
+        'everforest-light', 'gruvbox-light', 'nord-light',
+        'one-light', 'pydata-light', 'solarized-light',
+        'tokyo-night-light',
     ]
     
     DARK_THEMES = [
-        'solar', 'superhero', 'darkly', 'cyborg', 'vapor',
-        'sharish', 'hacker', 'nord', 'nordic'
+        'darkly', 'solar', 'superhero', 'cyborg', 'vapor',
+        'nord', 'nordic',
+        # v2.2.2 new themes
+        'bootstrap-dark', 'catppuccin-dark', 'dracula-dark',
+        'everforest-dark', 'gruvbox-dark', 'one-dark',
+        'pydata-dark', 'solarized-dark', 'tokyo-night-dark',
     ]
     
     # Default theme selection
@@ -518,7 +527,17 @@ def get_available_themes():
             'yeti': 'Yeti',
             'morph': 'Morph',
             'simplex': 'Simplex',
-            'cerculean': 'Cerculean'
+            'cerculean': 'Cerculean',
+            'bootstrap-light': 'Bootstrap Light',
+            'catppuccin-light': 'Catppuccin Light',
+            'dracula-light': 'Dracula Light',
+            'everforest-light': 'Everforest Light',
+            'gruvbox-light': 'Gruvbox Light',
+            'nord-light': 'Nord Light',
+            'one-light': 'One Light',
+            'pydata-light': 'PyData Light',
+            'solarized-light': 'Solarized Light',
+            'tokyo-night-light': 'Tokyo Night Light',
         },
         'Dark': {
             'darkly': 'Darkly (Default Dark)',
@@ -526,7 +545,14 @@ def get_available_themes():
             'superhero': 'Superhero',
             'cyborg': 'Cyborg',
             'vapor': 'Vapor',
-            'sharish': 'Sharish',
-            'hacker': 'Hacker'
+            'bootstrap-dark': 'Bootstrap Dark',
+            'catppuccin-dark': 'Catppuccin Dark',
+            'dracula-dark': 'Dracula Dark',
+            'everforest-dark': 'Everforest Dark',
+            'gruvbox-dark': 'Gruvbox Dark',
+            'one-dark': 'One Dark',
+            'pydata-dark': 'PyData Dark',
+            'solarized-dark': 'Solarized Dark',
+            'tokyo-night-dark': 'Tokyo Night Dark',
         }
     }

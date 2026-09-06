@@ -4,7 +4,7 @@
  
  # Configuration
  APP_NAME="ExPlot"
- VERSION="0.7.7"
+ VERSION="0.7.8"
  BUILD_DIR="build"
  
  VENV_APP=".venv"
@@ -259,6 +259,7 @@
        --macos-signed-app-name=\"com.${APP_NAME}.app\" \
        --enable-plugin=tk-inter \
        --include-package=matplotlib.backends.backend_pdf \
+       --include-package-data=ttkbootstrap \
        --output-filename=\"${APP_NAME}\" \
        --output-dir=\"${BUILD_DIR}\" \
        launch.py"
@@ -297,7 +298,7 @@
    echo -e "Copying additional files..."
    cp -r pingouin "${BUILD_DIR}/${APP_NAME}.app/Contents/MacOS/"
    cp -r example_data.xlsx "${BUILD_DIR}/${APP_NAME}.app/Contents/MacOS/"
- 
+
    echo -e "Build completed: ${BUILD_DIR}/${APP_NAME}.app"
 
    # ── Ad-hoc code signing ──────────────────────────────────────────────

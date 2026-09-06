@@ -1,6 +1,6 @@
 # ExPlot - Data visualization tool for Excel files
 
-VERSION = "0.7.7"
+VERSION = "0.7.8"
 # =====================================================================
 
 import tkinter as tk
@@ -507,12 +507,24 @@ class ExPlotApp:
         ttk.Button(button_row, text="Cancel", command=win.destroy, width=12).pack(side='right', padx=(4, 0))
         ttk.Button(button_row, text="Save", command=_save_and_close, width=12).pack(side='right')
 
-    def _plot_xy_base(self, ax, df_plot, x_col, value_col, hue_col, value_cols, errorbar_black, linewidth, allow_legend=True, palette_override=None, marker_override=None):
+    def _plot_xy_base(self, ax, df_plot, x_col, value_col, hue_col, value_cols, errorbar_black, linewidth, allow_legend=True, palette_override=None, marker_override=None, group_col=None):
         marker_size = self.xy_marker_size_var.get()
         marker_symbol = self.xy_marker_symbol_var.get()
         marker_mode = self.xy_marker_mode_var.get()
         connect = self.xy_connect_var.get()
         draw_band = self.xy_draw_band_var.get()
+        tolerance_band = self.xy_tolerance_band_var.get()
+        tolerance_value = self.xy_tolerance_value_var.get()
+        tol_mode = self.xy_tolerance_mode_var.get()
+        tol_fixed_value = self.xy_tolerance_fixed_value_var.get()
+        tol_show_mean_line = self.xy_tolerance_show_mean_line_var.get()
+        tol_show_mean_text = self.xy_tolerance_show_mean_text_var.get()
+        tol_xmin_str = self.xy_tolerance_xmin_var.get().strip()
+        tol_xmax_str = self.xy_tolerance_xmax_var.get().strip()
+        precomputed_error = self.xy_precomputed_error_var.get()
+        error_col = self.xy_error_col_var.get() if precomputed_error else ''
+        # When data is melted (overlay mode), errors may be in _plotted_error column
+        melted_error_col = '_plotted_error' if (precomputed_error and '_plotted_error' in df_plot.columns) else ''
         show_mean = self.xy_show_mean_var.get()
         show_mean_errorbars = self.xy_show_mean_errorbars_var.get()
         filled = self.xy_filled_var.get()
@@ -536,17 +548,108 @@ class ExPlotApp:
                 n = len(value_cols)
             palette = resolve_palette(self.custom_palettes, self.palette_var.get(), n)
 
+        if tolerance_band or tol_show_mean_line or tol_show_mean_text:
+            y_vals = pd.to_numeric(df_plot[value_col], errors='coerce')
+            x_vals = pd.to_numeric(df_plot[x_col], errors='coerce')
+            valid = y_vals.notna() & x_vals.notna()
+            y_vals = y_vals[valid]
+            x_vals = x_vals[valid]
+            if len(y_vals) > 0:
+                tol_xmin = float(tol_xmin_str) if tol_xmin_str else None
+                tol_xmax = float(tol_xmax_str) if tol_xmax_str else None
+
+                # Determine groups for per-group tolerance bands
+                # When group_col is provided (e.g. overlay mode with a group column),
+                # compute tolerance bands per (hue, group) combination.
+                has_group = group_col is not None and group_col in df_plot.columns
+                if hue_col and hue_col in df_plot.columns:
+                    hue_names = list(df_plot[hue_col].dropna().unique())
+                    if palette_override is not None:
+                        gp = palette_override
+                    else:
+                        gp = resolve_palette(self.custom_palettes, self.palette_var.get(), len(hue_names))
+                    color_map = {name: gp[i] for i, name in enumerate(hue_names)}
+                else:
+                    hue_names = [None]
+                    color_map = {None: palette[0] if palette else 'black'}
+
+                if has_group:
+                    group_vals = list(df_plot[group_col].dropna().unique())
+                else:
+                    group_vals = [None]
+
+                text_y = 0.98
+                for gname in hue_names:
+                    for gv in group_vals:
+                        # Build mask for this (hue, group) combination
+                        masks = []
+                        if gname is not None:
+                            masks.append(df_plot[hue_col] == gname)
+                        if gv is not None:
+                            masks.append(df_plot[group_col] == gv)
+                        if masks:
+                            combined_mask = masks[0]
+                            for m in masks[1:]:
+                                combined_mask = combined_mask & m
+                            subset_idx = df_plot[combined_mask].index
+                        else:
+                            subset_idx = df_plot.index
+                        g_y = y_vals[y_vals.index.isin(subset_idx)]
+                        g_x = x_vals[x_vals.index.isin(subset_idx)]
+                        if len(g_y) == 0:
+                            continue
+                        mask = pd.Series(True, index=g_y.index)
+                        if tol_xmin is not None:
+                            mask &= g_x >= tol_xmin
+                        if tol_xmax is not None:
+                            mask &= g_x <= tol_xmax
+                        g_y_filtered = g_y[mask]
+                        if len(g_y_filtered) == 0:
+                            continue
+                        g_mean = g_y_filtered.mean()
+                        g_sd = g_y_filtered.std(ddof=1) if len(g_y_filtered) > 1 else 0.0
+                        c = color_map.get(gname, 'black')
+                        if tolerance_band:
+                            if tol_mode == 'fixed':
+                                y_lower = g_mean - tol_fixed_value
+                                y_upper = g_mean + tol_fixed_value
+                            else:
+                                tol = tolerance_value / 100.0
+                                y_lower = g_mean * (1 - tol)
+                                y_upper = g_mean * (1 + tol)
+                            ax.axhspan(y_lower, y_upper, facecolor=c, alpha=0.12, edgecolor='none', zorder=0)
+                        if tol_show_mean_line:
+                            ax.axhline(g_mean, color=c, linewidth=0.5, linestyle='--', alpha=0.5, zorder=0)
+                        if tol_show_mean_text:
+                            parts = []
+                            if gname is not None:
+                                parts.append(str(gname))
+                            if gv is not None:
+                                parts.append(str(gv))
+                            label = ': '.join(parts) + ': ' if parts else ''
+                            ax.text(0.02, text_y, f'{label}Mean = {g_mean:.4g}, SD = {g_sd:.4g}',
+                                    transform=ax.transAxes, fontsize=8, verticalalignment='top', color=c,
+                                    bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.7, edgecolor='none'))
+                            text_y -= 0.05
+
         if show_mean:
             groupers = [x_col]
             if hue_col:
                 groupers.append(hue_col)
             grouped = df_plot.groupby(groupers)[value_col]
             means = grouped.mean().reset_index()
-            if self.errorbar_type_var.get() == "SEM":
+            if precomputed_error and melted_error_col and melted_error_col in df_plot.columns:
+                err_grouped = df_plot.groupby(groupers)[melted_error_col].first().reset_index(name='err')
+                means = means.merge(err_grouped, on=groupers)
+            elif precomputed_error and error_col and error_col in df_plot.columns:
+                err_grouped = df_plot.groupby(groupers)[error_col].first().reset_index(name='err')
+                means = means.merge(err_grouped, on=groupers)
+            elif self.errorbar_type_var.get() == "SEM":
                 errors = grouped.apply(lambda x: np.std(x.dropna().astype(float), ddof=1) / np.sqrt(len(x.dropna())) if len(x.dropna()) > 1 else 0).reset_index(name='err')
+                means = means.merge(errors, on=groupers)
             else:
                 errors = grouped.std(ddof=1).reset_index(name='err')
-            means = means.merge(errors, on=groupers)
+                means = means.merge(errors, on=groupers)
 
             if hue_col:
                 group_names = list(df_plot[hue_col].dropna().unique())
@@ -565,6 +668,8 @@ class ExPlotApp:
                     x = group[x_col]
                     y = group[value_col]
                     yerr = group['err']
+                    # Convert None to NaN (matplotlib rejects None in yerr)
+                    yerr = yerr.fillna(0) if hasattr(yerr, 'fillna') else yerr
                     ecolor = 'black' if errorbar_black else c
                     mfc = c if filled else 'none'
                     mec = c
@@ -598,11 +703,20 @@ class ExPlotApp:
                         self.place_legend(ax, handles, labels)
             else:
                 c = palette[0]
-                x_sorted = np.sort(df_plot[x_col].unique())
+                x_sorted = sorted(df_plot[x_col].unique(), key=str)
                 y_means = [df_plot[df_plot[x_col] == x][value_col].mean() for x in x_sorted]
-                y_errors = [df_plot[df_plot[x_col] == x][value_col].std(ddof=1) if self.errorbar_type_var.get() == 'SD' else
-                            df_plot[df_plot[x_col] == x][value_col].std(ddof=1) / np.sqrt(len(df_plot[df_plot[x_col] == x]))
-                            for x in x_sorted]
+                if precomputed_error and melted_error_col and melted_error_col in df_plot.columns:
+                    y_errors = [df_plot[df_plot[x_col] == x][melted_error_col].iloc[0] if len(df_plot[df_plot[x_col] == x]) > 0 else 0
+                                for x in x_sorted]
+                    y_errors = [0 if v is None or (isinstance(v, float) and np.isnan(v)) else v for v in y_errors]
+                elif precomputed_error and error_col and error_col in df_plot.columns:
+                    y_errors = [df_plot[df_plot[x_col] == x][error_col].iloc[0] if len(df_plot[df_plot[x_col] == x]) > 0 else 0
+                                for x in x_sorted]
+                    y_errors = [0 if v is None or (isinstance(v, float) and np.isnan(v)) else v for v in y_errors]
+                else:
+                    y_errors = [df_plot[df_plot[x_col] == x][value_col].std(ddof=1) if self.errorbar_type_var.get() == 'SD' else
+                                df_plot[df_plot[x_col] == x][value_col].std(ddof=1) / np.sqrt(len(df_plot[df_plot[x_col] == x]))
+                                for x in x_sorted]
 
                 x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
                 y_means_numeric = pd.to_numeric(y_means, errors='coerce')
@@ -680,7 +794,7 @@ class ExPlotApp:
                 ax.scatter(df_plot[x_col], df_plot[value_col], marker=marker_symbol, s=marker_size**2, color=c,
                            edgecolors=edge, facecolors=face, linewidth=linewidth)
                 if draw_band:
-                    x_sorted = np.sort(df_plot[x_col].unique())
+                    x_sorted = sorted(df_plot[x_col].unique(), key=str)
                     min_vals = [df_plot[df_plot[x_col] == x][value_col].min() for x in x_sorted]
                     max_vals = [df_plot[df_plot[x_col] == x][value_col].max() for x in x_sorted]
                     x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
@@ -688,7 +802,7 @@ class ExPlotApp:
                     max_vals_numeric = pd.to_numeric(max_vals, errors='coerce')
                     ax.fill_between(x_sorted_numeric, min_vals_numeric, max_vals_numeric, color=c, alpha=0.18, zorder=1)
                 if connect:
-                    x_sorted = np.sort(df_plot[x_col].unique())
+                    x_sorted = sorted(df_plot[x_col].unique(), key=str)
                     means = [df_plot[df_plot[x_col] == x][value_col].mean() for x in x_sorted]
                     x_sorted_numeric = pd.to_numeric(x_sorted, errors='coerce')
                     means_numeric = pd.to_numeric(means, errors='coerce')
@@ -1242,7 +1356,8 @@ class ExPlotApp:
             annotator.configure(test=None, text_format='star', 
                                 pvalue_format=pvalue_format,
                                 loc='inside',
-                                line_width=self.linewidth.get()
+                                line_width=self.linewidth.get(),
+                                color='black'
                                 )
                 
             # Generate annotations with the current alpha setting
@@ -1442,7 +1557,8 @@ class ExPlotApp:
                 annotator.configure(test=None, text_format='star', 
                                     pvalue_format=pvalue_format,
                                     loc='inside',
-                                    line_width=self.linewidth.get()
+                                    line_width=self.linewidth.get(),
+                                    color='black'
                                     )
                 
                 # Set custom p-values and annotations
@@ -1562,7 +1678,8 @@ class ExPlotApp:
                     annotator.configure(test=None, text_format='star', 
                                         pvalue_format=pvalue_format,
                                         loc='inside',
-                                        line_width=self.linewidth.get()
+                                        line_width=self.linewidth.get(),
+                                        color='black'
                                         )
                     
                     # Increase the y-limit to make room for annotations
@@ -1663,6 +1780,29 @@ class ExPlotApp:
         self.xy_show_mean_var = tk.BooleanVar(value=True)
         self.xy_show_mean_errorbars_var = tk.BooleanVar(value=True)
         self.xy_draw_band_var = tk.BooleanVar(value=False)
+        self.xy_tolerance_band_var = tk.BooleanVar(value=False)
+        self.xy_tolerance_value_var = tk.DoubleVar(value=10.0)  # percentage, e.g. 10.0 = ±10%
+        self.xy_tolerance_mode_var = tk.StringVar(value='mean')  # 'mean' or 'fixed'
+        self.xy_tolerance_fixed_value_var = tk.DoubleVar(value=1.0)  # ±absolute value around mean
+        self.xy_tolerance_show_mean_line_var = tk.BooleanVar(value=False)  # show dashed mean line
+        self.xy_tolerance_show_mean_text_var = tk.BooleanVar(value=False)  # show mean value text on graph
+        self.xy_tolerance_xmin_var = tk.StringVar(value='')  # optional x min for mean computation
+        self.xy_tolerance_xmax_var = tk.StringVar(value='')  # optional x max for mean computation
+        # Custom Y-axis band (drawn as axhspan, independent of tolerance)
+        self.yband_enable_var = tk.BooleanVar(value=False)
+        self.yband_min_var = tk.StringVar(value='')
+        self.yband_max_var = tk.StringVar(value='')
+        self.yband_alpha_var = tk.DoubleVar(value=0.15)
+        self.yband_color_var = tk.StringVar(value='gray')
+        # Custom X-axis band (drawn as axvspan, independent of tolerance)
+        self.xband_enable_var = tk.BooleanVar(value=False)
+        self.xband_min_var = tk.StringVar(value='')
+        self.xband_max_var = tk.StringVar(value='')
+        self.xband_alpha_var = tk.DoubleVar(value=0.15)
+        self.xband_color_var = tk.StringVar(value='gray')
+        self.xy_precomputed_error_var = tk.BooleanVar(value=False)
+        self.xy_error_col_var = tk.StringVar(value='')  # backward compat: single error col
+        self.xy_error_col_map_var = tk.StringVar(value='')  # JSON dict: {"Y_col": "err_col", ...}
 
         # --- Secondary Y-axis (XY plots) ---
         self.use_secondary_yaxis_var = tk.BooleanVar(value=False)
@@ -2366,6 +2506,17 @@ class ExPlotApp:
         self.settings_xy_show_mean_var = tk.BooleanVar(value=self.xy_show_mean_var.get())
         self.settings_xy_show_mean_errorbars_var = tk.BooleanVar(value=self.xy_show_mean_errorbars_var.get())
         self.settings_xy_draw_band_var = tk.BooleanVar(value=self.xy_draw_band_var.get())
+        self.settings_xy_tolerance_band_var = tk.BooleanVar(value=self.xy_tolerance_band_var.get())
+        self.settings_xy_tolerance_value_var = tk.DoubleVar(value=self.xy_tolerance_value_var.get())
+        self.settings_xy_tolerance_mode_var = tk.StringVar(value=self.xy_tolerance_mode_var.get())
+        self.settings_xy_tolerance_fixed_value_var = tk.DoubleVar(value=self.xy_tolerance_fixed_value_var.get())
+        self.settings_xy_tolerance_show_mean_line_var = tk.BooleanVar(value=self.xy_tolerance_show_mean_line_var.get())
+        self.settings_xy_tolerance_show_mean_text_var = tk.BooleanVar(value=self.xy_tolerance_show_mean_text_var.get())
+        self.settings_xy_tolerance_xmin_var = tk.StringVar(value=self.xy_tolerance_xmin_var.get())
+        self.settings_xy_tolerance_xmax_var = tk.StringVar(value=self.xy_tolerance_xmax_var.get())
+        self.settings_xy_precomputed_error_var = tk.BooleanVar(value=self.xy_precomputed_error_var.get())
+        self.settings_xy_error_col_var = tk.StringVar(value=self.xy_error_col_var.get())
+        self.settings_xy_error_col_map_var = tk.StringVar(value=self.xy_error_col_map_var.get())
         
         # Heatmap tab
         self.settings_heatmap_mode_var = tk.StringVar(value=self.heatmap_mode_var.get())
@@ -2503,6 +2654,28 @@ class ExPlotApp:
         ttk.Checkbutton(xy_plot_tab, text="Show Mean Values", variable=self.settings_xy_show_mean_var).grid(row=7, column=0, sticky="w", padx=10, pady=5, columnspan=2)
         ttk.Checkbutton(xy_plot_tab, text="With Error Bars", variable=self.settings_xy_show_mean_errorbars_var).grid(row=8, column=0, sticky="w", padx=30, pady=5, columnspan=2)
         ttk.Checkbutton(xy_plot_tab, text="Draw Bands", variable=self.settings_xy_draw_band_var).grid(row=9, column=0, sticky="w", padx=10, pady=5, columnspan=2)
+        ttk.Checkbutton(xy_plot_tab, text="Tolerance Band (±%)", variable=self.settings_xy_tolerance_band_var).grid(row=10, column=0, sticky="w", padx=10, pady=5)
+        tk.Spinbox(xy_plot_tab, from_=0.1, to=100.0, increment=0.5, textvariable=self.settings_xy_tolerance_value_var, width=6).grid(row=10, column=1, sticky="w", padx=10, pady=5)
+        # Tolerance mode
+        tol_mode_row = 14
+        ttk.Label(xy_plot_tab, text="Tol. mode:", anchor="w").grid(row=tol_mode_row, column=0, sticky="w", padx=10, pady=2)
+        tol_mode_f = ttk.Frame(xy_plot_tab)
+        tol_mode_f.grid(row=tol_mode_row, column=1, sticky="w", padx=10, pady=2)
+        ttk.Radiobutton(tol_mode_f, text="Mean ±%", variable=self.settings_xy_tolerance_mode_var, value="mean").pack(side="left")
+        ttk.Radiobutton(tol_mode_f, text="Mean ±val", variable=self.settings_xy_tolerance_mode_var, value="fixed").pack(side="left", padx=(4,0))
+        ttk.Entry(tol_mode_f, textvariable=self.settings_xy_tolerance_fixed_value_var, width=6).pack(side="left", padx=(4,0))
+        ttk.Label(xy_plot_tab, text="Tol. x interval:", anchor="w").grid(row=11, column=0, sticky="w", padx=10, pady=2)
+        tol_x_frame = ttk.Frame(xy_plot_tab)
+        tol_x_frame.grid(row=11, column=1, sticky="w", padx=10, pady=2)
+        ttk.Entry(tol_x_frame, textvariable=self.settings_xy_tolerance_xmin_var, width=6).pack(side="left")
+        ttk.Label(tol_x_frame, text=" - ").pack(side="left")
+        ttk.Entry(tol_x_frame, textvariable=self.settings_xy_tolerance_xmax_var, width=6).pack(side="left")
+        ttk.Checkbutton(xy_plot_tab, text="Show Mean Line", variable=self.settings_xy_tolerance_show_mean_line_var).grid(row=12, column=0, sticky="w", padx=10, pady=5)
+        ttk.Checkbutton(xy_plot_tab, text="Show Mean Text", variable=self.settings_xy_tolerance_show_mean_text_var).grid(row=12, column=1, sticky="w", padx=10, pady=5)
+        ttk.Checkbutton(xy_plot_tab, text="Precomputed Error Col", variable=self.settings_xy_precomputed_error_var).grid(row=13, column=0, sticky="w", padx=10, pady=5)
+        ttk.Entry(xy_plot_tab, textvariable=self.settings_xy_error_col_var, width=15).grid(row=13, column=1, sticky="w", padx=10, pady=5)
+        ttk.Label(xy_plot_tab, text="Error Col Map (JSON):").grid(row=14, column=0, sticky="w", padx=10, pady=5)
+        ttk.Entry(xy_plot_tab, textvariable=self.settings_xy_error_col_map_var, width=30).grid(row=14, column=1, sticky="w", padx=10, pady=5)
         
         # Heatmap Tab Content
         ttk.Label(heatmap_tab, text="Mode:", anchor="w").grid(row=0, column=0, sticky="w", padx=10, pady=8)
@@ -4863,6 +5036,27 @@ class ExPlotApp:
             'xy_show_mean': True,
             'xy_show_mean_errorbars': True,
             'xy_draw_band': False,
+            'xy_tolerance_band': False,
+            'xy_tolerance_value': 10.0,
+            'xy_tolerance_mode': 'mean',
+            'xy_tolerance_fixed_value': 1.0,
+            'xy_tolerance_show_mean_line': False,
+            'xy_tolerance_show_mean_text': False,
+            'xy_tolerance_xmin': '',
+            'xy_tolerance_xmax': '',
+            'yband_enable': False,
+            'yband_min': '',
+            'yband_max': '',
+            'yband_alpha': 0.15,
+            'yband_color': 'gray',
+            'xband_enable': False,
+            'xband_min': '',
+            'xband_max': '',
+            'xband_alpha': 0.15,
+            'xband_color': 'gray',
+            'xy_precomputed_error': False,
+            'xy_error_col': '',
+            'xy_error_col_map': '',
             # Default color settings
             'single_color': None,  # Will be set after colors are loaded
             'palette': None,  # Will be set after palettes are loaded
@@ -4926,6 +5120,10 @@ class ExPlotApp:
             # Apply the theme if the style object is available
             if hasattr(self, 'style'):
                 try:
+                    # Fallback for themes removed in ttkbootstrap 2.2.2
+                    if theme_name.lower() in ('sharish', 'hacker'):
+                        theme_name = 'darkly'
+                        self.theme_name = theme_name
                     # For custom themes (nord, nordic), use _change_theme to properly set them up
                     if theme_name.lower() in ['nord', 'nordic']:
                         from launch import _change_theme
@@ -5071,6 +5269,48 @@ class ExPlotApp:
             self.xy_show_mean_errorbars_var.set(preferences['xy_show_mean_errorbars'])
         if hasattr(self, 'xy_draw_band_var') and 'xy_draw_band' in preferences:
             self.xy_draw_band_var.set(preferences['xy_draw_band'])
+        if hasattr(self, 'xy_tolerance_band_var') and 'xy_tolerance_band' in preferences:
+            self.xy_tolerance_band_var.set(preferences['xy_tolerance_band'])
+        if hasattr(self, 'xy_tolerance_value_var') and 'xy_tolerance_value' in preferences:
+            self.xy_tolerance_value_var.set(preferences['xy_tolerance_value'])
+        if hasattr(self, 'xy_tolerance_mode_var') and 'xy_tolerance_mode' in preferences:
+            self.xy_tolerance_mode_var.set(preferences['xy_tolerance_mode'])
+        if hasattr(self, 'xy_tolerance_fixed_value_var') and 'xy_tolerance_fixed_value' in preferences:
+            self.xy_tolerance_fixed_value_var.set(preferences['xy_tolerance_fixed_value'])
+        if hasattr(self, 'xy_tolerance_show_mean_line_var') and 'xy_tolerance_show_mean_line' in preferences:
+            self.xy_tolerance_show_mean_line_var.set(preferences['xy_tolerance_show_mean_line'])
+        if hasattr(self, 'xy_tolerance_show_mean_text_var') and 'xy_tolerance_show_mean_text' in preferences:
+            self.xy_tolerance_show_mean_text_var.set(preferences['xy_tolerance_show_mean_text'])
+        if hasattr(self, 'xy_tolerance_xmin_var') and 'xy_tolerance_xmin' in preferences:
+            self.xy_tolerance_xmin_var.set(preferences['xy_tolerance_xmin'])
+        if hasattr(self, 'xy_tolerance_xmax_var') and 'xy_tolerance_xmax' in preferences:
+            self.xy_tolerance_xmax_var.set(preferences['xy_tolerance_xmax'])
+        if hasattr(self, 'yband_enable_var') and 'yband_enable' in preferences:
+            self.yband_enable_var.set(preferences['yband_enable'])
+        if hasattr(self, 'yband_min_var') and 'yband_min' in preferences:
+            self.yband_min_var.set(preferences['yband_min'])
+        if hasattr(self, 'yband_max_var') and 'yband_max' in preferences:
+            self.yband_max_var.set(preferences['yband_max'])
+        if hasattr(self, 'yband_alpha_var') and 'yband_alpha' in preferences:
+            self.yband_alpha_var.set(preferences['yband_alpha'])
+        if hasattr(self, 'yband_color_var') and 'yband_color' in preferences:
+            self.yband_color_var.set(preferences['yband_color'])
+        if hasattr(self, 'xband_enable_var') and 'xband_enable' in preferences:
+            self.xband_enable_var.set(preferences['xband_enable'])
+        if hasattr(self, 'xband_min_var') and 'xband_min' in preferences:
+            self.xband_min_var.set(preferences['xband_min'])
+        if hasattr(self, 'xband_max_var') and 'xband_max' in preferences:
+            self.xband_max_var.set(preferences['xband_max'])
+        if hasattr(self, 'xband_alpha_var') and 'xband_alpha' in preferences:
+            self.xband_alpha_var.set(preferences['xband_alpha'])
+        if hasattr(self, 'xband_color_var') and 'xband_color' in preferences:
+            self.xband_color_var.set(preferences['xband_color'])
+        if hasattr(self, 'xy_precomputed_error_var') and 'xy_precomputed_error' in preferences:
+            self.xy_precomputed_error_var.set(preferences['xy_precomputed_error'])
+        if hasattr(self, 'xy_error_col_var') and 'xy_error_col' in preferences:
+            self.xy_error_col_var.set(preferences['xy_error_col'])
+        if hasattr(self, 'xy_error_col_map_var') and 'xy_error_col_map' in preferences:
+            self.xy_error_col_map_var.set(preferences['xy_error_col_map'])
         # Histogram preferences
         if 'hist_bins' in preferences:
             self.hist_bins_var.set(preferences['hist_bins'])
@@ -5211,6 +5451,59 @@ class ExPlotApp:
             self.xy_show_mean_errorbars_var.set(preferences.get('xy_show_mean_errorbars', True))
         if hasattr(self, 'xy_draw_band_var') and 'xy_draw_band' in preferences:
             self.xy_draw_band_var.set(preferences['xy_draw_band'])
+        if hasattr(self, 'settings_xy_tolerance_band_var'):
+            preferences['xy_tolerance_band'] = self.settings_xy_tolerance_band_var.get()
+            self.xy_tolerance_band_var.set(preferences['xy_tolerance_band'])
+        if hasattr(self, 'settings_xy_tolerance_value_var'):
+            preferences['xy_tolerance_value'] = self.settings_xy_tolerance_value_var.get()
+            self.xy_tolerance_value_var.set(preferences['xy_tolerance_value'])
+        if hasattr(self, 'settings_xy_tolerance_mode_var'):
+            preferences['xy_tolerance_mode'] = self.settings_xy_tolerance_mode_var.get()
+            self.xy_tolerance_mode_var.set(preferences['xy_tolerance_mode'])
+        if hasattr(self, 'settings_xy_tolerance_fixed_value_var'):
+            preferences['xy_tolerance_fixed_value'] = self.settings_xy_tolerance_fixed_value_var.get()
+            self.xy_tolerance_fixed_value_var.set(preferences['xy_tolerance_fixed_value'])
+        if hasattr(self, 'settings_xy_tolerance_show_mean_line_var'):
+            preferences['xy_tolerance_show_mean_line'] = self.settings_xy_tolerance_show_mean_line_var.get()
+            self.xy_tolerance_show_mean_line_var.set(preferences['xy_tolerance_show_mean_line'])
+        if hasattr(self, 'settings_xy_tolerance_show_mean_text_var'):
+            preferences['xy_tolerance_show_mean_text'] = self.settings_xy_tolerance_show_mean_text_var.get()
+            self.xy_tolerance_show_mean_text_var.set(preferences['xy_tolerance_show_mean_text'])
+        if hasattr(self, 'settings_xy_tolerance_xmin_var'):
+            preferences['xy_tolerance_xmin'] = self.settings_xy_tolerance_xmin_var.get()
+            self.xy_tolerance_xmin_var.set(preferences['xy_tolerance_xmin'])
+        if hasattr(self, 'settings_xy_tolerance_xmax_var'):
+            preferences['xy_tolerance_xmax'] = self.settings_xy_tolerance_xmax_var.get()
+            self.xy_tolerance_xmax_var.set(preferences['xy_tolerance_xmax'])
+        if hasattr(self, 'yband_enable_var'):
+            preferences['yband_enable'] = self.yband_enable_var.get()
+        if hasattr(self, 'yband_min_var'):
+            preferences['yband_min'] = self.yband_min_var.get()
+        if hasattr(self, 'yband_max_var'):
+            preferences['yband_max'] = self.yband_max_var.get()
+        if hasattr(self, 'yband_alpha_var'):
+            preferences['yband_alpha'] = self.yband_alpha_var.get()
+        if hasattr(self, 'yband_color_var'):
+            preferences['yband_color'] = self.yband_color_var.get()
+        if hasattr(self, 'xband_enable_var'):
+            preferences['xband_enable'] = self.xband_enable_var.get()
+        if hasattr(self, 'xband_min_var'):
+            preferences['xband_min'] = self.xband_min_var.get()
+        if hasattr(self, 'xband_max_var'):
+            preferences['xband_max'] = self.xband_max_var.get()
+        if hasattr(self, 'xband_alpha_var'):
+            preferences['xband_alpha'] = self.xband_alpha_var.get()
+        if hasattr(self, 'xband_color_var'):
+            preferences['xband_color'] = self.xband_color_var.get()
+        if hasattr(self, 'settings_xy_precomputed_error_var'):
+            preferences['xy_precomputed_error'] = self.settings_xy_precomputed_error_var.get()
+            self.xy_precomputed_error_var.set(preferences['xy_precomputed_error'])
+        if hasattr(self, 'settings_xy_error_col_var'):
+            preferences['xy_error_col'] = self.settings_xy_error_col_var.get()
+            self.xy_error_col_var.set(preferences['xy_error_col'])
+        if hasattr(self, 'settings_xy_error_col_map_var'):
+            preferences['xy_error_col_map'] = self.settings_xy_error_col_map_var.get()
+            self.xy_error_col_map_var.set(preferences['xy_error_col_map'])
             
         # Appearance tab
         if hasattr(self, 'settings_linewidth'):
@@ -5247,6 +5540,48 @@ class ExPlotApp:
             preferences['xy_show_mean_errorbars'] = self.settings_xy_show_mean_errorbars_var.get()
         if hasattr(self, 'settings_xy_draw_band_var'):
             preferences['xy_draw_band'] = self.settings_xy_draw_band_var.get()
+        if hasattr(self, 'settings_xy_tolerance_band_var'):
+            preferences['xy_tolerance_band'] = self.settings_xy_tolerance_band_var.get()
+        if hasattr(self, 'settings_xy_tolerance_value_var'):
+            preferences['xy_tolerance_value'] = self.settings_xy_tolerance_value_var.get()
+        if hasattr(self, 'settings_xy_tolerance_mode_var'):
+            preferences['xy_tolerance_mode'] = self.settings_xy_tolerance_mode_var.get()
+        if hasattr(self, 'settings_xy_tolerance_fixed_value_var'):
+            preferences['xy_tolerance_fixed_value'] = self.settings_xy_tolerance_fixed_value_var.get()
+        if hasattr(self, 'settings_xy_tolerance_show_mean_line_var'):
+            preferences['xy_tolerance_show_mean_line'] = self.settings_xy_tolerance_show_mean_line_var.get()
+        if hasattr(self, 'settings_xy_tolerance_show_mean_text_var'):
+            preferences['xy_tolerance_show_mean_text'] = self.settings_xy_tolerance_show_mean_text_var.get()
+        if hasattr(self, 'settings_xy_tolerance_xmin_var'):
+            preferences['xy_tolerance_xmin'] = self.settings_xy_tolerance_xmin_var.get()
+        if hasattr(self, 'settings_xy_tolerance_xmax_var'):
+            preferences['xy_tolerance_xmax'] = self.settings_xy_tolerance_xmax_var.get()
+        if hasattr(self, 'yband_enable_var'):
+            preferences['yband_enable'] = self.yband_enable_var.get()
+        if hasattr(self, 'yband_min_var'):
+            preferences['yband_min'] = self.yband_min_var.get()
+        if hasattr(self, 'yband_max_var'):
+            preferences['yband_max'] = self.yband_max_var.get()
+        if hasattr(self, 'yband_alpha_var'):
+            preferences['yband_alpha'] = self.yband_alpha_var.get()
+        if hasattr(self, 'yband_color_var'):
+            preferences['yband_color'] = self.yband_color_var.get()
+        if hasattr(self, 'xband_enable_var'):
+            preferences['xband_enable'] = self.xband_enable_var.get()
+        if hasattr(self, 'xband_min_var'):
+            preferences['xband_min'] = self.xband_min_var.get()
+        if hasattr(self, 'xband_max_var'):
+            preferences['xband_max'] = self.xband_max_var.get()
+        if hasattr(self, 'xband_alpha_var'):
+            preferences['xband_alpha'] = self.xband_alpha_var.get()
+        if hasattr(self, 'xband_color_var'):
+            preferences['xband_color'] = self.xband_color_var.get()
+        if hasattr(self, 'settings_xy_precomputed_error_var'):
+            preferences['xy_precomputed_error'] = self.settings_xy_precomputed_error_var.get()
+        if hasattr(self, 'settings_xy_error_col_var'):
+            preferences['xy_error_col'] = self.settings_xy_error_col_var.get()
+        if hasattr(self, 'settings_xy_error_col_map_var'):
+            preferences['xy_error_col_map'] = self.settings_xy_error_col_map_var.get()
 
         # Histogram settings (saved directly from main vars)
         preferences['hist_bins'] = self.hist_bins_var.get()
@@ -5307,6 +5642,28 @@ class ExPlotApp:
             self.xy_show_mean_var.set(preferences.get('xy_show_mean', True))
             self.xy_show_mean_errorbars_var.set(preferences.get('xy_show_mean_errorbars', True))
             self.xy_draw_band_var.set(preferences.get('xy_draw_band', False))
+            self.xy_tolerance_band_var.set(preferences.get('xy_tolerance_band', False))
+            self.xy_tolerance_value_var.set(preferences.get('xy_tolerance_value', 10.0))
+            self.xy_tolerance_mode_var.set(preferences.get('xy_tolerance_mode', 'mean'))
+            self.xy_tolerance_fixed_value_var.set(preferences.get('xy_tolerance_fixed_value', 1.0))
+            self.xy_tolerance_show_mean_line_var.set(preferences.get('xy_tolerance_show_mean_line', False))
+            self.xy_tolerance_show_mean_text_var.set(preferences.get('xy_tolerance_show_mean_text', False))
+            self.xy_tolerance_xmin_var.set(preferences.get('xy_tolerance_xmin', ''))
+            self.xy_tolerance_xmax_var.set(preferences.get('xy_tolerance_xmax', ''))
+            self.yband_enable_var.set(preferences.get('yband_enable', False))
+            self.yband_min_var.set(preferences.get('yband_min', ''))
+            self.yband_max_var.set(preferences.get('yband_max', ''))
+            self.yband_alpha_var.set(preferences.get('yband_alpha', 0.15))
+            self.yband_color_var.set(preferences.get('yband_color', 'gray'))
+            self.xband_enable_var.set(preferences.get('xband_enable', False))
+            self.xband_min_var.set(preferences.get('xband_min', ''))
+            self.xband_max_var.set(preferences.get('xband_max', ''))
+            self.xband_alpha_var.set(preferences.get('xband_alpha', 0.15))
+            self.xband_color_var.set(preferences.get('xband_color', 'gray'))
+            self.xy_precomputed_error_var.set(preferences.get('xy_precomputed_error', False))
+            self.xy_error_col_var.set(preferences.get('xy_error_col', ''))
+            if hasattr(self, 'xy_error_col_map_var'):
+                self.xy_error_col_map_var.set(preferences.get('xy_error_col_map', ''))
             self.bar_outline_var.set(preferences.get('bar_outline', False))
             # Histogram preferences
             self.hist_bins_var.set(preferences.get('hist_bins', 20))
@@ -5497,6 +5854,11 @@ class ExPlotApp:
         self.value_vars = []
         self.value_checkbuttons = []
         col_grp.columnconfigure(1, weight=1)
+
+        # Row 3: Error column assignment button (only for bar and XY plots)
+        self.assign_error_btn = ttk.Button(col_grp, text="Assign Error Cols...", command=self.open_error_col_mapping)
+        self.assign_error_btn.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+
         # Options group
         opt_grp = ttk.LabelFrame(frame, text="Options", padding=6)
         opt_grp.pack(fill='x', padx=6, pady=4)
@@ -5523,9 +5885,13 @@ class ExPlotApp:
         self.errorbar_black_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(opt_grp, text="Black errorbars", variable=self.errorbar_black_var).grid(row=1, column=1, sticky="w", pady=1)
         
-        # Row 2: Modify categories button
-        ttk.Button(opt_grp, text="Modify X categories", command=self.modify_x_categories).grid(row=2, column=0, columnspan=2, sticky="ew", pady=(4,0))
-        
+        # Row 2: Precomputed error (only for bar and XY plots)
+        self.precomputed_err_cb = ttk.Checkbutton(opt_grp, text="Precomputed err", variable=self.xy_precomputed_error_var)
+        self.precomputed_err_cb.grid(row=2, column=0, sticky="w", pady=1)
+
+        # Row 3: Modify categories button
+        ttk.Button(opt_grp, text="Modify X Categories", command=self.modify_x_categories).grid(row=3, column=0, columnspan=2, sticky="ew", pady=(4,0))
+
         # Plot Type group
         type_grp = ttk.LabelFrame(frame, text="Plot Type", padding=6)
         type_grp.pack(fill='x', padx=6, pady=4)
@@ -5670,6 +6036,18 @@ class ExPlotApp:
             self.bar_options_frame.grid_forget()
             self.box_options_frame.grid_forget()
             self.violin_options_frame.grid_forget()
+            
+            # Precomputed error and error col assignment only for bar and XY plots
+            show_precomputed = kind in ("bar", "xy")
+            if show_precomputed:
+                self.precomputed_err_cb.grid()
+                self.assign_error_btn.grid()
+            else:
+                self.precomputed_err_cb.grid_forget()
+                self.assign_error_btn.grid_forget()
+                # Reset precomputed error when switching to unsupported plot type
+                if self.xy_precomputed_error_var.get():
+                    self.xy_precomputed_error_var.set(False)
             
             if kind == "xy":
                 self.xy_options_frame.grid(row=0, column=0, sticky="nsew")
@@ -5818,8 +6196,34 @@ class ExPlotApp:
         # Note: Swap axes setting moved to Axis tab
 
     def setup_axis_tab(self):
-        frame = self.axis_tab
-        
+        # --- Scrollable wrapper for laptop compatibility ---
+        outer = ttk.Frame(self.axis_tab)
+        outer.pack(fill='both', expand=True)
+
+        canvas = tk.Canvas(outer, highlightthickness=0)
+        vsb = ttk.Scrollbar(outer, orient='vertical', command=canvas.yview)
+        canvas.configure(yscrollcommand=vsb.set)
+
+        vsb.pack(side='right', fill='y')
+        canvas.pack(side='left', fill='both', expand=True)
+
+        frame = ttk.Frame(canvas)
+        canvas_window = canvas.create_window((0, 0), window=frame, anchor='nw')
+
+        def _on_frame_configure(_event=None):
+            canvas.configure(scrollregion=canvas.bbox('all'))
+        frame.bind('<Configure>', _on_frame_configure)
+
+        def _on_canvas_configure(_event=None):
+            canvas.itemconfig(canvas_window, width=_event.width)
+        canvas.bind('<Configure>', _on_canvas_configure)
+
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), 'units')
+        canvas.bind_all('<MouseWheel>', _on_mousewheel)
+        canvas.bind('<Enter>', lambda e: canvas.bind_all('<MouseWheel>', _on_mousewheel))
+        canvas.bind('<Leave>', lambda e: canvas.unbind_all('<MouseWheel>'))
+
         # --- Combined X/Y Labels frame ---
         labels_frame = ttk.Frame(frame)
         labels_frame.pack(fill='x', padx=4, pady=1)
@@ -5874,18 +6278,18 @@ class ExPlotApp:
         
         # Row 1: Min/Max values
         tk.Label(xaxis_grid, text="Minimum:", width=12, anchor="w").grid(row=0, column=0, sticky="w", pady=2)
-        self.xmin_entry = ttk.Entry(xaxis_grid, width=10)
+        self.xmin_entry = ttk.Entry(xaxis_grid, width=9)
         self.xmin_entry.grid(row=0, column=1, sticky="w", pady=2)
         tk.Label(xaxis_grid, text="Maximum:", width=12, anchor="w").grid(row=0, column=2, sticky="w", padx=(10,0), pady=2)
-        self.xmax_entry = ttk.Entry(xaxis_grid, width=10)
+        self.xmax_entry = ttk.Entry(xaxis_grid, width=9)
         self.xmax_entry.grid(row=0, column=3, sticky="w", pady=2)
         
         # Row 2: Tick settings
         tk.Label(xaxis_grid, text="Major Interval:", width=12, anchor="w").grid(row=1, column=0, sticky="w", pady=2)
-        self.xinterval_entry = ttk.Entry(xaxis_grid, width=10)
+        self.xinterval_entry = ttk.Entry(xaxis_grid, width=9)
         self.xinterval_entry.grid(row=1, column=1, sticky="w", pady=2)
         tk.Label(xaxis_grid, text="Minor/Major:", width=12, anchor="w").grid(row=1, column=2, sticky="w", padx=(10,0), pady=2)
-        self.xminor_ticks_entry = ttk.Entry(xaxis_grid, width=10)
+        self.xminor_ticks_entry = ttk.Entry(xaxis_grid, width=9)
         self.xminor_ticks_entry.grid(row=1, column=3, sticky="w", pady=2)
         
         # Row 3: Log options
@@ -5912,18 +6316,18 @@ class ExPlotApp:
         
         # Row 1: Min/Max values
         tk.Label(yaxis_grid, text="Minimum:", width=12, anchor="w").grid(row=0, column=0, sticky="w", pady=2)
-        self.ymin_entry = ttk.Entry(yaxis_grid, width=10)
+        self.ymin_entry = ttk.Entry(yaxis_grid, width=9)
         self.ymin_entry.grid(row=0, column=1, sticky="w", pady=2)
         tk.Label(yaxis_grid, text="Maximum:", width=12, anchor="w").grid(row=0, column=2, sticky="w", padx=(10,0), pady=2)
-        self.ymax_entry = ttk.Entry(yaxis_grid, width=10)
+        self.ymax_entry = ttk.Entry(yaxis_grid, width=9)
         self.ymax_entry.grid(row=0, column=3, sticky="w", pady=2)
         
         # Row 2: Tick settings
         tk.Label(yaxis_grid, text="Major Interval:", width=12, anchor="w").grid(row=1, column=0, sticky="w", pady=2)
-        self.yinterval_entry = ttk.Entry(yaxis_grid, width=10)
+        self.yinterval_entry = ttk.Entry(yaxis_grid, width=9)
         self.yinterval_entry.grid(row=1, column=1, sticky="w", pady=2)
         tk.Label(yaxis_grid, text="Minor/Major:", width=12, anchor="w").grid(row=1, column=2, sticky="w", padx=(10,0), pady=2)
-        self.minor_ticks_entry = ttk.Entry(yaxis_grid, width=10)
+        self.minor_ticks_entry = ttk.Entry(yaxis_grid, width=9)
         self.minor_ticks_entry.grid(row=1, column=3, sticky="w", pady=2)
         
         # Row 3: Log options
@@ -5997,6 +6401,111 @@ class ExPlotApp:
             self.ybreak_marker_style_dropdown.bind('<<ComboboxSelected>>', _on_ybreak_marker_style_selected)
         except Exception:
             pass
+
+        # --- Collapsible sections helper ---
+        def make_collapsible(parent, title, content_builder):
+            """Create a collapsible LabelFrame with a toggle button.
+
+            Returns (content_frame) so the caller can populate it.
+            """
+            grp = ttk.LabelFrame(parent, text=title, padding=4)
+            grp.pack(fill='x', padx=4, pady=2)
+
+            header = ttk.Frame(grp)
+            header.pack(fill='x')
+
+            toggle_var = tk.BooleanVar(value=False)
+            arrow = ttk.Label(header, text='\u25b6', width=2)
+            arrow.pack(side='left')
+            ttk.Label(header, text='Show / hide').pack(side='left', padx=(2, 0))
+
+            content = ttk.Frame(grp)
+            # Content is packed only when expanded
+
+            def toggle(*_):
+                if toggle_var.get():
+                    toggle_var.set(False)
+                    content.pack_forget()
+                    arrow.config(text='\u25b6')
+                else:
+                    toggle_var.set(True)
+                    content.pack(fill='x', padx=2, pady=(4, 2))
+                    arrow.config(text='\u25bc')
+
+            header.bind('<Button-1>', toggle)
+            for child in header.winfo_children():
+                child.bind('<Button-1>', toggle)
+
+            content_builder(content)
+            return grp
+
+        # --- Custom Y-Band (collapsible) ---
+        def build_yband(content):
+            ttk.Checkbutton(content, text="Show Y band", variable=self.yband_enable_var).pack(anchor="w", pady=2)
+            yband_grid = ttk.Frame(content)
+            yband_grid.pack(fill='x', padx=2, pady=2)
+            ttk.Label(yband_grid, text="Min:").pack(side="left")
+            ttk.Entry(yband_grid, textvariable=self.yband_min_var, width=8).pack(side="left", padx=(2, 0))
+            ttk.Label(yband_grid, text="Max:").pack(side="left", padx=(6, 0))
+            ttk.Entry(yband_grid, textvariable=self.yband_max_var, width=8).pack(side="left", padx=(2, 0))
+            ttk.Label(yband_grid, text="Alpha:").pack(side="left", padx=(6, 0))
+            ttk.Entry(yband_grid, textvariable=self.yband_alpha_var, width=4).pack(side="left", padx=(2, 0))
+            ttk.Label(yband_grid, text="Color:").pack(side="left", padx=(6, 0))
+            ttk.Entry(yband_grid, textvariable=self.yband_color_var, width=8).pack(side="left", padx=(2, 0))
+        make_collapsible(frame, "Custom Y Band", build_yband)
+
+        # --- Custom X-Band (collapsible) ---
+        def build_xband(content):
+            ttk.Checkbutton(content, text="Show X band", variable=self.xband_enable_var).pack(anchor="w", pady=2)
+            xband_grid = ttk.Frame(content)
+            xband_grid.pack(fill='x', padx=2, pady=2)
+            ttk.Label(xband_grid, text="Min:").pack(side="left")
+            ttk.Entry(xband_grid, textvariable=self.xband_min_var, width=8).pack(side="left", padx=(2, 0))
+            ttk.Label(xband_grid, text="Max:").pack(side="left", padx=(6, 0))
+            ttk.Entry(xband_grid, textvariable=self.xband_max_var, width=8).pack(side="left", padx=(2, 0))
+            ttk.Label(xband_grid, text="Alpha:").pack(side="left", padx=(6, 0))
+            ttk.Entry(xband_grid, textvariable=self.xband_alpha_var, width=4).pack(side="left", padx=(2, 0))
+            ttk.Label(xband_grid, text="Color:").pack(side="left", padx=(6, 0))
+            ttk.Entry(xband_grid, textvariable=self.xband_color_var, width=8).pack(side="left", padx=(2, 0))
+        make_collapsible(frame, "Custom X Band", build_xband)
+
+        # --- Tolerance band settings (collapsible) ---
+        def build_tol(content):
+            ttk.Checkbutton(content, text="Show tolerance band", variable=self.xy_tolerance_band_var).pack(anchor="w", pady=2)
+
+            tol_mode_frame = ttk.Frame(content)
+            tol_mode_frame.pack(fill='x', padx=2, pady=2)
+            ttk.Label(tol_mode_frame, text="Mode:").pack(side="left")
+            ttk.Radiobutton(tol_mode_frame, text="Mean ±%", variable=self.xy_tolerance_mode_var, value="mean",
+                            command=self._update_tol_mode_state).pack(side="left", padx=(4, 0))
+            ttk.Radiobutton(tol_mode_frame, text="Mean ±val", variable=self.xy_tolerance_mode_var, value="fixed",
+                            command=self._update_tol_mode_state).pack(side="left", padx=(4, 0))
+
+            tol_mean_frame = ttk.Frame(content)
+            tol_mean_frame.pack(fill='x', padx=2, pady=2)
+            ttk.Label(tol_mean_frame, text="±%:").pack(side="left")
+            ttk.Entry(tol_mean_frame, textvariable=self.xy_tolerance_value_var, width=5).pack(side="left", padx=(2, 0))
+            ttk.Label(tol_mean_frame, text="±val:").pack(side="left", padx=(6, 0))
+            self.tol_fixed_value_entry = ttk.Entry(tol_mean_frame, textvariable=self.xy_tolerance_fixed_value_var, width=5, state="disabled")
+            self.tol_fixed_value_entry.pack(side="left", padx=(2, 0))
+            ttk.Label(tol_mean_frame, text="x from:").pack(side="left", padx=(6, 0))
+            ttk.Entry(tol_mean_frame, textvariable=self.xy_tolerance_xmin_var, width=6).pack(side="left", padx=(1, 0))
+            ttk.Label(tol_mean_frame, text="to:").pack(side="left", padx=(2, 0))
+            ttk.Entry(tol_mean_frame, textvariable=self.xy_tolerance_xmax_var, width=6).pack(side="left", padx=(1, 0))
+
+            tol_opt_frame = ttk.Frame(content)
+            tol_opt_frame.pack(fill='x', padx=2, pady=2)
+            ttk.Checkbutton(tol_opt_frame, text="Mean line", variable=self.xy_tolerance_show_mean_line_var).pack(side="left")
+            ttk.Checkbutton(tol_opt_frame, text="Mean text", variable=self.xy_tolerance_show_mean_text_var).pack(side="left", padx=(8, 0))
+        make_collapsible(frame, "Tolerance Band", build_tol)
+
+    def _update_tol_mode_state(self):
+        """Enable/disable tolerance mode-specific entry fields."""
+        mode = self.xy_tolerance_mode_var.get()
+        if mode == 'fixed':
+            self.tol_fixed_value_entry.config(state="normal")
+        else:
+            self.tol_fixed_value_entry.config(state="disabled")
 
     def update_ybreak_options(self):
         """Enable or disable Y-axis break options based on checkbox state"""
@@ -6467,7 +6976,17 @@ class ExPlotApp:
                 'secondary_y_color_axis': self.secondary_yaxis_color_var.get() if hasattr(self, 'secondary_yaxis_color_var') else True,
                 'secondary_marker_mode': self.secondary_marker_mode_var.get() if hasattr(self, 'secondary_marker_mode_var') else 'Same as primary',
                 'secondary_marker_symbol': self.secondary_marker_symbol_var.get() if hasattr(self, 'secondary_marker_symbol_var') else 's',
-                'secondary_marker_size': self.secondary_marker_size_var.get() if hasattr(self, 'secondary_marker_size_var') else ''
+                'secondary_marker_size': self.secondary_marker_size_var.get() if hasattr(self, 'secondary_marker_size_var') else '',
+                'yband_enable': self.yband_enable_var.get() if hasattr(self, 'yband_enable_var') else False,
+                'yband_min': self.yband_min_var.get() if hasattr(self, 'yband_min_var') else '',
+                'yband_max': self.yband_max_var.get() if hasattr(self, 'yband_max_var') else '',
+                'yband_alpha': self.yband_alpha_var.get() if hasattr(self, 'yband_alpha_var') else 0.15,
+                'yband_color': self.yband_color_var.get() if hasattr(self, 'yband_color_var') else 'gray',
+                'xband_enable': self.xband_enable_var.get() if hasattr(self, 'xband_enable_var') else False,
+                'xband_min': self.xband_min_var.get() if hasattr(self, 'xband_min_var') else '',
+                'xband_max': self.xband_max_var.get() if hasattr(self, 'xband_max_var') else '',
+                'xband_alpha': self.xband_alpha_var.get() if hasattr(self, 'xband_alpha_var') else 0.15,
+                'xband_color': self.xband_color_var.get() if hasattr(self, 'xband_color_var') else 'gray'
             },
             'statistics': {
                 'use_stats': self.use_stats_var.get() if hasattr(self, 'use_stats_var') else False,
@@ -6487,7 +7006,18 @@ class ExPlotApp:
                 'connect': self.xy_connect_var.get() if hasattr(self, 'xy_connect_var') else False,
                 'show_mean': self.xy_show_mean_var.get() if hasattr(self, 'xy_show_mean_var') else True,
                 'show_mean_errorbars': self.xy_show_mean_errorbars_var.get() if hasattr(self, 'xy_show_mean_errorbars_var') else True,
-                'draw_band': self.xy_draw_band_var.get() if hasattr(self, 'xy_draw_band_var') else False
+                'draw_band': self.xy_draw_band_var.get() if hasattr(self, 'xy_draw_band_var') else False,
+                'tolerance_band': self.xy_tolerance_band_var.get() if hasattr(self, 'xy_tolerance_band_var') else False,
+                'tolerance_value': self.xy_tolerance_value_var.get() if hasattr(self, 'xy_tolerance_value_var') else 10.0,
+                'tolerance_mode': self.xy_tolerance_mode_var.get() if hasattr(self, 'xy_tolerance_mode_var') else 'mean',
+                'tolerance_fixed_value': self.xy_tolerance_fixed_value_var.get() if hasattr(self, 'xy_tolerance_fixed_value_var') else 1.0,
+                'tolerance_show_mean_line': self.xy_tolerance_show_mean_line_var.get() if hasattr(self, 'xy_tolerance_show_mean_line_var') else False,
+                'tolerance_show_mean_text': self.xy_tolerance_show_mean_text_var.get() if hasattr(self, 'xy_tolerance_show_mean_text_var') else False,
+                'tolerance_xmin': self.xy_tolerance_xmin_var.get() if hasattr(self, 'xy_tolerance_xmin_var') else '',
+                'tolerance_xmax': self.xy_tolerance_xmax_var.get() if hasattr(self, 'xy_tolerance_xmax_var') else '',
+                'precomputed_error': self.xy_precomputed_error_var.get() if hasattr(self, 'xy_precomputed_error_var') else False,
+                'error_col': self.xy_error_col_var.get() if hasattr(self, 'xy_error_col_var') else '',
+                'error_col_map': self.xy_error_col_map_var.get() if hasattr(self, 'xy_error_col_map_var') else ''
             },
             'colors': {
                 'single_color': self.single_color_var.get() if hasattr(self, 'single_color_var') else list(self.custom_colors.keys())[0],
@@ -6740,6 +7270,28 @@ class ExPlotApp:
                     self.secondary_marker_symbol_var.set(axis['secondary_marker_symbol'])
                 if 'secondary_marker_size' in axis and hasattr(self, 'secondary_marker_size_var'):
                     self.secondary_marker_size_var.set(axis['secondary_marker_size'])
+                # Custom Y-band
+                if 'yband_enable' in axis and hasattr(self, 'yband_enable_var'):
+                    self.yband_enable_var.set(axis['yband_enable'])
+                if 'yband_min' in axis and hasattr(self, 'yband_min_var'):
+                    self.yband_min_var.set(axis['yband_min'])
+                if 'yband_max' in axis and hasattr(self, 'yband_max_var'):
+                    self.yband_max_var.set(axis['yband_max'])
+                if 'yband_alpha' in axis and hasattr(self, 'yband_alpha_var'):
+                    self.yband_alpha_var.set(axis['yband_alpha'])
+                if 'yband_color' in axis and hasattr(self, 'yband_color_var'):
+                    self.yband_color_var.set(axis['yband_color'])
+                # Custom X-band
+                if 'xband_enable' in axis and hasattr(self, 'xband_enable_var'):
+                    self.xband_enable_var.set(axis['xband_enable'])
+                if 'xband_min' in axis and hasattr(self, 'xband_min_var'):
+                    self.xband_min_var.set(axis['xband_min'])
+                if 'xband_max' in axis and hasattr(self, 'xband_max_var'):
+                    self.xband_max_var.set(axis['xband_max'])
+                if 'xband_alpha' in axis and hasattr(self, 'xband_alpha_var'):
+                    self.xband_alpha_var.set(axis['xband_alpha'])
+                if 'xband_color' in axis and hasattr(self, 'xband_color_var'):
+                    self.xband_color_var.set(axis['xband_color'])
                 # Refresh UI state
                 if hasattr(self, '_update_secondary_yaxis_ui'):
                     self._update_secondary_yaxis_ui()
@@ -6784,6 +7336,28 @@ class ExPlotApp:
                     self.xy_show_mean_errorbars_var.set(xy['show_mean_errorbars'])
                 if 'draw_band' in xy and hasattr(self, 'xy_draw_band_var'):
                     self.xy_draw_band_var.set(xy['draw_band'])
+                if 'tolerance_band' in xy and hasattr(self, 'xy_tolerance_band_var'):
+                    self.xy_tolerance_band_var.set(xy['tolerance_band'])
+                if 'tolerance_value' in xy and hasattr(self, 'xy_tolerance_value_var'):
+                    self.xy_tolerance_value_var.set(xy['tolerance_value'])
+                if 'tolerance_mode' in xy and hasattr(self, 'xy_tolerance_mode_var'):
+                    self.xy_tolerance_mode_var.set(xy['tolerance_mode'])
+                if 'tolerance_fixed_value' in xy and hasattr(self, 'xy_tolerance_fixed_value_var'):
+                    self.xy_tolerance_fixed_value_var.set(xy['tolerance_fixed_value'])
+                if 'tolerance_show_mean_line' in xy and hasattr(self, 'xy_tolerance_show_mean_line_var'):
+                    self.xy_tolerance_show_mean_line_var.set(xy['tolerance_show_mean_line'])
+                if 'tolerance_show_mean_text' in xy and hasattr(self, 'xy_tolerance_show_mean_text_var'):
+                    self.xy_tolerance_show_mean_text_var.set(xy['tolerance_show_mean_text'])
+                if 'tolerance_xmin' in xy and hasattr(self, 'xy_tolerance_xmin_var'):
+                    self.xy_tolerance_xmin_var.set(xy['tolerance_xmin'])
+                if 'tolerance_xmax' in xy and hasattr(self, 'xy_tolerance_xmax_var'):
+                    self.xy_tolerance_xmax_var.set(xy['tolerance_xmax'])
+                if 'precomputed_error' in xy and hasattr(self, 'xy_precomputed_error_var'):
+                    self.xy_precomputed_error_var.set(xy['precomputed_error'])
+                if 'error_col' in xy and hasattr(self, 'xy_error_col_var'):
+                    self.xy_error_col_var.set(xy['error_col'])
+                if 'error_col_map' in xy and hasattr(self, 'xy_error_col_map_var'):
+                    self.xy_error_col_map_var.set(xy['error_col_map'])
             
             # Color settings
             if 'colors' in settings:
@@ -7668,6 +8242,84 @@ class ExPlotApp:
                 if not current_label or current_label in self.df.columns:
                     self.ylabel_entry.delete(0, tk.END)
                     self.ylabel_entry.insert(0, selected_y_cols[0])
+
+    def open_error_col_mapping(self):
+        """Open a dialog to map each selected Y column to its error column."""
+        if self.df is None:
+            messagebox.showerror("Error", "Load a data file first.")
+            return
+
+        x_col = self.xaxis_var.get()
+        value_cols = [col for var, col in self.value_vars if var.get() and col != x_col]
+        if not value_cols:
+            messagebox.showerror("Error", "Select at least one Y-axis column first.")
+            return
+
+        all_columns = list(self.df.columns)
+
+        # Parse existing mapping
+        import json
+        existing_map = {}
+        raw = self.xy_error_col_map_var.get().strip()
+        if raw:
+            try:
+                existing_map = json.loads(raw)
+            except Exception:
+                existing_map = {}
+        # Backward compat: if no map but single error_col set, use it for first Y col
+        if not existing_map and self.xy_error_col_var.get():
+            existing_map = {value_cols[0]: self.xy_error_col_var.get()}
+
+        win = tk.Toplevel(self.root)
+        win.title("Map Error Columns")
+        win.transient(self.root)
+        win.grab_set()
+
+        ttk.Label(win, text="Assign an error column to each Y column:").pack(padx=10, pady=(10, 5))
+        ttk.Label(win, text="When 'Precomputed err' is enabled, error bars are drawn from these\n"
+                            "columns instead of computing SD/SEM from raw data.\n"
+                            "This is useful when plotting summarized data (e.g. means with\n"
+                            "pre-calculated error) rather than raw replicate values.",
+                 foreground='gray', justify='left').pack(padx=10, pady=(0, 5))
+
+        scroll_frame = ttk.Frame(win)
+        scroll_frame.pack(fill='both', expand=True, padx=10, pady=5)
+        canvas = tk.Canvas(scroll_frame, height=300, width=500)
+        scrollbar = ttk.Scrollbar(scroll_frame, orient="vertical", command=canvas.yview)
+        inner = ttk.Frame(canvas)
+        inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=inner, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        col_vars = {}
+        for yc in value_cols:
+            row = ttk.Frame(inner)
+            row.pack(fill='x', pady=2)
+            ttk.Label(row, text=yc, width=25, anchor="w").pack(side="left", padx=(0, 8))
+            var = tk.StringVar(value=existing_map.get(yc, ''))
+            cb = ttk.Combobox(row, textvariable=var, values=[''] + all_columns, width=25, state="readonly")
+            cb.pack(side="left")
+            col_vars[yc] = var
+
+        def _save():
+            mapping = {yc: var.get() for yc, var in col_vars.items() if var.get()}
+            self.xy_error_col_map_var.set(json.dumps(mapping))
+            # Also update backward-compat single var
+            if len(mapping) == 1:
+                self.xy_error_col_var.set(list(mapping.values())[0])
+            elif mapping:
+                self.xy_error_col_var.set('')
+            win.destroy()
+
+        btn_row = ttk.Frame(win)
+        btn_row.pack(fill='x', padx=10, pady=(5, 10))
+        ttk.Button(btn_row, text="Cancel", command=win.destroy).pack(side='right', padx=(4, 0))
+        ttk.Button(btn_row, text="Save", command=_save).pack(side='right')
+
+        win.update_idletasks()
+        win.geometry(f"+{(win.winfo_screenwidth() - win.winfo_width()) // 2}+{(win.winfo_screenheight() - win.winfo_height()) // 2}")
     
     def modify_x_categories(self):
         """Opens a dialog to modify X-axis categories (rename and reorder)."""
@@ -8663,7 +9315,7 @@ class ExPlotApp:
             'legend.edgecolor': 'inherit'
         })
 
-        sns.set_theme(style='white', rc={"axes.grid": False})
+        sns.set_theme(style='white', rc={"axes.grid": False, "axes.edgecolor": "black", "text.color": "black", "axes.labelcolor": "black", "xtick.color": "black", "ytick.color": "black"})
         # Store original figure size for PDF export
         self.original_fig_width = fig_width
         self.original_fig_height = fig_height
@@ -8819,6 +9471,40 @@ class ExPlotApp:
                                    value_vars=value_cols, var_name='Measurement', value_name='_plotted_value')
                 value_col = '_plotted_value'  # Use this new column for plotting
                 hue_col = 'Measurement'
+
+                # If precomputed error is enabled, melt error columns too and merge
+                if self.xy_precomputed_error_var.get():
+                    import json as _json
+                    err_map = {}
+                    raw_map = self.xy_error_col_map_var.get().strip()
+                    if raw_map:
+                        try:
+                            err_map = _json.loads(raw_map)
+                        except Exception:
+                            err_map = {}
+                    # Backward compat: single error_col for all Y cols
+                    if not err_map and self.xy_error_col_var.get():
+                        err_map = {vc: self.xy_error_col_var.get() for vc in value_cols}
+
+                    # Collect unique error columns that exist in df_work
+                    err_cols_for_melt = []
+                    rev_map = {}  # error col name -> Y col name
+                    for vc in value_cols:
+                        ec = err_map.get(vc, '')
+                        if ec and ec in df_work.columns and ec not in err_cols_for_melt:
+                            err_cols_for_melt.append(ec)
+                            rev_map[ec] = vc
+
+                    if err_cols_for_melt:
+                        df_err = pd.melt(df_work, id_vars=[x_col] + ([group_col] if group_col else []),
+                                         value_vars=err_cols_for_melt, var_name='_err_measurement',
+                                         value_name='_plotted_error')
+                        # Map error column names back to Y column names
+                        df_err['Measurement'] = df_err['_err_measurement'].map(rev_map)
+                        df_err = df_err.drop(columns=['_err_measurement'])
+                        merge_cols = [x_col, 'Measurement'] + ([group_col] if group_col else [])
+                        df_plot = df_plot.merge(df_err[merge_cols + ['_plotted_error']],
+                                                on=merge_cols, how='left')
             else:
                 # Value column is already set to the selected column
                 hue_col = group_col if group_col else None
@@ -9151,9 +9837,85 @@ class ExPlotApp:
                 
                 # Set z-order for bars (always the same)
                 bar_args['zorder'] = 10
-                
+
+                # --- Precomputed error support for bar plots ---
+                precomputed_err_active = self.xy_precomputed_error_var.get()
+                bar_precomputed_errors = None  # list of (x_center, mean, err) tuples
+                if precomputed_err_active:
+                    import json as _json
+                    # Suppress seaborn's own error bars
+                    bar_args['errorbar'] = None
+                    # Parse error column mapping
+                    err_map = {}
+                    raw_map = self.xy_error_col_map_var.get().strip()
+                    if raw_map:
+                        try:
+                            err_map = _json.loads(raw_map)
+                        except Exception:
+                            err_map = {}
+                    # Backward compat: single error_col for all Y cols
+                    if not err_map and self.xy_error_col_var.get():
+                        err_map = {value_col: self.xy_error_col_var.get()}
+                    err_col = err_map.get(value_col, '')
+                    if err_col and err_col in df_plot.columns:
+                        # Compute mean and first error per group
+                        groupers_bar = [x_col]
+                        if hue_col and hue_col in df_plot.columns:
+                            groupers_bar.append(hue_col)
+                        bar_means = df_plot.groupby(groupers_bar)[value_col].mean()
+                        bar_errs = df_plot.groupby(groupers_bar)[err_col].first()
+                        bar_precomputed_errors = []
+                        for idx_key in bar_means.index:
+                            if isinstance(idx_key, tuple):
+                                xv, hv = idx_key
+                            else:
+                                xv, hv = idx_key, None
+                            bar_precomputed_errors.append((xv, hv, bar_means.loc[idx_key], bar_errs.loc[idx_key]))
+
                 # Create barplot with completely isolated parameters
                 ax = sns.barplot(**bar_args)
+
+                # Overlay precomputed error bars if enabled
+                if bar_precomputed_errors is not None:
+                    ecolor = 'black' if black_errorbars else (palette[0] if palette else 'black')
+                    if hue_col and hue_col in df_plot.columns:
+                        sorted_errors = sorted(bar_precomputed_errors, key=lambda e: (str(e[0]), str(e[1])))
+                    else:
+                        sorted_errors = sorted(bar_precomputed_errors, key=lambda e: str(e[0]))
+                    for i, (xv, hv, mean_val, err_val) in enumerate(sorted_errors):
+                        if i < len(ax.patches):
+                            p = ax.patches[i]
+                            cx = p.get_x() + p.get_width() / 2
+                            # Use the actual bar height from the patch as y position
+                            bar_h = p.get_height()
+                            # Robustly convert err_val to float
+                            try:
+                                err_f = float(err_val)
+                                if np.isnan(err_f):
+                                    err_f = 0.0
+                            except (TypeError, ValueError):
+                                err_f = 0.0
+                            # Convert capsize from data coords to points
+                            # matplotlib errorbar capsize is in points, seaborn uses data coords
+                            bar_w_data = p.get_width()
+                            if bar_w_data > 0:
+                                # Get display coordinates of bar width
+                                bbox = p.get_window_extent()
+                                bar_w_points = bbox.width * 72.0 / ax.figure.dpi
+                                # Scale capsize proportionally (same ratios as seaborn)
+                                capsize_setting = self.errorbar_capsize_var.get() if hasattr(self, 'errorbar_capsize_var') else 'Default'
+                                cap_ratio = {'Default': 0.5, 'Narrow': 0.2, 'Wide': 0.7, 'Wider': 1.0, 'None': 0.0}.get(capsize_setting, 0.5)
+                                capsize_points = bar_w_points * cap_ratio
+                            else:
+                                capsize_points = 0
+                            if upward_only:
+                                ax.errorbar([cx], [bar_h], yerr=[[0], [err_f]],
+                                            fmt='none', ecolor=ecolor, capsize=capsize_points,
+                                            elinewidth=linewidth, zorder=5)
+                            else:
+                                ax.errorbar([cx], [bar_h], yerr=[err_f],
+                                            fmt='none', ecolor=ecolor, capsize=capsize_points,
+                                            elinewidth=linewidth, zorder=15)
                 
                 # If axis break is enabled, also plot on upper axis with same parameters
                 if self.ybreak_enabled and self.ax_upper is not None:
@@ -9503,7 +10265,8 @@ class ExPlotApp:
                     pal_primary = [color_map[g] for g in primary_groups]
                     self._plot_xy_base(ax, df_primary, x_col, value_col, hue_col,
                                        primary_groups, errorbar_black, linewidth,
-                                       allow_legend=False, palette_override=pal_primary)
+                                       allow_legend=False, palette_override=pal_primary,
+                                       group_col=group_col)
                     self._plot_xy_fitting(ax, df_primary, x_col, value_col, hue_col,
                                           pal_primary, linewidth, update_results=True, allow_legend=False)
 
@@ -9520,7 +10283,8 @@ class ExPlotApp:
                     self._plot_xy_base(ax2, df_secondary, x_col, value_col, hue_col,
                                        secondary_groups, errorbar_black, linewidth,
                                        allow_legend=False, palette_override=pal_secondary,
-                                       marker_override=sec_marker_override)
+                                       marker_override=sec_marker_override,
+                                       group_col=group_col)
                     self._plot_xy_fitting(ax2, df_secondary, x_col, value_col, hue_col,
                                           pal_secondary, linewidth, update_results=False, allow_legend=False)
 
@@ -9580,11 +10344,11 @@ class ExPlotApp:
                         self.place_legend(ax, all_handles, all_labels)
                 else:
                     self._secondary_ax = None
-                    self._plot_xy_base(ax, df_plot, x_col, value_col, hue_col, value_cols, errorbar_black, linewidth, allow_legend=True)
+                    self._plot_xy_base(ax, df_plot, x_col, value_col, hue_col, value_cols, errorbar_black, linewidth, allow_legend=True, group_col=group_col)
                     self._plot_xy_fitting(ax, df_plot, x_col, value_col, hue_col, palette, linewidth, update_results=True, allow_legend=True)
 
                 if self.ybreak_enabled and self.ax_upper is not None:
-                    self._plot_xy_base(self.ax_upper, df_plot, x_col, value_col, hue_col, value_cols, errorbar_black, linewidth, allow_legend=False)
+                    self._plot_xy_base(self.ax_upper, df_plot, x_col, value_col, hue_col, value_cols, errorbar_black, linewidth, allow_legend=False, group_col=group_col)
                     self._plot_xy_fitting(self.ax_upper, df_plot, x_col, value_col, hue_col, palette, linewidth, update_results=False, allow_legend=False)
                     if self.ax_upper.get_legend():
                         self.ax_upper.get_legend().remove()
@@ -9838,6 +10602,73 @@ class ExPlotApp:
                     stripplot_args_upper = stripplot_args.copy()
                     stripplot_args_upper['ax'] = self.ax_upper
                     sns.stripplot(**stripplot_args_upper)
+
+            # --- Tolerance band / mean line / mean text overlay for bar/box/violin ---
+            if plot_kind in ("bar", "box", "violin"):
+                tol_band = self.xy_tolerance_band_var.get()
+                tol_mean_line = self.xy_tolerance_show_mean_line_var.get()
+                tol_mean_text = self.xy_tolerance_show_mean_text_var.get()
+                if tol_band or tol_mean_line or tol_mean_text:
+                    tol_mode = self.xy_tolerance_mode_var.get()
+                    tol_fixed_value = self.xy_tolerance_fixed_value_var.get()
+                    # x-interval filtering (applies when x is numeric)
+                    tol_xmin_str = self.xy_tolerance_xmin_var.get().strip()
+                    tol_xmax_str = self.xy_tolerance_xmax_var.get().strip()
+                    tol_xmin = float(tol_xmin_str) if tol_xmin_str else None
+                    tol_xmax = float(tol_xmax_str) if tol_xmax_str else None
+
+                    y_vals_all = pd.to_numeric(df_plot[value_col], errors='coerce')
+                    y_vals_all = y_vals_all[y_vals_all.notna()]
+                    if len(y_vals_all) > 0:
+                        # Determine groups
+                        if hue_col and hue_col in df_plot.columns:
+                            group_names = list(df_plot[hue_col].dropna().unique())
+                            gp = resolve_palette(self.custom_palettes, self.palette_var.get(), len(group_names))
+                            color_map = {name: gp[i] for i, name in enumerate(group_names)}
+                        else:
+                            group_names = [None]
+                            color_map = {None: palette[0] if palette else 'black'}
+
+                        text_y = 0.98
+                        for gname in group_names:
+                            if gname is not None:
+                                g_mask = df_plot[hue_col] == gname
+                                g_y = pd.to_numeric(df_plot.loc[g_mask, value_col], errors='coerce')
+                                g_x = pd.to_numeric(df_plot.loc[g_mask, x_col], errors='coerce')
+                            else:
+                                g_y = y_vals_all.copy()
+                                g_x = pd.to_numeric(df_plot[x_col], errors='coerce')
+                            g_y = g_y[g_y.notna()]
+                            # Apply x-interval filter if specified
+                            if tol_xmin is not None or tol_xmax is not None:
+                                valid_x = pd.Series(True, index=g_y.index)
+                                if tol_xmin is not None:
+                                    valid_x &= g_x >= tol_xmin
+                                if tol_xmax is not None:
+                                    valid_x &= g_x <= tol_xmax
+                                g_y = g_y[valid_x]
+                            if len(g_y) == 0:
+                                continue
+                            g_mean = g_y.mean()
+                            g_sd = g_y.std(ddof=1) if len(g_y) > 1 else 0.0
+                            c = color_map.get(gname, 'black')
+                            if tol_band:
+                                if tol_mode == 'fixed':
+                                    y_lower = g_mean - tol_fixed_value
+                                    y_upper = g_mean + tol_fixed_value
+                                else:
+                                    tol = self.xy_tolerance_value_var.get() / 100.0
+                                    y_lower = g_mean * (1 - tol)
+                                    y_upper = g_mean * (1 + tol)
+                                ax.axhspan(y_lower, y_upper, facecolor=c, alpha=0.12, edgecolor='none', zorder=0)
+                            if tol_mean_line:
+                                ax.axhline(g_mean, color=c, linewidth=0.5, linestyle='--', alpha=0.5, zorder=0)
+                            if tol_mean_text:
+                                label = f'{gname}: ' if gname is not None else ''
+                                ax.text(0.02, text_y, f'{label}Mean = {g_mean:.4g}, SD = {g_sd:.4g}',
+                                        transform=ax.transAxes, fontsize=8, verticalalignment='top', color=c,
+                                        bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.7, edgecolor='none'))
+                                text_y -= 0.05
 
             # --- Always rebuild legend after all plotting ---
             if hue_col and (plot_kind == "box" or plot_kind == "violin"):
@@ -10094,6 +10925,40 @@ class ExPlotApp:
                             ax.tick_params(axis='y', which='minor', length=0)
             except Exception as e:
                 print(f"Axis setting error: {e}")
+
+            # --- Custom Y-Band ---
+            try:
+                if self.yband_enable_var.get():
+                    yb_min_str = self.yband_min_var.get().strip()
+                    yb_max_str = self.yband_max_var.get().strip()
+                    if yb_min_str and yb_max_str:
+                        yb_min = float(yb_min_str)
+                        yb_max = float(yb_max_str)
+                        yb_alpha = self.yband_alpha_var.get()
+                        yb_color = self.yband_color_var.get().strip() or 'gray'
+                        if not swap_axes:
+                            ax.axhspan(yb_min, yb_max, facecolor=yb_color, alpha=yb_alpha, edgecolor='none', zorder=0)
+                        else:
+                            ax.axvspan(yb_min, yb_max, facecolor=yb_color, alpha=yb_alpha, edgecolor='none', zorder=0)
+            except Exception as e:
+                print(f"Custom Y-band error: {e}")
+
+            # --- Custom X-Band ---
+            try:
+                if self.xband_enable_var.get():
+                    xb_min_str = self.xband_min_var.get().strip()
+                    xb_max_str = self.xband_max_var.get().strip()
+                    if xb_min_str and xb_max_str:
+                        xb_min = float(xb_min_str)
+                        xb_max = float(xb_max_str)
+                        xb_alpha = self.xband_alpha_var.get()
+                        xb_color = self.xband_color_var.get().strip() or 'gray'
+                        if not swap_axes:
+                            ax.axvspan(xb_min, xb_max, facecolor=xb_color, alpha=xb_alpha, edgecolor='none', zorder=0)
+                        else:
+                            ax.axhspan(xb_min, xb_max, facecolor=xb_color, alpha=xb_alpha, edgecolor='none', zorder=0)
+            except Exception as e:
+                print(f"Custom X-band error: {e}")
 
             # Apply logarithmic scales first
             # Y-axis logarithmic scale
@@ -10436,7 +11301,8 @@ class ExPlotApp:
                                     annotator.configure(test=None, text_format='star', 
                                                      pvalue_format=pvalue_format,
                                                      loc='inside',
-                                                     line_width=self.linewidth.get()
+                                                     line_width=self.linewidth.get(),
+                                                     color='black'
                                                      )
                                     annotator.set_pvalues(pair_pvalues)
                                     annotator.annotate()
@@ -10473,7 +11339,8 @@ class ExPlotApp:
                                     annotator.configure(test=None, text_format='star', 
                                                      pvalue_format=pvalue_format,
                                                      loc='inside',
-                                                     line_width=self.linewidth.get()
+                                                     line_width=self.linewidth.get(),
+                                                     color='black'
                                                      )
                                     annotator.set_pvalues(pair_pvalues)
                                     annotator.annotate()

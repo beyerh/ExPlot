@@ -164,11 +164,18 @@ def _add_theme_switcher(root, style, app):
         light_themes = [
             "cosmo", "flatly", "journal", "litera", "lumen", 
             "minty", "pulse", "sandstone", "united", "yeti", 
-            "morph", "simplex", "cerculean"
+            "morph", "simplex", "cerculean",
+            "bootstrap-light", "catppuccin-light", "dracula-light",
+            "everforest-light", "gruvbox-light", "nord-light",
+            "one-light", "pydata-light", "solarized-light",
+            "tokyo-night-light",
         ]
         
         dark_themes = [
-            "darkly", "solar", "superhero", "cyborg", "vapor"
+            "darkly", "solar", "superhero", "cyborg", "vapor",
+            "bootstrap-dark", "catppuccin-dark", "dracula-dark",
+            "everforest-dark", "gruvbox-dark", "one-dark",
+            "pydata-dark", "solarized-dark", "tokyo-night-dark",
         ]
         
         custom_themes = [
@@ -249,7 +256,10 @@ def _change_theme(style, theme_name, dark_mode, app, update_menu=True, silent=Fa
         # Define dark themes (all lowercase for comparison)
         dark_themes = [
             'solar', 'superhero', 'darkly', 'cyborg', 'vapor',
-            'sharish', 'hacker', 'nord', 'nordic'
+            'bootstrap-dark', 'catppuccin-dark', 'dracula-dark',
+            'everforest-dark', 'gruvbox-dark', 'one-dark',
+            'pydata-dark', 'solarized-dark', 'tokyo-night-dark',
+            'nord', 'nordic'
         ]
         
         # Normalize theme name for comparison (always use lowercase for custom themes)
