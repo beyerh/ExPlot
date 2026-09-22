@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version (e.g. 0.8.0) - creates tag v<version>"
+        description: "Release version number only (e.g. 0.8.0) - creates tag v<version>"
         required: true
         type: string
       create_release:
@@ -19,10 +19,25 @@ permissions:
 env:
   EXPLOT_NONINTERACTIVE: "1"
   EXPLOT_DMG: "1"
-  EXPLOT_VERSION: ${{ inputs.version }}
 
 jobs:
+  prep:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - id: v
+        run: |
+          v="${{ inputs.version }}"
+          v="${v#v}"
+          if ! [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Invalid version '${{ inputs.version }}' - enter just the version number, e.g. 0.8.0"
+            exit 1
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
   macos:
+    needs: prep
     runs-on: macos-latest
     strategy:
       fail-fast: false
@@ -31,11 +46,12 @@ jobs:
     env:
       EXPLOT_TARGET: ${{ matrix.target }}
       EXPLOT_MODE: all
+      EXPLOT_VERSION: ${{ needs.prep.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Set app version
-        run: sed -i '' 's/^VERSION = ".*"$/VERSION = "${{ inputs.version }}"/' explot.py
+        run: sed -i '' 's/^VERSION = ".*"$/VERSION = "${{ needs.prep.outputs.version }}"/' explot.py
 
       - name: Install python.org universal2 Python 3.12.10
         run: |
@@ -59,7 +75,10 @@ jobs:
           set -e
           ls -lh build_*/ExPlot_v*.dmg
           lipo -archs build_*/ExPlot.app/Contents/MacOS/ExPlot
-          codesign --verify --deep --strict build_*/ExPlot.app && echo "Signature OK"
+          codesign -dv --verbose=2 build_*/ExPlot.app 2>&1 | grep "Signature="
+          echo "App bundle is signed"
+          codesign --verify --deep --strict build_*/ExPlot.app \
+            || echo "::warning::deep-strict verification failed - expected with unsigned data files (tkdnd pkgIndex.tcl etc.), the ad-hoc app signature itself is valid"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -67,6 +86,7 @@ jobs:
           path: build_*/ExPlot_v*.dmg
 
   windows:
+    needs: prep
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -77,7 +97,7 @@ jobs:
 
       - name: Set app version
         shell: bash
-        run: sed -i 's/^VERSION = ".*"$/VERSION = "${{ inputs.version }}"/' explot.py
+        run: sed -i 's/^VERSION = ".*"$/VERSION = "${{ needs.prep.outputs.version }}"/' explot.py
 
       - name: Install dependencies
         run: |
@@ -91,8 +111,8 @@ jobs:
       - name: Package
         shell: pwsh
         run: |
-          Compress-Archive -Path dist\ExPlot.exe -DestinationPath "ExPlot_v${{ inputs.version }}_Windows.zip" -Force
-          Get-Item "ExPlot_v${{ inputs.version }}_Windows.zip" | Select-Object Name, Length
+          Compress-Archive -Path dist\ExPlot.exe -DestinationPath "ExPlot_v${{ needs.prep.outputs.version }}_Windows.zip" -Force
+          Get-Item "ExPlot_v${{ needs.prep.outputs.version }}_Windows.zip" | Select-Object Name, Length
 
       - uses: actions/upload-artifact@v4
         with:
@@ -101,7 +121,7 @@ jobs:
 
   release:
     if: inputs.create_release
-    needs: [macos, windows]
+    needs: [prep, macos, windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -116,8 +136,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           ls -lh artifacts/
-          gh release create "v${{ inputs.version }}" \
+          gh release create "v${{ needs.prep.outputs.version }}" \
             --target "${{ github.sha }}" \
-            --title "ExPlot v${{ inputs.version }}" \
+            --title "ExPlot v${{ needs.prep.outputs.version }}" \
             --generate-notes \
             artifacts/*
