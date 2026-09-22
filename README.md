@@ -77,10 +77,26 @@ Rows with identical x_categories will be averaged and used to derive error estim
   - **Non-parametric**: Mann-Whitney U, Wilcoxon signed-rank
   - **ANOVA**: One-way, Welch's, Repeated measures
   - **Non-parametric ANOVA**: Kruskal-Wallis H test, Friedman test
-  - **Post-hoc**: Tukey's HSD, Tamhane's T2, Scheffe's, Dunn's, Conover's, Nemenyi
-- **Data Management**: Save/load projects, Excel/CSV/TSV input, Excel export, multi-sheet support
+  - **Post-hoc**: Tukey's HSD, Games-Howell, Tamhane's T2, Scheffe's, Dunn's (Bonferroni), Conover's (Holm), Nemenyi
+  - **Grouped data**: by default the selected t-test (2 groups) or ANOVA + post-hoc test (3+ groups) is run
+    within each category, with Holm-Šídák correction of the two-group p-values across categories.
+    Alternatives: uncorrected (projects saved with older versions keep this), or a two-way ANOVA (Type III) +
+    Šídák-adjusted comparisons (pooled error; ExPlot warns if a Brown-Forsythe test shows unequal variances).
+  - All tests run once in `explot_stats.py`; the graph annotations and the **Statistical Details** window
+    read the same result, so the asterisks and numbers always agree. Statistical Details lists the tests
+    actually run, all p-values, statistics, df, differences with 95% CI, effect sizes, descriptive
+    statistics and the asterisk lookup table (Prism levels at α = 0.05: `*` ≤0.05, `**` ≤0.01,
+    `***` ≤0.001, `****` ≤0.0001), and can be copied or exported to Excel/CSV.
+  - Paired tests, repeated measures ANOVA and Friedman match values by the **Subject column** (statistics
+    settings); without one, values are matched by row order within each group.
+- **Data Management**: Save/load projects, Excel/CSV/TSV input (open or drag & drop onto the window*), Excel export, multi-sheet support
+- **Interface scale**: `Settings > Appearance > Interface scale` (Auto adapts to HiDPI screens on Linux)
 - **Customization**: Custom colors, palettes, themes, LaTeX labels
 - **App themes** (`View > Themes`): Nord, Nordic, and standard light/dark themes
+
+\* Drag & drop needs the optional `tkinterdnd2` package. On Linux/Wayland it works wherever the
+desktop bridges drops to X11 apps (GNOME, KDE, Hyprland, Sway); on niri it currently does not,
+because xwayland-satellite does not forward drops to X11 clients.
 
 # Examples
 

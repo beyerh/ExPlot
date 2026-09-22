@@ -20,6 +20,7 @@ xlrd>=2.0.1
 Pillow==10.4.0
 PyMuPDF==1.26.0
 ttkbootstrap==2.2.2
+tkinterdnd2==0.6.3
 
 # Statistical annotations
 statannotations>=0.4.4

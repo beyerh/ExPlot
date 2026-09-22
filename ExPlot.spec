@@ -10,8 +10,8 @@ a = Analysis(
     datas=[
         ('explot.icns', '.'),
         ('example_data.xlsx', '.')
-    ] + collect_data_files('ttkbootstrap'),
-    hiddenimports=['openpyxl.cell._writer', 'matplotlib.backends.backend_pdf'],
+    ] + collect_data_files('ttkbootstrap') + collect_data_files('tkinterdnd2'),
+    hiddenimports=['openpyxl.cell._writer', 'matplotlib.backends.backend_pdf', 'tkinterdnd2'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

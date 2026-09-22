@@ -18,6 +18,7 @@ xlrd>=2.0.1
 # Image and PDF handling
 Pillow==10.4.0
 ttkbootstrap==1.10.1
+tkinterdnd2==0.6.3
 PyMuPDF==1.26.7
 
 # Statistical annotations

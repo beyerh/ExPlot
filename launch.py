@@ -63,6 +63,10 @@ def main():
     """Launch the application with ttkbootstrap theming."""
     # Create the root window with ttkbootstrap
     root = tk.Tk()
+
+    # Scale fonts/widgets for HiDPI Linux desktops (no change on Windows/macOS unless set in Settings)
+    from explot_ui import apply_ui_scaling
+    ui_scale = apply_ui_scaling(root)
     
     # Set application title
     root.title("ExPlot")
@@ -83,17 +87,16 @@ def main():
     app = ExPlotApp(root)
     
     # Set window size and position
-    window_width = 1200
-    window_height = 815
-    
     screen_width = root.winfo_screenwidth()
     screen_height = root.winfo_screenheight()
+    window_width = min(int(1200 * ui_scale), screen_width)
+    window_height = min(int(815 * ui_scale), screen_height)
     
     x = (screen_width // 2) - (window_width // 2)
     y = (screen_height // 2) - (window_height // 2)
     
     root.geometry(f'{window_width}x{window_height}+{x}+{y}')
-    root.minsize(1000, 700)
+    root.minsize(min(int(1000 * ui_scale), screen_width), min(int(700 * ui_scale), screen_height))
 
     # Start maximized when possible (platform-dependent) if enabled in preferences
     def _try_maximize_if_enabled():
