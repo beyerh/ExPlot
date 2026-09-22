@@ -1147,7 +1147,7 @@ class ExPlotApp:
         self.preview_dpi = tk.IntVar(value=175)  # Keep variable name for compatibility, but now means scale %
 
         self.start_maximized_var = tk.BooleanVar(value=True)
-        self.ui_scale_var = tk.StringVar(value="Auto")
+        self.ui_scale_var = tk.StringVar(value="100%")
 
         self.root = root
         self.version = VERSION  # Use the global VERSION constant
@@ -1787,11 +1787,16 @@ class ExPlotApp:
     def show_settings(self):
         window = tk.Toplevel(self.root)
         window.title("Default Settings")
-        window.geometry("600x550")
+        window.geometry("650x750")
+        
+        # Pack the button frame first so the buttons stay visible even when the
+        # window is too short to show the full tab content
+        button_frame = ttk.Frame(window)
+        button_frame.pack(side='bottom', fill='x', padx=10, pady=10)
         
         # Create notebook for tabs
         notebook = ttk.Notebook(window)
-        notebook.pack(fill='both', expand=True, padx=10, pady=10)
+        notebook.pack(fill='both', expand=True, padx=10, pady=(10, 0))
         
         # Create tabs
         general_tab = ttk.Frame(notebook)
@@ -2189,9 +2194,6 @@ class ExPlotApp:
         ttk.Radiobutton(outline_frame, text="White", variable=self.settings_outline_color_var, value="white").pack(anchor="w", pady=2)
         
         # Buttons at the bottom
-        button_frame = ttk.Frame(window)
-        button_frame.pack(pady=10, fill='x')
-        
         def save_settings():
             # Update main variables from settings first
             self.bar_outline_var.set(self.settings_bar_outline_var.get())
@@ -2251,6 +2253,13 @@ class ExPlotApp:
         ttk.Button(button_frame, text="Save Settings", command=save_settings, width=15).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="Reset All Preferences", command=reset_all_preferences, width=20).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="Cancel", command=window.destroy, width=10).pack(side=tk.RIGHT, padx=5)
+        
+        # Grow the window to fit the tallest tab, capped to the screen size
+        window.update_idletasks()
+        width = min(max(650, window.winfo_reqwidth()), window.winfo_screenwidth() - 60)
+        height = min(max(750, window.winfo_reqheight()), window.winfo_screenheight() - 60)
+        window.geometry(f"{width}x{height}")
+        window.minsize(min(width, 600), min(height, 450))
 
     def show_data_viewer(self):
         """Open a popup window showing the loaded DataFrame in a scrollable table."""
@@ -3080,7 +3089,7 @@ class ExPlotApp:
             # Preview settings
             'preview_dpi': 175,  # Default DPI for preview images
             'start_maximized': True,
-            'ui_scale': "Auto",
+            'ui_scale': "100%",
             'ybreak_marker_style': "Connected",
             'ybreak_marker_style_user_set': False,
             'ybreak_marker_style_user_set_schema': 1,

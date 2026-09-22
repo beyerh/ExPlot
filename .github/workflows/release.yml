@@ -1,0 +1,123 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. 0.8.0) - creates tag v<version>"
+        required: true
+        type: string
+      create_release:
+        description: "Create a GitHub Release with the built artifacts"
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+env:
+  EXPLOT_NONINTERACTIVE: "1"
+  EXPLOT_DMG: "1"
+  EXPLOT_VERSION: ${{ inputs.version }}
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [apple, intel, intel_compat]
+    env:
+      EXPLOT_TARGET: ${{ matrix.target }}
+      EXPLOT_MODE: all
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set app version
+        run: sed -i '' 's/^VERSION = ".*"$/VERSION = "${{ inputs.version }}"/' explot.py
+
+      - name: Install python.org universal2 Python 3.12.10
+        run: |
+          curl -fSL -o /tmp/python.pkg "https://www.python.org/ftp/python/3.12.10/python-3.12.10-macos11.pkg"
+          sudo installer -pkg /tmp/python.pkg -target /
+          PY=/Library/Frameworks/Python.framework/Versions/3.12/bin/python3
+          "$PY" --version
+          lipo -archs "$PY"
+
+      - name: Ensure Rosetta 2 for Intel targets
+        if: matrix.target != 'apple'
+        run: |
+          arch -x86_64 /usr/bin/true 2>/dev/null || sudo softwareupdate --install-rosetta --agree-to-license
+          arch -x86_64 /usr/bin/true
+
+      - name: Build and package
+        run: ./build.sh
+
+      - name: Verify artifact
+        run: |
+          set -e
+          ls -lh build_*/ExPlot_v*.dmg
+          lipo -archs build_*/ExPlot.app/Contents/MacOS/ExPlot
+          codesign --verify --deep --strict build_*/ExPlot.app && echo "Signature OK"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.target }}
+          path: build_*/ExPlot_v*.dmg
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set app version
+        shell: bash
+        run: sed -i 's/^VERSION = ".*"$/VERSION = "${{ inputs.version }}"/' explot.py
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build with PyInstaller
+        run: pyinstaller --noconfirm --clean ExPlot.spec
+
+      - name: Package
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist\ExPlot.exe -DestinationPath "ExPlot_v${{ inputs.version }}_Windows.zip" -Force
+          Get-Item "ExPlot_v${{ inputs.version }}_Windows.zip" | Select-Object Name, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: ExPlot_v*_Windows.zip
+
+  release:
+    if: inputs.create_release
+    needs: [macos, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ls -lh artifacts/
+          gh release create "v${{ inputs.version }}" \
+            --target "${{ github.sha }}" \
+            --title "ExPlot v${{ inputs.version }}" \
+            --generate-notes \
+            artifacts/*

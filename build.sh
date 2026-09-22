@@ -4,7 +4,7 @@
  
  # Configuration
  APP_NAME="ExPlot"
- VERSION="0.7.9"
+ VERSION="${EXPLOT_VERSION:-0.7.9}"
  BUILD_DIR="build"
  
  VENV_APP=".venv"
@@ -34,15 +34,32 @@
    unset _CE_CONDA _CE_M
  fi
  
- if [[ ! -t 0 ]]; then
+ NONINTERACTIVE=0
+ if [[ "${EXPLOT_NONINTERACTIVE:-0}" == "1" || "${CI:-}" == "true" ]]; then
+   NONINTERACTIVE=1
+ fi
+ 
+ if [[ ${NONINTERACTIVE} -eq 0 && ! -t 0 ]]; then
    echo "Error: build.sh requires an interactive terminal (stdin is not a TTY)." >&2
+   echo "For CI use, set EXPLOT_NONINTERACTIVE=1 plus EXPLOT_TARGET / EXPLOT_MODE." >&2
    exit 2
  fi
  
  echo "ExPlot build wizard"
  echo
  
- TARGET=""
+ if [[ ${NONINTERACTIVE} -eq 1 ]]; then
+   TARGET="${EXPLOT_TARGET:-}"
+   MODE="${EXPLOT_MODE:-all}"
+   if [[ -z "${TARGET}" ]]; then
+     echo "Error: EXPLOT_TARGET must be set to apple, intel, or intel_compat." >&2
+     exit 2
+   fi
+ else
+   TARGET=""
+   MODE=""
+ fi
+ 
  while [[ -z "${TARGET}" ]]; do
    echo "Select target:"
    echo "  1) Apple Silicon (arm64)"
@@ -57,7 +74,6 @@
    esac
  done
 
- MODE=""
  while [[ -z "${MODE}" ]]; do
    echo
    echo "Select action:"
@@ -73,14 +89,31 @@
    esac
  done
  
+ case "${TARGET}" in
+   apple|intel|intel_compat) ;;
+   *) echo "Error: invalid target '${TARGET}'." >&2; exit 2 ;;
+ esac
+ case "${MODE}" in
+   env|build|all) ;;
+   *) echo "Error: invalid mode '${MODE}'." >&2; exit 2 ;;
+ esac
+ 
  echo
  echo "Python used for creating venv: ${PYTHON_UNIVERSAL2}"
- read -r -p "Press Enter to accept, or paste a different python3 path: " python_override
- if [[ -n "${python_override}" ]]; then
-   PYTHON_UNIVERSAL2="${python_override}"
+ if [[ -n "${EXPLOT_PYTHON:-}" ]]; then
+   PYTHON_UNIVERSAL2="${EXPLOT_PYTHON}"
+ elif [[ ${NONINTERACTIVE} -eq 0 ]]; then
+   read -r -p "Press Enter to accept, or paste a different python3 path: " python_override
+   if [[ -n "${python_override}" ]]; then
+     PYTHON_UNIVERSAL2="${python_override}"
+   fi
  fi
  
  if [[ ! -x "${PYTHON_UNIVERSAL2}" ]]; then
+   if [[ ${NONINTERACTIVE} -eq 1 ]]; then
+     echo "Error: Python executable not found at: ${PYTHON_UNIVERSAL2}" >&2
+     exit 2
+   fi
    echo >&2
    echo "Error: Python executable not found at: ${PYTHON_UNIVERSAL2}" >&2
    echo "Recommended: install python.org 'universal2' Python ${PYTHON_UNIVERSAL2_RECOMMENDED_VERSION} (includes both arm64 and x86_64 support)." >&2
@@ -163,10 +196,12 @@
  echo "  Target: ${TARGET}"
  echo "  Action: ${MODE}"
  echo "  Python: ${PYTHON_UNIVERSAL2}"
- read -r -p "Continue? [y/N]: " confirm
- if [[ "${confirm}" != "y" && "${confirm}" != "Y" ]]; then
-   echo "Cancelled."
-   exit 0
+ if [[ ${NONINTERACTIVE} -eq 0 ]]; then
+   read -r -p "Continue? [y/N]: " confirm
+   if [[ "${confirm}" != "y" && "${confirm}" != "Y" ]]; then
+     echo "Cancelled."
+     exit 0
+   fi
  fi
  
  HOST_ARCH="$(uname -m)"
@@ -196,6 +231,10 @@
  confirm_delete_dir() {
    local dir="$1"
    if [[ -d "${dir}" ]] && [[ -n "$(/bin/ls -A "${dir}" 2>/dev/null)" ]]; then
+     if [[ ${NONINTERACTIVE} -eq 1 ]]; then
+       echo "Removing existing directory: ${dir}"
+       return 0
+     fi
      echo
      echo "Warning: '${dir}' already exists and is not empty."
      read -r -p "Delete it now? [y/N]: " del
@@ -339,13 +378,15 @@
      echo "Run: open \"${APP_BUNDLE}\""
    fi
 
-   echo
-   read -r -p "Launch the app now? [y/N]: " run_now
-   if [[ "${run_now}" == "y" || "${run_now}" == "Y" ]]; then
-     if [[ ( "${TARGET}" == "intel" || "${TARGET}" == "intel_compat" ) && "$(uname -m)" == "arm64" ]]; then
-       arch -x86_64 open "${APP_BUNDLE}"
-     else
-       open "${APP_BUNDLE}"
+   if [[ ${NONINTERACTIVE} -eq 0 ]]; then
+     echo
+     read -r -p "Launch the app now? [y/N]: " run_now
+     if [[ "${run_now}" == "y" || "${run_now}" == "Y" ]]; then
+       if [[ ( "${TARGET}" == "intel" || "${TARGET}" == "intel_compat" ) && "$(uname -m)" == "arm64" ]]; then
+         arch -x86_64 open "${APP_BUNDLE}"
+       else
+         open "${APP_BUNDLE}"
+       fi
      fi
    fi
 
@@ -355,12 +396,18 @@
    # manually allow it via System Settings → Security & Privacy.
    echo
    echo "Package for distribution (ad-hoc signed app – includes first-launch instructions):"
-   echo "  1) Create DMG (disk image with /Applications shortcut + README)"
-   echo "  2) Skip packaging"
-   read -r -p "Choice [1-2]: " pkg_choice
-
-   if [[ "${pkg_choice}" == "1" ]]; then
-     package_dmg
+   if [[ ${NONINTERACTIVE} -eq 1 ]]; then
+     if [[ "${EXPLOT_DMG:-1}" == "1" ]]; then
+       package_dmg
+     fi
+   else
+     echo "  1) Create DMG (disk image with /Applications shortcut + README)"
+     echo "  2) Skip packaging"
+     read -r -p "Choice [1-2]: " pkg_choice
+ 
+     if [[ "${pkg_choice}" == "1" ]]; then
+       package_dmg
+     fi
    fi
 }
 

@@ -83,9 +83,9 @@ def detect_linux_scale(root=None):
 def read_ui_scale_preference():
     try:
         with open(config_dir() / "default_settings.json", encoding="utf-8") as f:
-            return json.load(f).get("ui_scale", "Auto")
+            return json.load(f).get("ui_scale", "100%")
     except Exception:
-        return "Auto"
+        return "100%"
 
 
 def apply_ui_scaling(root, preference=None):
