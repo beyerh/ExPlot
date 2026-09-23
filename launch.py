@@ -12,7 +12,7 @@ from pathlib import Path
 import ttkbootstrap.localization
 ttkbootstrap.localization.initialize_localities = lambda *args, **kwargs: None
 
-from ttkbootstrap_theme import setup_theme, get_available_themes
+from ttkbootstrap_theme import setup_theme, get_available_themes, resolve_theme_name
 
 # Global flag to prevent multiple cleanup calls
 _cleanup_called = False
@@ -85,6 +85,7 @@ def main():
     
     # Create the application
     app = ExPlotApp(root)
+    app.style = style
     
     # Set window size and position
     screen_width = root.winfo_screenwidth()
@@ -162,25 +163,14 @@ def _add_theme_switcher(root, style, app):
         theme_submenu = tk.Menu(view_menu, tearoff=0)
         view_menu.add_cascade(label="Themes", menu=theme_submenu)
         
-        # Define available themes (only include valid ttkbootstrap themes)
+        # Build menus from themes actually registered in ttkbootstrap so we can
+        # never offer names that don't exist (ttkbootstrap 2.x replaced the old
+        # Bootswatch themes with -light/-dark pairs)
+        registered = list(style.theme_names())
+        light_themes = sorted(t for t in registered if t.endswith('-light'))
+        dark_themes = sorted(t for t in registered if t.endswith('-dark') or t == 'darkly')
+        
         # Note: Custom themes (nord, nordic) are handled specially
-        light_themes = [
-            "cosmo", "flatly", "journal", "litera", "lumen", 
-            "minty", "pulse", "sandstone", "united", "yeti", 
-            "morph", "simplex", "cerculean",
-            "bootstrap-light", "catppuccin-light", "dracula-light",
-            "everforest-light", "gruvbox-light", "nord-light",
-            "one-light", "pydata-light", "solarized-light",
-            "tokyo-night-light",
-        ]
-        
-        dark_themes = [
-            "darkly", "solar", "superhero", "cyborg", "vapor",
-            "bootstrap-dark", "catppuccin-dark", "dracula-dark",
-            "everforest-dark", "gruvbox-dark", "one-dark",
-            "pydata-dark", "solarized-dark", "tokyo-night-dark",
-        ]
-        
         custom_themes = [
             ("nord", True),     # (name, is_dark)
             ("nordic", True),
@@ -226,7 +216,7 @@ def _add_theme_switcher(root, style, app):
         # Load saved theme from application settings
         try:
             if hasattr(app, 'theme_name') and hasattr(app, 'dark_mode'):
-                saved_theme = app.theme_name
+                saved_theme = resolve_theme_name(app.theme_name)
                 dark_mode = app.dark_mode
                 # Check if theme is in any of our theme lists
                 all_themes = light_themes + dark_themes + [t[0] for t in custom_themes]
@@ -258,13 +248,17 @@ def _change_theme(style, theme_name, dark_mode, app, update_menu=True, silent=Fa
     try:
         # Define dark themes (all lowercase for comparison)
         dark_themes = [
-            'solar', 'superhero', 'darkly', 'cyborg', 'vapor',
+            'darkly', 'nord', 'nordic',
             'bootstrap-dark', 'catppuccin-dark', 'dracula-dark',
-            'everforest-dark', 'gruvbox-dark', 'one-dark',
-            'pydata-dark', 'solarized-dark', 'tokyo-night-dark',
-            'nord', 'nordic'
+            'everforest-dark', 'gruvbox-dark', 'minty-dark', 'nord-dark',
+            'one-dark', 'pulse-dark', 'pydata-dark', 'sandstone-dark',
+            'solarized-dark', 'tokyo-night-dark', 'united-dark',
+            'vapor-dark',
         ]
         
+        # Map legacy theme names removed in ttkbootstrap 2.x
+        theme_name = resolve_theme_name(theme_name)
+
         # Normalize theme name for comparison (always use lowercase for custom themes)
         theme_lower = theme_name.lower()
         is_custom_theme = theme_lower in ['nord', 'nordic']
@@ -346,11 +340,15 @@ def _update_theme_dependent_styles(style, dark_mode):
     try:
         bg = style.colors.bg if hasattr(style.colors, 'bg') else '#ffffff'
         fg = style.colors.fg if hasattr(style.colors, 'fg') else '#000000'
+        input_bg = style.colors.inputbg if hasattr(style.colors, 'inputbg') else bg
+        input_fg = style.colors.inputfg if hasattr(style.colors, 'inputfg') else fg
         select_bg = style.colors.selectbg if hasattr(style.colors, 'selectbg') else '#0078d7'
         select_fg = style.colors.selectfg if hasattr(style.colors, 'selectfg') else '#ffffff'
     except:
         bg = '#ffffff' if not dark_mode else '#2e2e2e'
         fg = '#000000' if not dark_mode else '#ffffff'
+        input_bg = bg
+        input_fg = fg
         select_bg = '#0078d7'
         select_fg = '#ffffff'
     
@@ -389,14 +387,45 @@ def _update_theme_dependent_styles(style, dark_mode):
              ])
              
     style.map('TEntry',
-             fieldbackground=[('readonly', '!disabled', bg)],
-             foreground=[('readonly', '!disabled', fg)])
-             
+             fieldbackground=[('readonly', '!disabled', input_bg)],
+             foreground=[('readonly', '!disabled', input_fg)])
+
     style.map('TCombobox',
-             fieldbackground=[('readonly', '!disabled', bg)],
+             fieldbackground=[('readonly', '!disabled', input_bg)],
              selectbackground=[('readonly', '!disabled', select_bg)],
              selectforeground=[('readonly', '!disabled', select_fg)])
-             
+
+    # ttkbootstrap 2.x repaints the combobox popdown (a Tcl-level listbox) only
+    # from update_ttk_widget_style(), which returns early for comboboxes with
+    # no explicit -style -- i.e. every plain ttk.Combobox here. Intercept
+    # PopdownWindow once so each dropdown is restyled from the current theme
+    # colors every time it opens.
+    try:
+        interp = getattr(getattr(style, 'master', None), 'tk', None)
+        if interp is not None:
+            interp.eval('''
+                if {![llength [info commands ::ttk::combobox::OrigPopdownWindow]]} {
+                    rename ::ttk::combobox::PopdownWindow ::ttk::combobox::OrigPopdownWindow
+                    proc ::ttk::combobox::PopdownWindow {w} {
+                        set pop [OrigPopdownWindow $w]
+                        if {[info exists ::explot_popdown_cfg]} {
+                            catch {eval [list $pop.f.l configure] $::explot_popdown_cfg}
+                            catch {$pop.f.sb configure -style Thin.Vertical.TScrollbar}
+                        }
+                        return $pop
+                    }
+                }
+            ''')
+            border = getattr(style.colors, 'border', select_bg)
+            interp.call('set', '::explot_popdown_cfg', (
+                '-background', input_bg, '-foreground', input_fg,
+                '-selectbackground', select_bg, '-selectforeground', select_fg,
+                '-highlightcolor', border, '-highlightthickness', 1,
+                '-borderwidth', 2,
+            ))
+    except Exception:
+        pass
+
     # Configure scrollbars
     scrollbar_style = {
         'arrowsize': 14,
@@ -404,6 +433,10 @@ def _update_theme_dependent_styles(style, dark_mode):
     }
     style.configure('Vertical.TScrollbar', **scrollbar_style)
     style.configure('Horizontal.TScrollbar', **scrollbar_style)
+
+    # Tint buttons with the theme accent color (ttkbootstrap 2.x default is flat gray)
+    from ttkbootstrap_theme import apply_button_accent
+    apply_button_accent(style)
 
 def _auto_detect_theme(style, app):
     """Auto-detect the system theme and apply the appropriate theme.
@@ -424,19 +457,17 @@ def _auto_detect_theme(style, app):
         try:
             import darkdetect
             if darkdetect.isDark():
-                # Default to Nord theme for dark mode
-                _change_theme(style, 'nord', True, app, silent=True)
+                _change_theme(style, 'nord-dark', True, app, silent=True)
             else:
-                # Default to Cosmo for light mode
-                _change_theme(style, 'cosmo', False, app, silent=True)
+                _change_theme(style, 'nord-light', False, app, silent=True)
         except ImportError:
             # Fallback if darkdetect is not available
-            _change_theme(style, 'cosmo', False, app, silent=True)
+            _change_theme(style, 'nord-light', False, app, silent=True)
             
     except Exception as e:
         print(f"Warning: Could not auto-detect theme: {e}")
         # Fall back to light theme
-        _change_theme(style, 'cosmo', False, app, silent=True)
+        _change_theme(style, 'nord-light', False, app, silent=True)
         return  # Exit after handling the error
 
 if __name__ == "__main__":

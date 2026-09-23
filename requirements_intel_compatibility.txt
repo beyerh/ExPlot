@@ -17,9 +17,12 @@ xlrd>=2.0.1
 
 # Image and PDF handling
 Pillow==10.4.0
-ttkbootstrap==1.10.1
+ttkbootstrap==2.2.2
 tkinterdnd2==0.6.3
 PyMuPDF==1.26.7
 
 # Statistical annotations
 statannotations>=0.4.4
+
+# TLS certificates for the update check in packaged builds
+certifi==2026.7.22

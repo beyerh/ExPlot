@@ -90,9 +90,11 @@ Rows with identical x_categories will be averaged and used to derive error estim
   - Paired tests, repeated measures ANOVA and Friedman match values by the **Subject column** (statistics
     settings); without one, values are matched by row order within each group.
 - **Data Management**: Save/load projects, Excel/CSV/TSV input (open or drag & drop onto the window*), Excel export, multi-sheet support
-- **Interface scale**: `Settings > Appearance > Interface scale` (Auto adapts to HiDPI screens on Linux)
+- **Interface scale**: `Settings > Appearance > Interface scale` (default 100%; Auto adapts to HiDPI screens on Linux)
 - **Customization**: Custom colors, palettes, themes, LaTeX labels
-- **App themes** (`View > Themes`): Nord, Nordic, and standard light/dark themes
+- **App themes** (`View > Themes`): ttkbootstrap light/dark themes (default: Nord Light / Nord Dark) plus the custom Nord and Nordic themes
+- **Plot background**: the preview matches the app theme; exported PNG/PDF files are always white. Set `Settings > Appearance > Plot background` to *White* for a white preview
+- **Update check**: ExPlot checks GitHub for new releases on startup and shows a banner (*Skip this time* / *Skip this version*). Disable it under `Settings > General`, or check manually via `Help > Check for Updates`
 
 \* Drag & drop needs the optional `tkinterdnd2` package. On Linux/Wayland it works wherever the
 desktop bridges drops to X11 apps (GNOME, KDE, Hyprland, Sway); on niri it currently does not,
@@ -106,7 +108,7 @@ File --> Load Example Data
 
 ## Packaged App
 
-Packaged app for macOS and Windows can be downloaded from the [releases](releases) page.
+Packaged app for macOS and Windows can be downloaded from the [releases](https://github.com/beyerh/ExPlot/releases) page.
 
 ## Create environment manually
 

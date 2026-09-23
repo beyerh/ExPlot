@@ -79,11 +79,13 @@ jobs:
           echo "App bundle is signed"
           codesign --verify --deep --strict build_*/ExPlot.app \
             || echo "::warning::deep-strict verification failed - expected with unsigned data files (tkdnd pkgIndex.tcl etc.), the ad-hoc app signature itself is valid"
+          mkdir -p release_assets
+          cp build_*/ExPlot_v*.dmg release_assets/
 
       - uses: actions/upload-artifact@v4
         with:
           name: macos-${{ matrix.target }}
-          path: build_*/ExPlot_v*.dmg
+          path: release_assets/*.dmg
 
   windows:
     needs: prep
@@ -126,6 +128,8 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -137,7 +141,8 @@ jobs:
         run: |
           ls -lh artifacts/
           gh release create "v${{ needs.prep.outputs.version }}" \
+            --repo "${{ github.repository }}" \
             --target "${{ github.sha }}" \
             --title "ExPlot v${{ needs.prep.outputs.version }}" \
             --generate-notes \
-            artifacts/*
+            artifacts/*.dmg artifacts/*.zip

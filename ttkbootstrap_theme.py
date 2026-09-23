@@ -7,12 +7,69 @@ styling across different platforms.
 """
 import os
 import sys
+import warnings
 import platform
 from tkinter import ttk
 import ttkbootstrap as ttkb
 from ttkbootstrap.style import Style
 from ttkbootstrap.constants import *
 from ttkbootstrap.themes.standard import STANDARD_THEMES
+
+# Themes removed in ttkbootstrap 2.x (old Bootswatch names) mapped to the
+# closest -light/-dark replacement, so saved preferences keep working.
+LEGACY_THEME_MAP = {
+    'cosmo': 'bootstrap-light',
+    'flatly': 'bootstrap-light',
+    'journal': 'bootstrap-light',
+    'litera': 'bootstrap-light',
+    'lumen': 'bootstrap-light',
+    'minty': 'minty-light',
+    'pulse': 'pulse-light',
+    'sandstone': 'sandstone-light',
+    'united': 'united-light',
+    'yeti': 'bootstrap-light',
+    'morph': 'bootstrap-light',
+    'simplex': 'bootstrap-light',
+    'cerculean': 'bootstrap-light',
+    'solar': 'solarized-dark',
+    'superhero': 'bootstrap-dark',
+    'cyborg': 'darkly',
+    'vapor': 'vapor-dark',
+    'sharish': 'darkly',
+    'hacker': 'darkly',
+    'light': 'nord-light',
+    'dark': 'nord-dark',
+}
+
+def resolve_theme_name(theme_name):
+    """Map a stored/legacy theme name to a registered ttkbootstrap theme."""
+    name = (theme_name or '').lower()
+    return LEGACY_THEME_MAP.get(name, name)
+
+def apply_button_accent(style):
+    """Tint buttons with the theme's primary color.
+
+    ttkbootstrap 2.x renders plain TButton flat gray in every theme, while the
+    1.x Bootswatch themes colored them. Re-apply after each theme_use() since a
+    theme switch resets these styles. Skipped for the custom nord/nordic themes,
+    which bring their own button styling.
+    """
+    if style.theme_use() in ('nord', 'nordic'):
+        return
+    try:
+        from ttkbootstrap.utils.color import color_to_hsl, color_to_hex, contrast_color, HSL
+        bg = style.colors.primary
+        fg = contrast_color(bg, model='hex')
+        h, s, l = color_to_hsl(bg)
+        hover = color_to_hex([h, s, min(100, l + 10)], HSL)
+        pressed = color_to_hex([h, s, max(0, l - 10)], HSL)
+        for name in ('TButton', 'Accent.TButton'):
+            style.configure(name, background=bg, foreground=fg)
+            style.map(name,
+                background=[('pressed', pressed), ('active', hover), ('!disabled', bg)],
+                foreground=[('!disabled', fg)])
+    except Exception as e:
+        print(f"Warning: could not apply button accent: {e}")
 
 def _get_nord_colors(variant='nord'):
     """Return color palette for different Nord theme variants.
@@ -77,31 +134,39 @@ def _setup_nord_theme(style, variant='nord'):
     available_themes = [t.lower() for t in style.theme_names()]
     
     if theme_name not in available_themes:
-        # Create the theme based on darkly (both are dark themes)
+        # Create the theme based on darkly (both are dark themes). In
+        # ttkbootstrap 2.x 'darkly' is a legacy alias that is only registered
+        # on first theme_use(), so build it before using it as the parent.
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            style.theme_use('darkly')
         style.theme_create(theme_name, 'darkly')
     
     # Use the theme
     style.theme_use(theme_name)
-    
-    # Common color mappings for both themes
-    style.colors.primary = nord_colors['nord8']  # Light blue
-    style.colors.secondary = nord_colors['nord7']  # Turquoise
-    style.colors.success = nord_colors['nord14']  # Green
-    style.colors.info = nord_colors['nord9']  # Blue
-    style.colors.warning = nord_colors['nord13']  # Yellow
-    style.colors.danger = nord_colors['nord11']  # Red
-    style.colors.light = nord_colors['nord6']  # Light text
-    style.colors.dark = nord_colors['nord0']  # Dark background
-    
-    # Background and foreground colors
-    style.colors.bg = nord_colors['nord0']  # Dark background
-    style.colors.fg = nord_colors['nord4']  # Light text
-    style.colors.selectbg = nord_colors['nord10']  # Dark blue for selection
-    style.colors.selectfg = nord_colors['nord6']  # Light text for selection
-    style.colors.border = nord_colors['nord3']  # Lighter border
-    style.colors.inputfg = nord_colors['nord4']  # Light text for input
-    style.colors.inputbg = nord_colors['nord1']  # Darker background for input
-    style.colors.active = nord_colors['nord10']  # Active element color
+
+    # Give the custom theme its own Colors object: theme_create() copies the
+    # parent's Colors by reference, so mutating style.colors in place would
+    # permanently corrupt the 'darkly' palette for the rest of the session.
+    from ttkbootstrap.style.theme import Colors
+    style.theme.colors = Colors(
+        primary=nord_colors['nord8'],    # Light blue
+        secondary=nord_colors['nord7'],  # Turquoise
+        success=nord_colors['nord14'],   # Green
+        info=nord_colors['nord9'],       # Blue
+        warning=nord_colors['nord13'],   # Yellow
+        danger=nord_colors['nord11'],    # Red
+        light=nord_colors['nord6'],      # Light text
+        dark=nord_colors['nord0'],       # Dark background
+        bg=nord_colors['nord0'],         # Dark background
+        fg=nord_colors['nord4'],         # Light text
+        selectbg=nord_colors['nord10'],  # Dark blue for selection
+        selectfg=nord_colors['nord6'],   # Light text for selection
+        border=nord_colors['nord3'],     # Lighter border
+        inputfg=nord_colors['nord4'],    # Light text for input
+        inputbg=nord_colors['nord1'],    # Darker background for input
+        active=nord_colors['nord10'],    # Active element color
+    )
     
     # Configure base styles for all widgets
     style.configure('.',
@@ -288,30 +353,28 @@ def setup_theme(root, dark_mode=None, theme_name=None):
     Returns:
         ttkbootstrap.Style: The configured style object
     """
-    # Available themes in ttkbootstrap
+    # Available themes in ttkbootstrap 2.x
     LIGHT_THEMES = [
-        'cosmo', 'flatly', 'journal', 'litera', 'lumen', 
-        'minty', 'pulse', 'sandstone', 'united', 'yeti',
-        'morph', 'simplex', 'cerculean',
-        # v2.2.2 new themes
         'bootstrap-light', 'catppuccin-light', 'dracula-light',
-        'everforest-light', 'gruvbox-light', 'nord-light',
-        'one-light', 'pydata-light', 'solarized-light',
-        'tokyo-night-light',
+        'everforest-light', 'gruvbox-light', 'minty-light', 'nord-light',
+        'one-light', 'pulse-light', 'pydata-light', 'sandstone-light',
+        'solarized-light', 'tokyo-night-light', 'united-light',
+        'vapor-light',
     ]
     
     DARK_THEMES = [
-        'darkly', 'solar', 'superhero', 'cyborg', 'vapor',
-        'nord', 'nordic',
-        # v2.2.2 new themes
+        'darkly',
+        'nord', 'nordic',  # custom themes
         'bootstrap-dark', 'catppuccin-dark', 'dracula-dark',
-        'everforest-dark', 'gruvbox-dark', 'one-dark',
-        'pydata-dark', 'solarized-dark', 'tokyo-night-dark',
+        'everforest-dark', 'gruvbox-dark', 'minty-dark', 'nord-dark',
+        'one-dark', 'pulse-dark', 'pydata-dark', 'sandstone-dark',
+        'solarized-dark', 'tokyo-night-dark', 'united-dark',
+        'vapor-dark',
     ]
     
     # Default theme selection
-    DEFAULT_LIGHT_THEME = 'cosmo'
-    DEFAULT_DARK_THEME = 'darkly'  # Changed default dark theme to darkly, custom themes do not work here
+    DEFAULT_LIGHT_THEME = 'nord-light'
+    DEFAULT_DARK_THEME = 'nord-dark'
     
     # Determine if we should use dark mode if not explicitly set
     if dark_mode is None:
@@ -323,13 +386,27 @@ def setup_theme(root, dark_mode=None, theme_name=None):
             dark_mode = _is_dark_mode()
         theme_name = DEFAULT_DARK_THEME if dark_mode else DEFAULT_LIGHT_THEME
     
+    # Map legacy theme names removed in ttkbootstrap 2.x
+    theme_name = resolve_theme_name(theme_name)
+
     # Normalize theme name for custom themes
     theme_lower = theme_name.lower()
     
     try:
         # Create style object with the original theme name first
         style = Style(theme=theme_name)
-        
+
+        # 'darkly' is a lazy legacy alias in ttkbootstrap 2.x: it only becomes
+        # a real Tcl theme on first theme_use(). Build it once here so it
+        # stays selectable in menus and usable as a parent theme.
+        if 'darkly' not in style.theme_names():
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore')
+                current = style.theme_use()
+                style.theme_use('darkly')
+                if current in style.theme_names():
+                    style.theme_use(current)
+
         # Apply custom themes if needed (using lowercase for consistency)
         if theme_lower == 'nord':
             style = _setup_nord_theme(style, 'nord')
@@ -348,7 +425,9 @@ def setup_theme(root, dark_mode=None, theme_name=None):
         
         # Apply custom styling for better cross-platform appearance
         _apply_cross_platform_fixes(style, dark_mode)
-        
+
+        apply_button_accent(style)
+
         return style
         
     except Exception as e:
@@ -515,44 +594,40 @@ def get_available_themes():
     """Get a list of available themes with their display names."""
     return {
         'Light': {
-            'cosmo': 'Cosmo (Default Light)',
-            'flatly': 'Flatly',
-            'journal': 'Journal',
-            'litera': 'Litera',
-            'lumen': 'Lumen',
-            'minty': 'Minty',
-            'pulse': 'Pulse',
-            'sandstone': 'Sandstone',
-            'united': 'United',
-            'yeti': 'Yeti',
-            'morph': 'Morph',
-            'simplex': 'Simplex',
-            'cerculean': 'Cerculean',
             'bootstrap-light': 'Bootstrap Light',
             'catppuccin-light': 'Catppuccin Light',
             'dracula-light': 'Dracula Light',
             'everforest-light': 'Everforest Light',
             'gruvbox-light': 'Gruvbox Light',
-            'nord-light': 'Nord Light',
+            'minty-light': 'Minty Light',
+            'nord-light': 'Nord Light (Default Light)',
             'one-light': 'One Light',
+            'pulse-light': 'Pulse Light',
             'pydata-light': 'PyData Light',
+            'sandstone-light': 'Sandstone Light',
             'solarized-light': 'Solarized Light',
             'tokyo-night-light': 'Tokyo Night Light',
+            'united-light': 'United Light',
+            'vapor-light': 'Vapor Light',
         },
         'Dark': {
-            'darkly': 'Darkly (Default Dark)',
-            'solar': 'Solar',
-            'superhero': 'Superhero',
-            'cyborg': 'Cyborg',
-            'vapor': 'Vapor',
+            'darkly': 'Darkly',
+            'nord': 'Nord (Custom)',
+            'nordic': 'Nordic (Custom)',
             'bootstrap-dark': 'Bootstrap Dark',
             'catppuccin-dark': 'Catppuccin Dark',
             'dracula-dark': 'Dracula Dark',
             'everforest-dark': 'Everforest Dark',
             'gruvbox-dark': 'Gruvbox Dark',
+            'minty-dark': 'Minty Dark',
+            'nord-dark': 'Nord Dark (Default Dark)',
             'one-dark': 'One Dark',
+            'pulse-dark': 'Pulse Dark',
             'pydata-dark': 'PyData Dark',
+            'sandstone-dark': 'Sandstone Dark',
             'solarized-dark': 'Solarized Dark',
             'tokyo-night-dark': 'Tokyo Night Dark',
+            'united-dark': 'United Dark',
+            'vapor-dark': 'Vapor Dark',
         }
     }

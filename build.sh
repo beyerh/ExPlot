@@ -4,7 +4,7 @@
  
  # Configuration
  APP_NAME="ExPlot"
- VERSION="${EXPLOT_VERSION:-0.7.9}"
+ VERSION="${EXPLOT_VERSION:-0.8.0}"
  BUILD_DIR="build"
  
  VENV_APP=".venv"
@@ -299,6 +299,7 @@
        --enable-plugin=tk-inter \
        --include-package=matplotlib.backends.backend_pdf \
        --include-package-data=ttkbootstrap \
+       --include-package-data=certifi \
        --include-package=tkinterdnd2 \
        --include-data-dir=\"\$(python -c 'import os, tkinterdnd2; print(os.path.dirname(tkinterdnd2.__file__))')/tkdnd\"=tkinterdnd2/tkdnd \
        --output-filename=\"${APP_NAME}\" \

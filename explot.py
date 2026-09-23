@@ -1,6 +1,6 @@
 # ExPlot - Data visualization tool for Excel files
 
-VERSION = "0.7.9"
+VERSION = "0.8.0"
 # =====================================================================
 
 import tkinter as tk
@@ -21,6 +21,11 @@ from matplotlib.transforms import blended_transform_factory
 from PIL import Image, ImageTk
 import json
 import time
+import threading
+import ssl
+import urllib.request
+import webbrowser
+import re
 import numpy as np
 import copy
 from scipy import stats
@@ -1148,6 +1153,11 @@ class ExPlotApp:
 
         self.start_maximized_var = tk.BooleanVar(value=True)
         self.ui_scale_var = tk.StringVar(value="100%")
+        self.plot_bg_var = tk.StringVar(value="Theme")
+        self.check_updates_var = tk.BooleanVar(value=True)
+        self.dismissed_update_version = ''
+        self._update_banner_widgets = None
+        self._update_glow_job = None
 
         self.root = root
         self.version = VERSION  # Use the global VERSION constant
@@ -1487,61 +1497,165 @@ class ExPlotApp:
             and drop_events_reach_app()
         # Show the empty-canvas placeholder (with the drop hint where supported) at startup
         self.root.after_idle(self.display_preview)
+        # Check for a newer release once the UI is up (non-blocking)
+        self.root.after(2000, self._check_for_updates)
 
     def setup_statistics_settings_tab(self):
-        frame = self.stats_settings_tab
-        
-        # Add stats info button at the top
-        info_frame = ttk.Frame(frame)
-        info_frame.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(4, 12))
-        
-        ttk.Label(info_frame, text="Statistical Tests", font=(None, 12, 'bold')).pack(side='left', padx=8)
-        info_button = ttk.Button(info_frame, text="ℹ️ Info", command=self.show_stats_info)
-        info_button.pack(side='right', padx=8)
-        
-        # t-test type
-        ttk.Label(frame, text="t-test type:").grid(row=1, column=0, sticky="w", padx=8, pady=8)
-        # Use the existing ttest_type_var variable initialized in __init__
-        ttest_dropdown = ttk.Combobox(frame, textvariable=self.ttest_type_var, values=TTEST_OPTIONS, state='readonly', width=30)
-        ttest_dropdown.grid(row=1, column=1, sticky="ew", padx=8, pady=8)
-        
-        # T-test alternative hypothesis
-        ttk.Label(frame, text="T-test Alternative:").grid(row=2, column=0, sticky="w", padx=8, pady=8)
-        # Use the existing ttest_alternative_var variable initialized in __init__
-        ttest_alternative_dropdown = ttk.Combobox(frame, textvariable=self.ttest_alternative_var, values=ALTERNATIVE_OPTIONS, state='readonly', width=30)
-        ttest_alternative_dropdown.grid(row=2, column=1, sticky="ew", padx=8, pady=8)
-        
-        # ANOVA type
-        ttk.Label(frame, text="ANOVA type:").grid(row=3, column=0, sticky="w", padx=8, pady=8)
-        # Use the existing anova_type_var variable initialized in __init__
-        anova_dropdown = ttk.Combobox(frame, textvariable=self.anova_type_var, values=ANOVA_OPTIONS, state='readonly', width=30)
-        anova_dropdown.grid(row=3, column=1, sticky="ew", padx=8, pady=8)
-        
-        # Alpha level
-        ttk.Label(frame, text="Alpha level:").grid(row=4, column=0, sticky="w", padx=8, pady=8)
-        alpha_options = ["0.05", "0.01", "0.001", "0.0001"]
-        alpha_dropdown = ttk.Combobox(frame, textvariable=self.alpha_level_var, values=alpha_options, state='readonly', width=30)
-        alpha_dropdown.grid(row=4, column=1, sticky="ew", padx=8, pady=8)
-        
-        # Post-hoc test
-        ttk.Label(frame, text="Post-hoc test:").grid(row=5, column=0, sticky="w", padx=8, pady=8)
-        # Use the existing posthoc_type_var variable initialized in __init__
-        posthoc_dropdown = ttk.Combobox(frame, textvariable=self.posthoc_type_var, values=POSTHOC_OPTIONS, state='readonly', width=30)
-        posthoc_dropdown.grid(row=5, column=1, sticky="ew", padx=8, pady=8)
+        # Scrollable container: the guidance text can exceed small screens
+        outer = self.stats_settings_tab
+        canvas = tk.Canvas(outer, highlightthickness=0, borderwidth=0)
+        try:
+            canvas.configure(bg=ttk.Style().lookup('TFrame', 'background') or canvas.cget('bg'))
+        except tk.TclError:
+            pass
+        vsb = ttk.Scrollbar(outer, orient='vertical', command=canvas.yview)
+        canvas.configure(yscrollcommand=vsb.set)
+        vsb.pack(side='right', fill='y')
+        canvas.pack(side='left', fill='both', expand=True)
+        frame = ttk.Frame(canvas)
+        window_id = canvas.create_window((0, 0), window=frame, anchor='nw')
+        frame.bind('<Configure>', lambda e: canvas.configure(scrollregion=canvas.bbox('all')))
+        canvas.bind('<Configure>', lambda e: canvas.itemconfigure(window_id, width=e.width))
+        self._stats_canvas = canvas
+        wrap = 420
 
-        # Analysis of grouped data (group column with 2+ groups)
-        ttk.Label(frame, text="Grouped data:").grid(row=6, column=0, sticky="w", padx=8, pady=8)
-        grouped_dropdown = ttk.Combobox(frame, textvariable=self.grouped_analysis_var, values=GROUPED_OPTIONS, state='readonly', width=30)
-        grouped_dropdown.grid(row=6, column=1, sticky="ew", padx=8, pady=8)
+        header = ttk.Frame(frame)
+        header.pack(fill='x', padx=6, pady=(8, 2))
+        ttk.Label(header, text="Statistical Tests", font=(None, 12, 'bold')).pack(side='left', padx=2)
+        ttk.Button(header, text="ℹ️ Guide", command=self.show_stats_info).pack(side='right', padx=2)
+        ttk.Button(header, text="Reset to defaults", command=self._reset_stats_to_recommended).pack(side='right', padx=2)
 
-        # Subject column for paired / repeated-measures tests
-        ttk.Label(frame, text="Subject column:").grid(row=7, column=0, sticky="w", padx=8, pady=8)
+        def section(title, hint):
+            grp = ttk.LabelFrame(frame, text=title, padding=(6, 2, 6, 4))
+            grp.pack(fill='x', padx=6, pady=2)
+            grp.columnconfigure(1, weight=1)
+            ttk.Label(grp, text=hint, wraplength=wrap, justify='left', foreground='gray').grid(
+                row=99, column=0, columnspan=2, sticky='w', pady=(2, 0))
+            return grp
+
+        def row(grp, r, label, var, values):
+            ttk.Label(grp, text=label).grid(row=r, column=0, sticky='w', padx=(0, 6), pady=2)
+            cb = ttk.Combobox(grp, textvariable=var, values=values, state='readonly', width=30)
+            cb.grid(row=r, column=1, sticky='ew', pady=1)
+            return cb
+
+        # 1. Study design: unpaired (common) vs. paired
+        grp = section("1. Unpaired or paired samples?",
+                      "Unpaired ✓ (most common): each group has its own separate samples "
+                      "(wells, cultures, animals). Keep 'None'.\n"
+                      "Paired: the same animal, donor or experiment day is measured in every group "
+                      "(e.g. before/after). Select the column that names it and use paired tests below.")
         columns = list(self.df.columns) if getattr(self, 'df', None) is not None else []
-        self.subject_dropdown = ttk.Combobox(frame, textvariable=self.subject_col_var, values=[NO_SUBJECT] + columns, state='readonly', width=30)
-        self.subject_dropdown.grid(row=7, column=1, sticky="ew", padx=8, pady=8)
-        ttk.Label(frame, text="Used by paired t-test, Wilcoxon, repeated measures ANOVA and Friedman\n"
-                              "to match values by subject ID instead of row order.",
-                  foreground='gray').grid(row=8, column=0, columnspan=2, sticky="w", padx=8, pady=(0, 8))
+        self.subject_dropdown = row(grp, 0, "Subject IDs:", self.subject_col_var, [NO_SUBJECT] + columns)
+
+        # 2. Two groups
+        grp = section("2. Two groups (t-test)",
+                      "Unpaired: Welch's t-test ✓ (or Mann-Whitney*)\n"
+                      "Paired: Paired t-test (or Wilcoxon*)\n"
+                      "* non-parametric: compares ranks, for skewed data or outliers; needs n ≥ 5 per group.")
+        row(grp, 0, "Test:", self.ttest_type_var, TTEST_OPTIONS)
+        row(grp, 1, "Alternative:", self.ttest_alternative_var, ALTERNATIVE_OPTIONS)
+
+        # 3. Three or more groups
+        grp = section("3. Three or more groups (ANOVA + post-hoc)",
+                      "Unpaired: Welch's ANOVA + Tamhane's T2 ✓ (or Kruskal-Wallis + Dunn*)\n"
+                      "Paired: Repeated measures ANOVA (or Friedman + Conover*)\n"
+                      "The ANOVA tests whether any group differs; the post-hoc shows which pairs differ.")
+        row(grp, 0, "ANOVA:", self.anova_type_var, ANOVA_OPTIONS)
+        row(grp, 1, "Post-hoc:", self.posthoc_type_var, POSTHOC_OPTIONS)
+
+        # 4. Correction across x categories (two-group tests) and significance level
+        grp = section("4. Correction and significance level",
+                      "With 2 groups per x category, Holm-Šídák ✓ corrects the t-tests across all "
+                      "categories. Use 'uncorrected' only if each category is its own planned question. "
+                      "With 3+ groups, the post-hoc test corrects. Alpha 0.05 ✓ is standard.")
+        row(grp, 0, "Correction:", self.grouped_analysis_var, GROUPED_OPTIONS)
+        row(grp, 1, "Alpha:", self.alpha_level_var, ["0.05", "0.01", "0.001", "0.0001"])
+
+        # Live consistency check of the current combination
+        self.stats_advice_label = ttk.Label(frame, wraplength=wrap, justify='left')
+        self.stats_advice_label.pack(fill='x', padx=10, pady=(6, 8))
+        for var in (self.ttest_type_var, self.ttest_alternative_var, self.anova_type_var,
+                    self.posthoc_type_var, self.grouped_analysis_var, self.subject_col_var,
+                    self.alpha_level_var):
+            var.trace_add('write', lambda *a: self._update_stats_advice())
+        self._update_stats_advice()
+
+        # The preview binds the mouse wheel globally (bind_all); widget-level
+        # bindings run first, so scroll this tab instead and stop there. This
+        # also keeps the wheel from silently changing combobox selections.
+        def on_wheel(event):
+            if canvas.yview() != (0.0, 1.0):
+                canvas.yview_scroll(int(-1 * (event.delta / 120)) or (-1 if event.delta > 0 else 1), 'units')
+            return 'break'
+        def bind_wheel(widget):
+            widget.bind('<MouseWheel>', on_wheel)
+            for child in widget.winfo_children():
+                bind_wheel(child)
+        bind_wheel(canvas)
+
+    def _stats_advice(self):
+        """Plain-language checks of the current statistics settings."""
+        from explot_stats import (PAIRED_TWO_SAMPLE, REPEATED_OMNIBUS, NONPARAMETRIC_OMNIBUS,
+                                  NONPARAMETRIC_POSTHOC, BLOCKED_POSTHOC, GROUPED_TWO_WAY)
+        test, anova = self.ttest_type_var.get(), self.anova_type_var.get()
+        posthoc, grouped = self.posthoc_type_var.get(), self.grouped_analysis_var.get()
+        subject = self.subject_col_var.get()
+        has_subject = bool(subject) and subject != NO_SUBJECT
+        paired_test, paired_anova = test in PAIRED_TWO_SAMPLE, anova in REPEATED_OMNIBUS
+        tips = []
+        if has_subject and not (paired_test or paired_anova):
+            tips.append("Subject IDs are set, but the tests are unpaired and ignore them. "
+                        "Set Subject IDs to 'None' or choose paired tests.")
+        if (paired_test or paired_anova) and not has_subject:
+            tips.append("Paired test without Subject IDs: values are matched by row order.")
+        if paired_test != paired_anova:
+            tips.append("Test (2 groups) and ANOVA (3+ groups) differ in pairing: use paired or "
+                        "unpaired for both.")
+        if anova in NONPARAMETRIC_OMNIBUS and posthoc not in NONPARAMETRIC_POSTHOC:
+            tips.append(f"Non-parametric ANOVA needs a non-parametric post-hoc: Dunn's "
+                        "(Conover/Nemenyi after Friedman).")
+        elif anova not in NONPARAMETRIC_OMNIBUS and posthoc in NONPARAMETRIC_POSTHOC:
+            tips.append(f"{posthoc} is non-parametric; it does not match a parametric ANOVA.")
+        if paired_anova and posthoc not in BLOCKED_POSTHOC:
+            tips.append(f"{posthoc} ignores the pairing; Conover or Nemenyi respect it.")
+        if anova == "One-way ANOVA" and posthoc in ("Games-Howell", "Tamhane's T2"):
+            tips.append("After one-way ANOVA use Tukey's HSD (Tamhane/Games-Howell go with Welch's ANOVA).")
+        if anova == "Welch's ANOVA" and posthoc in ("Tukey's HSD", "Scheffe's test"):
+            tips.append(f"{posthoc} assumes equal variances; use Tamhane's T2 after Welch's ANOVA.")
+        if self.ttest_alternative_var.get() != 'two-sided':
+            tips.append("One-sided: only if the direction was fixed before the experiment.")
+        if grouped == GROUPED_SEPARATE_RAW:
+            tips.append("Uncorrected p-values: state 'uncorrected' in the figure legend.")
+        elif grouped == GROUPED_TWO_WAY:
+            tips.append("Two-way ANOVA assumes equal variances in all groups.")
+        if self.alpha_level_var.get() != "0.05":
+            tips.append(f"Alpha = {self.alpha_level_var.get()}: report it in your methods.")
+        return tips
+
+    def _update_stats_advice(self):
+        label = getattr(self, 'stats_advice_label', None)
+        if label is None:
+            return
+        try:
+            tips = self._stats_advice()
+        except Exception:
+            return
+        if tips:
+            label.configure(text="Check your settings:\n" + "\n".join(f"• {t}" for t in tips),
+                            foreground='#c0392b')
+        else:
+            label.configure(text="✓ Settings are consistent.", foreground='#2e8b57')
+
+    def _reset_stats_to_recommended(self):
+        from explot_stats import DEFAULT_SETTINGS
+        self.ttest_type_var.set(DEFAULT_SETTINGS['test_type'])
+        self.ttest_alternative_var.set(DEFAULT_SETTINGS['alternative'])
+        self.anova_type_var.set(DEFAULT_SETTINGS['anova_type'])
+        self.posthoc_type_var.set(DEFAULT_SETTINGS['posthoc_type'])
+        self.grouped_analysis_var.set(DEFAULT_SETTINGS['grouped_analysis'])
+        self.alpha_level_var.set(str(DEFAULT_SETTINGS['alpha_level']))
+        self.subject_col_var.set(NO_SUBJECT)
 
 
     def get_config_dir(self):
@@ -1595,6 +1709,8 @@ class ExPlotApp:
         menubar.add_cascade(label="Help", menu=help_menu)
         help_menu.add_command(label="About", command=self.show_about)
         help_menu.add_command(label="Package Information", command=self.show_package_info)
+        help_menu.add_separator()
+        help_menu.add_command(label="Check for Updates", command=lambda: self._check_for_updates(manual=True))
 
     def process_excel_file(self, file_path):
         try:
@@ -1773,10 +1889,10 @@ class ExPlotApp:
             
             # Save with appropriate settings based on format
             if file_format == 'pdf':
-                self.fig.savefig(file_path, format='pdf', bbox_inches='tight')
+                self._save_fig_white(file_path, format='pdf', bbox_inches='tight')
                 message = f"PDF saved to {file_path}"
             else:  # PNG
-                self.fig.savefig(file_path, format='png', dpi=300, bbox_inches='tight')
+                self._save_fig_white(file_path, format='png', dpi=300, bbox_inches='tight')
                 message = f"PNG image saved to {file_path}"
                 
             messagebox.showinfo("Success", message)
@@ -1821,6 +1937,8 @@ class ExPlotApp:
         # General tab
         self.settings_plot_kind_var = tk.StringVar(value=self.plot_kind_var.get())
         self.settings_ui_scale_var = tk.StringVar(value=self.ui_scale_var.get())
+        self.settings_plot_bg_var = tk.StringVar(value=self.plot_bg_var.get())
+        self.settings_check_updates_var = tk.BooleanVar(value=self.check_updates_var.get() if hasattr(self, 'check_updates_var') else True)
         self.settings_start_maximized_var = tk.BooleanVar(value=self.start_maximized_var.get() if hasattr(self, 'start_maximized_var') else True)
         
         # Plot Settings tab
@@ -1920,6 +2038,7 @@ class ExPlotApp:
         ttk.Combobox(general_tab, textvariable=self.settings_plot_kind_var, values=["bar", "box", "violin", "xy", "histogram", "heatmap"], width=15, state="readonly").grid(row=0, column=1, sticky="w", padx=10, pady=10)
 
         ttk.Checkbutton(general_tab, text="Start maximized", variable=self.settings_start_maximized_var).grid(row=1, column=0, columnspan=2, sticky="w", padx=10, pady=5)
+        ttk.Checkbutton(general_tab, text="Check for updates on startup", variable=self.settings_check_updates_var).grid(row=2, column=0, columnspan=2, sticky="w", padx=10, pady=5)
         
         # Plot Settings Tab Content
         # Stripplot section with compact 2-column layout
@@ -2014,6 +2133,12 @@ class ExPlotApp:
         ttk.Label(appearance_tab, text="Size of the app's text and controls. Takes effect after restarting ExPlot.\n"
                                        "Auto adapts to HiDPI screens on Linux; Windows and macOS scale natively.",
                   foreground='gray').grid(row=7, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
+
+        ttk.Label(appearance_tab, text="Plot background:", anchor="w").grid(row=8, column=0, sticky="w", padx=10, pady=10)
+        ttk.Combobox(appearance_tab, textvariable=self.settings_plot_bg_var, values=["Theme", "White"], width=12, state="readonly").grid(row=8, column=1, sticky="w", padx=10, pady=10)
+        ttk.Label(appearance_tab, text="Theme matches the preview background to the app theme.\n"
+                                       "Exports are always white regardless of this setting.",
+                  foreground='gray').grid(row=9, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
         
         # Bar Graph Tab Content
         ttk.Checkbutton(bar_graph_tab, text="Draw bar outlines", variable=self.settings_bar_outline_var).grid(row=0, column=0, sticky="w", padx=10, pady=10)
@@ -2210,6 +2335,11 @@ class ExPlotApp:
                 self.start_maximized_var.set(self.settings_start_maximized_var.get())
             if hasattr(self, 'settings_ui_scale_var'):
                 self.ui_scale_var.set(self.settings_ui_scale_var.get())
+            if hasattr(self, 'settings_plot_bg_var') and hasattr(self, 'plot_bg_var'):
+                self.plot_bg_var.set(self.settings_plot_bg_var.get())
+                self.update_colors()
+            if hasattr(self, 'settings_check_updates_var') and hasattr(self, 'check_updates_var'):
+                self.check_updates_var.set(self.settings_check_updates_var.get())
 
             try:
                 if hasattr(self, 'ybreak_marker_style_var') and hasattr(self, 'settings_ybreak_marker_style_var'):
@@ -2331,7 +2461,9 @@ class ExPlotApp:
         ttk.Button(btn_frame, text="Copy to Clipboard", command=lambda: self.root.clipboard_clear() or self.root.clipboard_append(self.df.to_csv(sep='\t', index=False))).pack(side='right', padx=4)
 
     def show_about(self):
-        messagebox.showinfo("About ExPlot", f"ExPlot\nVersion: {self.version}\n\nA tool for plotting Excel data.")
+        messagebox.showinfo("About ExPlot", f"ExPlot\nVersion: {self.version}\n\n"
+                            "A tool for plotting Excel, CSV and TSV data.\n\n"
+                            "https://github.com/beyerh/ExPlot")
         
     def show_package_info(self):
         """Display information about packages used in the application for scientific publications."""
@@ -2668,11 +2800,13 @@ class ExPlotApp:
         anova_frame = ttk.Frame(notebook)
         posthoc_frame = ttk.Frame(notebook)
         general_frame = ttk.Frame(notebook)
+        multiple_frame = ttk.Frame(notebook)
         
         notebook.add(general_frame, text='General Guidelines')
         notebook.add(t_test_frame, text='t-tests')
         notebook.add(anova_frame, text='ANOVA')
         notebook.add(posthoc_frame, text='Post-hoc Tests')
+        notebook.add(multiple_frame, text='Multiple Comparisons')
         
         # Function to create formatted text widgets
         def create_text_widget(parent):
@@ -2684,6 +2818,7 @@ class ExPlotApp:
             text.tag_configure('heading', font=(None, 12, 'bold'))
             text.tag_configure('subheading', font=(None, 11, 'bold'))
             text.tag_configure('normal', font=(None, 10))
+            text.tag_configure('mono', font='TkFixedFont')
             return text
         
         # General guidelines
@@ -2693,23 +2828,57 @@ class ExPlotApp:
         
         general_text.insert('end', 'Quick Decision Guide:\n', 'subheading')
         general_text.insert('end', '\n', 'normal')
-        general_text.insert('end', '1. Comparing TWO groups:\n', 'subheading')
-        general_text.insert('end', '   • Data normally distributed → t-test (Welch\'s recommended)\n', 'normal')
-        general_text.insert('end', '   • Data NOT normally distributed → Mann-Whitney U test\n', 'normal')
-        general_text.insert('end', '   • Paired/matched samples → Paired t-test or Wilcoxon signed-rank\n\n', 'normal')
-        
-        general_text.insert('end', '2. Comparing THREE OR MORE groups:\n', 'subheading')
-        general_text.insert('end', '   • Data normally distributed → ANOVA + post-hoc test\n', 'normal')
-        general_text.insert('end', '   • Data NOT normally distributed → Kruskal-Wallis + Dunn\'s test\n\n', 'normal')
+        general_text.insert('end', 'You make two independent choices:\n\n', 'normal')
+        general_text.insert('end', 'A) Unpaired or paired?  (how the samples were obtained)\n', 'subheading')
+        general_text.insert('end', '   • Unpaired (most common): every group has its own samples – separate wells,\n', 'normal')
+        general_text.insert('end', '     cultures, animals or patients. Leave the Subject IDs at "None".\n', 'normal')
+        general_text.insert('end', '   • Paired: the same subject/donor/batch is measured in every group, e.g. before/after\n', 'normal')
+        general_text.insert('end', '     treatment, cells from the same donor split into conditions, or replicates done on\n', 'normal')
+        general_text.insert('end', '     different days with every condition in each run. Select the column with the\n', 'normal')
+        general_text.insert('end', '     subject IDs so ExPlot knows which values belong together.\n', 'normal')
+        general_text.insert('end', '   • Why it matters: pairing removes the differences between subjects/runs, so real\n', 'normal')
+        general_text.insert('end', '     effects are easier to detect. Treating unpaired data as paired, however, gives\n', 'normal')
+        general_text.insert('end', '     wrong p-values. Decide from how the experiment was done, not from the results.\n', 'normal')
+        general_text.insert('end', '     Analysing paired data as unpaired is cautious: it may miss real effects but\n', 'normal')
+        general_text.insert('end', '     rarely creates false ones.\n\n', 'normal')
+        general_text.insert('end', 'B) Parametric or non-parametric?  (what the values look like)\n', 'subheading')
+        general_text.insert('end', '   • Parametric (default): compares means; assumes roughly normal data. Robust and\n', 'normal')
+        general_text.insert('end', '     the best choice for most measurements, especially with small n.\n', 'normal')
+        general_text.insert('end', '   • Non-parametric: compares ranks instead of values. Only for clearly skewed data,\n', 'normal')
+        general_text.insert('end', '     outliers or scores, and only with n ≥ 5 per group.\n\n', 'normal')
+        general_text.insert('end', 'Every combination exists:\n\n', 'subheading')
+        table = [
+            ('', 'Parametric', 'Non-parametric'),
+            ('2 groups', '', ''),
+            ('  unpaired', "Welch's t-test (default)", 'Mann-Whitney U'),
+            ('  paired', 'Paired t-test', 'Wilcoxon signed-rank'),
+            ('3+ groups', '', ''),
+            ('  unpaired', "Welch's ANOVA + Tamhane (default)", "Kruskal-Wallis + Dunn's"),
+            ('  paired', 'Repeated measures ANOVA', 'Friedman + Conover'),
+        ]
+        for a, b, c in table:
+            general_text.insert('end', f'{a:<13}{b:<36}{c}\n', 'mono')
+        general_text.insert('end', '\n', 'normal')
         
         general_text.insert('end', 'Parametric vs. Non-parametric Tests:\n', 'subheading')
         general_text.insert('end', '\n• Parametric tests (t-test, ANOVA) assume your data follows a normal distribution.\n', 'normal')
         general_text.insert('end', '  They are more powerful when assumptions are met.\n\n', 'normal')
         general_text.insert('end', '• Non-parametric tests (Mann-Whitney, Wilcoxon, Dunn\'s) make no assumptions about\n', 'normal')
         general_text.insert('end', '  the distribution. Use them when:\n', 'normal')
-        general_text.insert('end', '  - Data is skewed or has outliers\n', 'normal')
-        general_text.insert('end', '  - Sample sizes are very small (n < 10)\n', 'normal')
-        general_text.insert('end', '  - Data is ordinal (ranked) rather than continuous\n\n', 'normal')
+        general_text.insert('end', '  - Data is clearly skewed or has outliers AND you have enough samples (n ≥ 5 per group)\n', 'normal')
+        general_text.insert('end', '  - Data is ordinal (ranked, scores) rather than continuous\n', 'normal')
+        general_text.insert('end', '• Small samples are NOT a reason to switch to non-parametric tests: with n = 3 per\n', 'normal')
+        general_text.insert('end', '  group a Mann-Whitney test can never give p < 0.05. Use Welch\'s tests instead.\n\n', 'normal')
+
+        general_text.insert('end', 'Typical Lab Experiments (n = 3–6 per group):\n', 'subheading')
+        general_text.insert('end', '\n• Use the recommended settings: Welch\'s t-test, Welch\'s ANOVA + Tamhane\'s T2,\n', 'normal')
+        general_text.insert('end', '  Holm-Šídák across categories, two-sided, α = 0.05 ("Reset to defaults").\n', 'normal')
+        general_text.insert('end', '• Fluorescence, expression and concentration data are often right-skewed with a spread\n', 'normal')
+        general_text.insert('end', '  that grows with the mean. Plotting them on a log y-axis is often more appropriate.\n', 'normal')
+        general_text.insert('end', '• With n = 3, Welch\'s tests have only about 2 degrees of freedom. A clearly visible\n', 'normal')
+        general_text.insert('end', '  difference can still be "ns" when one group is variable. More replicates help most.\n', 'normal')
+        general_text.insert('end', '• Paired designs (same donor/batch in every condition) are much more powerful: set the\n', 'normal')
+        general_text.insert('end', '  Subject column and choose a paired test.\n\n', 'normal')
         
         general_text.insert('end', 'Important Notes on Small Sample Sizes:\n', 'subheading')
         general_text.insert('end', '\n• Non-parametric tests with small samples have LIMITED resolution.\n', 'normal')
@@ -2745,7 +2914,8 @@ class ExPlotApp:
         t_test_text.insert('end', '• Example: Before vs. After treatment in the same patients\n', 'normal')
         t_test_text.insert('end', '• Example: Left eye vs. Right eye measurements\n', 'normal')
         t_test_text.insert('end', '• Requirement: Equal number of data points in both groups\n', 'normal')
-        t_test_text.insert('end', '• Pairing: the n-th value of group 1 is paired with the n-th value of group 2 (row order)\n', 'normal')
+        t_test_text.insert('end', '• Pairing: values are matched by the Subject column; without one, the n-th value of\n', 'normal')
+        t_test_text.insert('end', '  group 1 is paired with the n-th value of group 2 (row order)\n', 'normal')
         t_test_text.insert('end', '• Advantage: More powerful than unpaired tests for paired data\n\n', 'normal')
         
         t_test_text.insert('end', '═══ NON-PARAMETRIC TESTS (no distribution assumptions) ═══\n\n', 'subheading')
@@ -2821,9 +2991,14 @@ class ExPlotApp:
         anova_text.insert('end', '═══ NON-PARAMETRIC ALTERNATIVE ═══\n\n', 'subheading')
         
         anova_text.insert('end', 'Kruskal-Wallis test:\n', 'subheading')
-        anova_text.insert('end', '• Best for: 3+ groups when data is NOT normally distributed\n', 'normal')
+        anova_text.insert('end', '• Best for: 3+ independent groups when data is NOT normally distributed\n', 'normal')
         anova_text.insert('end', '• How it works: Compares ranks instead of actual values\n', 'normal')
         anova_text.insert('end', '• Follow with Dunn\'s test for pairwise comparisons\n\n', 'normal')
+
+        anova_text.insert('end', 'Friedman test:\n', 'subheading')
+        anova_text.insert('end', '• Best for: 3+ repeated measurements on the same subjects, non-normal data\n', 'normal')
+        anova_text.insert('end', '• Non-parametric counterpart of the repeated measures ANOVA\n', 'normal')
+        anova_text.insert('end', '• Follow with Conover\'s or Nemenyi test (they respect the pairing)\n\n', 'normal')
         
         anova_text.insert('end', '═══ IMPORTANT NOTES ═══\n\n', 'subheading')
         
@@ -2855,17 +3030,17 @@ class ExPlotApp:
         posthoc_text.insert('end', '• Good balance between power and Type I error control\n', 'normal')
         posthoc_text.insert('end', '• Use after: Standard one-way ANOVA\n\n', 'normal')
         
-        posthoc_text.insert('end', 'Games-Howell:\n', 'subheading')
-        posthoc_text.insert('end', '• Best for: Unequal sample sizes AND unequal variances\n', 'normal')
-        posthoc_text.insert('end', '• Does not assume equal variances or sample sizes\n', 'normal')
-        posthoc_text.insert('end', '• More powerful than Tamhane\'s T2 in most situations\n', 'normal')
-        posthoc_text.insert('end', '• ✓ RECOMMENDED after Welch\'s ANOVA\n\n', 'normal')
-        
         posthoc_text.insert('end', 'Tamhane\'s T2:\n', 'subheading')
-        posthoc_text.insert('end', '• Best for: Unequal variances across groups\n', 'normal')
-        posthoc_text.insert('end', '• Very conservative—less likely to find significance\n', 'normal')
-        posthoc_text.insert('end', '• Good when you want to be extra careful about false positives\n', 'normal')
-        posthoc_text.insert('end', '• Use after: Welch\'s ANOVA when being conservative\n\n', 'normal')
+        posthoc_text.insert('end', '• Best for: Unequal variances across groups, especially with small groups\n', 'normal')
+        posthoc_text.insert('end', '• Does not assume equal variances or sample sizes\n', 'normal')
+        posthoc_text.insert('end', '• Conservative: keeps the false positive rate at α even with n = 3\n', 'normal')
+        posthoc_text.insert('end', '• ✓ RECOMMENDED after Welch\'s ANOVA (ExPlot default)\n\n', 'normal')
+
+        posthoc_text.insert('end', 'Games-Howell:\n', 'subheading')
+        posthoc_text.insert('end', '• Best for: Unequal variances with larger groups (n ≥ 6 per group)\n', 'normal')
+        posthoc_text.insert('end', '• Does not assume equal variances or sample sizes\n', 'normal')
+        posthoc_text.insert('end', '• More powerful than Tamhane\'s T2, but slightly too liberal with very small groups\n', 'normal')
+        posthoc_text.insert('end', '• Use after: Welch\'s ANOVA\n\n', 'normal')
         
         posthoc_text.insert('end', 'Scheffé\'s test:\n', 'subheading')
         posthoc_text.insert('end', '• Best for: Complex contrasts beyond simple pairwise comparisons\n', 'normal')
@@ -2880,13 +3055,56 @@ class ExPlotApp:
         posthoc_text.insert('end', '• Works on ranks, not raw values\n', 'normal')
         posthoc_text.insert('end', '• Use after: Kruskal-Wallis test (non-parametric ANOVA)\n', 'normal')
         posthoc_text.insert('end', '• Includes Bonferroni correction for multiple comparisons\n\n', 'normal')
+
+        posthoc_text.insert('end', 'Conover\'s test / Nemenyi test:\n', 'subheading')
+        posthoc_text.insert('end', '• Use after: Friedman test (repeated measures, non-normal data)\n', 'normal')
+        posthoc_text.insert('end', '• Respect the pairing of the subjects\n', 'normal')
+        posthoc_text.insert('end', '• Conover (Holm-adjusted) is more powerful; Nemenyi is more conservative\n\n', 'normal')
         
         posthoc_text.insert('end', '═══ QUICK SELECTION GUIDE ═══\n\n', 'subheading')
-        posthoc_text.insert('end', '• Equal variances, equal n → Tukey\'s HSD\n', 'normal')
-        posthoc_text.insert('end', '• Unequal variances or unequal n → Games-Howell\n', 'normal')
-        posthoc_text.insert('end', '• Want to be very conservative → Tamhane\'s T2 or Scheffé\n', 'normal')
-        posthoc_text.insert('end', '• Non-normal data → Dunn\'s test\n', 'normal')
+        posthoc_text.insert('end', '• Welch\'s ANOVA, small groups (n < 6) → Tamhane\'s T2 (default)\n', 'normal')
+        posthoc_text.insert('end', '• Welch\'s ANOVA, larger groups → Games-Howell\n', 'normal')
+        posthoc_text.insert('end', '• One-way ANOVA (equal variances) → Tukey\'s HSD\n', 'normal')
+        posthoc_text.insert('end', '• Kruskal-Wallis → Dunn\'s test\n', 'normal')
+        posthoc_text.insert('end', '• Friedman / Repeated measures ANOVA → Conover\'s or Nemenyi test\n', 'normal')
         posthoc_text.configure(state='disabled')  # Make read-only
+
+        # Multiple comparisons across categories
+        mc_text = create_text_widget(multiple_frame)
+        mc_text.insert('end', 'Correcting for Multiple Comparisons (Holm-Šídák)\n', 'heading')
+        mc_text.insert('end', '\nEvery test at α = 0.05 has a 5% chance of a false positive. With many tests in one\n', 'normal')
+        mc_text.insert('end', 'graph, the chance that at least one "*" is wrong grows quickly:\n', 'normal')
+        mc_text.insert('end', '   1 test → 5%     4 tests → 19%     8 tests → 34%     20 tests → 64%\n\n', 'normal')
+        mc_text.insert('end', 'Holm-Šídák adjusts the p-values so that this overall risk stays at 5%. It is a\n', 'normal')
+        mc_text.insert('end', 'step-down method: the smallest p-value is corrected most, larger ones less.\n\n', 'normal')
+
+        mc_text.insert('end', '═══ WHEN TO CORRECT (recommended default) ═══\n\n', 'subheading')
+        mc_text.insert('end', '• You screen several conditions/constructs/genes and look for the ones that work\n', 'normal')
+        mc_text.insert('end', '• The conclusion is drawn from the graph as a whole ("constructs A and C respond")\n', 'normal')
+        mc_text.insert('end', '• You did not decide in advance which comparisons matter\n', 'normal')
+        mc_text.insert('end', '• When in doubt: correct. Reviewers rarely object to it.\n\n', 'normal')
+
+        mc_text.insert('end', '═══ WHEN NOT TO CORRECT ═══\n\n', 'subheading')
+        mc_text.insert('end', '• Each category is a separate, pre-planned question whose conclusion does not depend\n', 'normal')
+        mc_text.insert('end', '  on the other categories (e.g. independent experiments shown side by side)\n', 'normal')
+        mc_text.insert('end', '• Only one or two comparisons are shown\n', 'normal')
+        mc_text.insert('end', '• Then choose "Separate tests per category (uncorrected)" and write "uncorrected"\n', 'normal')
+        mc_text.insert('end', '  in the figure legend or methods.\n\n', 'normal')
+
+        mc_text.insert('end', '═══ WHY A VISIBLE DIFFERENCE CAN BE "ns" ═══\n\n', 'subheading')
+        mc_text.insert('end', '• The correction makes each test stricter: with 8 categories, a raw p = 0.02 can become\n', 'normal')
+        mc_text.insert('end', '  0.09 after adjustment. Statistical Details lists the raw and the adjusted p-values.\n', 'normal')
+        mc_text.insert('end', '• With n = 3 the tests have very little power, especially when one group is variable.\n', 'normal')
+        mc_text.insert('end', '• Tips: include only the categories you want to test (exclude controls that are not\n', 'normal')
+        mc_text.insert('end', '  part of the question), add replicates, or use a paired design.\n', 'normal')
+        mc_text.insert('end', '• Never switch the correction off just because a result becomes significant: decide\n', 'normal')
+        mc_text.insert('end', '  before looking at the p-values.\n\n', 'normal')
+
+        mc_text.insert('end', '═══ HOW EXPLOT CORRECTS ═══\n\n', 'subheading')
+        mc_text.insert('end', '• Two groups per category: Holm-Šídák across all categories of the graph\n', 'normal')
+        mc_text.insert('end', '• 3+ groups per category: the post-hoc test adjusts within the category\n', 'normal')
+        mc_text.insert('end', '• Two-way ANOVA option: Šídák-adjusted comparisons across the whole graph\n', 'normal')
+        mc_text.configure(state='disabled')
         
         # Close button at bottom
         ttk.Button(window, text="Close", command=window.destroy).pack(pady=10)
@@ -2990,7 +3208,235 @@ class ExPlotApp:
 
     def _to_hex(self, color):
         return to_hex(color)
-        
+
+    def _plot_facecolor(self):
+        """Background color for the preview figure (patch and axes).
+
+        Light themes match the app background; dark themes get a soft light
+        tone to soften the contrast with the dark UI. Exports always save on
+        white (savefig is called with facecolor='white').
+        """
+        try:
+            plot_bg_var = getattr(self, 'plot_bg_var', None)
+            if plot_bg_var is not None and plot_bg_var.get() == 'White':
+                return 'white'
+            if getattr(self, 'dark_mode', False):
+                return '#ECEFF4'
+            style = getattr(self, 'style', None)
+            if style is not None:
+                return style.colors.bg
+        except Exception:
+            pass
+        return 'white'
+
+    def _app_bg(self):
+        """The application's theme background color."""
+        try:
+            style = getattr(self, 'style', None)
+            if style is not None:
+                return style.colors.bg
+        except Exception:
+            pass
+        return 'white'
+
+    def update_colors(self):
+        """Re-apply theme-dependent colors to the preview area and figure."""
+        # Empty state uses the app background; once a figure exists the
+        # preview surface uses the plot facecolor instead.
+        color = self._plot_facecolor() if getattr(self, 'fig', None) is not None else self._app_bg()
+        for widget in (getattr(self, 'preview_scroll_canvas', None),
+                       getattr(self, '_preview_padding_frame', None)):
+            try:
+                if widget is not None:
+                    widget.configure(bg=color)
+            except Exception:
+                pass
+        try:
+            fig = getattr(self, 'fig', None)
+            if fig is not None:
+                fig.set_facecolor(color)
+                for ax in fig.get_axes():
+                    ax.set_facecolor(color)
+                canvas = getattr(self, 'mpl_canvas', None)
+                if canvas is not None:
+                    canvas.draw_idle()
+        except Exception:
+            pass
+        self._update_banner_colors()
+
+    def _save_fig_white(self, file_path, **kwargs):
+        """Save the figure on a white background regardless of preview tint."""
+        fig = self.fig
+        axes = fig.get_axes()
+        saved = [ax.get_facecolor() for ax in axes]
+        try:
+            for ax in axes:
+                ax.set_facecolor('white')
+            fig.savefig(file_path, facecolor='white', edgecolor='white', **kwargs)
+        finally:
+            for ax, c in zip(axes, saved):
+                ax.set_facecolor(c)
+            canvas = getattr(self, 'mpl_canvas', None)
+            if canvas is not None:
+                canvas.draw_idle()
+
+    @staticmethod
+    def _version_tuple(v):
+        """Extract a comparable version tuple from a tag.
+
+        Handles both tag schemes in use: 'v0.8.0' (workflow releases) and
+        'ExPlot_0.7.8' (older manual releases).
+        """
+        try:
+            m = re.search(r'(\d+(?:\.\d+)*)', str(v))
+            return tuple(int(p) for p in m.group(1).split('.')) if m else ()
+        except Exception:
+            return ()
+
+    def _check_for_updates(self, manual=False):
+        """Check GitHub for a newer release in the background; never blocks.
+
+        The automatic startup check respects the 'check for updates' setting
+        and stays silent on failure; a manual check always runs and reports
+        the result (up-to-date info / failure warning).
+        """
+        if not manual:
+            try:
+                if not getattr(self, 'check_updates_var', None) or not self.check_updates_var.get():
+                    return
+            except Exception:
+                return
+        # The worker only does network I/O and stores its result; all Tk calls
+        # happen on the main thread via polling (Tk is not thread-safe).
+        result = {}
+        def worker():
+            try:
+                req = urllib.request.Request(
+                    'https://api.github.com/repos/beyerh/ExPlot/releases/latest',
+                    headers={'Accept': 'application/vnd.github+json',
+                             'User-Agent': f'ExPlot/{VERSION}'})
+                # Packaged macOS builds have no system CA bundle for OpenSSL;
+                # use certifi's bundle when available.
+                try:
+                    import certifi
+                    ctx = ssl.create_default_context(cafile=certifi.where())
+                except Exception:
+                    ctx = ssl.create_default_context()
+                with urllib.request.urlopen(req, timeout=5, context=ctx) as resp:
+                    result['data'] = json.loads(resp.read().decode('utf-8'))
+            except Exception as e:
+                result['error'] = e
+        thread = threading.Thread(target=worker, daemon=True)
+        thread.start()
+
+        def poll():
+            if thread.is_alive():
+                self.root.after(200, poll)
+                return
+            data = result.get('data')
+            if data is None:
+                if manual:
+                    messagebox.showwarning('Check for Updates',
+                                           'Could not check for updates. Check your internet connection.',
+                                           parent=self.root)
+                return
+            ver = self._version_tuple(data.get('tag_name'))
+            if ver and ver > self._version_tuple(VERSION):
+                self._show_update_banner('.'.join(str(p) for p in ver),
+                                         str(data.get('html_url') or ''), force=manual)
+            elif manual:
+                messagebox.showinfo('Check for Updates', f'ExPlot is up to date (v{VERSION}).',
+                                    parent=self.root)
+        self.root.after(200, poll)
+
+    def _update_banner_colors(self):
+        """(Re)color the update banner for the current theme."""
+        w = getattr(self, '_update_banner_widgets', None)
+        if not w:
+            return
+        try:
+            from ttkbootstrap.utils.color import color_to_hsl, color_to_hex, contrast_color, HSL
+            style = getattr(self, 'style', None)
+            accent = style.colors.info if style is not None else '#0dcaf0'
+            h, s, l = color_to_hsl(accent)
+            accent2 = color_to_hex([h, s, min(100, l + 12)], HSL)
+            fg = contrast_color(accent, model='hex')
+        except Exception:
+            accent, accent2, fg = '#0dcaf0', '#17a2b8', '#ffffff'
+        self._update_banner_palette = (accent, accent2)
+        banner, label, skip_time, skip_version = w
+        banner.configure(bg=accent)
+        for widget in (label, skip_time, skip_version):
+            widget.configure(bg=accent, fg=fg)
+
+    def _pulse_update_banner(self):
+        """Gently pulse the banner background to draw attention."""
+        w = getattr(self, '_update_banner_widgets', None)
+        if not w:
+            self._update_glow_job = None
+            return
+        try:
+            accent, accent2 = self._update_banner_palette
+            self._update_glow_state = not getattr(self, '_update_glow_state', False)
+            bg = accent2 if self._update_glow_state else accent
+            for widget in w:
+                widget.configure(bg=bg)
+            self._update_glow_job = self.root.after(900, self._pulse_update_banner)
+        except Exception:
+            self._update_glow_job = None
+
+    def _show_update_banner(self, version, url, force=False):
+        """Show the update banner at the bottom of the window.
+
+        'Skip this time' hides it until the next launch; 'Skip this version'
+        hides it until a newer release exists. force=True (manual check)
+        shows the banner even for a version the user previously skipped.
+        """
+        if getattr(self, '_update_banner_widgets', None) is not None:
+            return
+        if not force and version == getattr(self, 'dismissed_update_version', ''):
+            return
+        parent = getattr(self, 'bottom_frame', None) or self.root
+        banner = tk.Frame(parent)
+        label = tk.Label(banner, text=f"New version v{version} available — click to download",
+                         cursor='hand2', padx=10, pady=4)
+        skip_time = tk.Label(banner, text='Skip this time', cursor='hand2', padx=8, pady=4)
+        skip_version = tk.Label(banner, text='Skip this version', cursor='hand2', padx=8, pady=4)
+        label.pack(side='left')
+        skip_version.pack(side='right')
+        skip_time.pack(side='right')
+        banner.pack(fill='x')
+        self._update_banner_widgets = (banner, label, skip_time, skip_version)
+        self._update_banner_colors()
+        open_release = (lambda e: webbrowser.open(url)) if url else (lambda e: None)
+        label.bind('<Button-1>', open_release)
+        banner.bind('<Button-1>', open_release)
+        skip_time.bind('<Button-1>', lambda e: self._dismiss_update_banner())
+        skip_version.bind('<Button-1>', lambda e: self._dismiss_update_banner(version))
+        self._pulse_update_banner()
+
+    def _dismiss_update_banner(self, version=None):
+        """Hide the update banner; if a version is given, don't show it again."""
+        if self._update_glow_job is not None:
+            try:
+                self.root.after_cancel(self._update_glow_job)
+            except Exception:
+                pass
+            self._update_glow_job = None
+        w = getattr(self, '_update_banner_widgets', None)
+        self._update_banner_widgets = None
+        if w:
+            try:
+                w[0].destroy()
+            except Exception:
+                pass
+        if version:
+            self.dismissed_update_version = version
+            try:
+                self.save_user_preferences(silent=True)
+            except Exception:
+                pass
+
     def _load_theme_settings(self):
         """Load theme settings from JSON file."""
         if os.path.exists(self.theme_settings_file):
@@ -3090,6 +3536,9 @@ class ExPlotApp:
             'preview_dpi': 175,  # Default DPI for preview images
             'start_maximized': True,
             'ui_scale': "100%",
+            'plot_bg': "Theme",
+            'check_updates': True,
+            'dismissed_update_version': '',
             'ybreak_marker_style': "Connected",
             'ybreak_marker_style_user_set': False,
             'ybreak_marker_style_user_set_schema': 1,
@@ -3144,20 +3593,24 @@ class ExPlotApp:
             # Apply the theme if the style object is available
             if hasattr(self, 'style'):
                 try:
-                    # Fallback for themes removed in ttkbootstrap 2.2.2
-                    if theme_name.lower() in ('sharish', 'hacker'):
-                        theme_name = 'darkly'
-                        self.theme_name = theme_name
+                    # Map themes removed in ttkbootstrap 2.x to their replacements
+                    from ttkbootstrap_theme import resolve_theme_name
+                    theme_name = resolve_theme_name(theme_name)
+                    self.theme_name = theme_name
                     # For custom themes (nord, nordic), use _change_theme to properly set them up
                     if theme_name.lower() in ['nord', 'nordic']:
                         from launch import _change_theme
                         _change_theme(self.style, theme_name, dark_mode, self, update_menu=False, silent=True)
-                    else:
+                    elif theme_name in self.style.theme_names():
                         # For standard ttkbootstrap themes
                         self.style.theme_use(theme_name)
+                    else:
+                        # Unknown theme - fall back to default
+                        self.style.theme_use('nord-dark' if dark_mode else 'nord-light')
                     
                     # Update the theme-dependent styles
-                    self.update_theme_dependent_styles()
+                    from launch import _update_theme_dependent_styles
+                    _update_theme_dependent_styles(self.style, dark_mode)
                     
                 except Exception as e:
                     print(f"Warning: Could not apply theme {theme_name}: {e}")
@@ -3232,6 +3685,11 @@ class ExPlotApp:
             self.start_maximized_var.set(preferences['start_maximized'])
         if hasattr(self, 'ui_scale_var') and preferences.get('ui_scale') in UI_SCALE_OPTIONS:
             self.ui_scale_var.set(preferences['ui_scale'])
+        if hasattr(self, 'plot_bg_var') and preferences.get('plot_bg') in ("Theme", "White"):
+            self.plot_bg_var.set(preferences['plot_bg'])
+        if hasattr(self, 'check_updates_var'):
+            self.check_updates_var.set(bool(preferences.get('check_updates', True)))
+        self.dismissed_update_version = str(preferences.get('dismissed_update_version', ''))
 
         if hasattr(self, 'ybreak_marker_style_var') and 'ybreak_marker_style' in preferences:
             user_set = bool(preferences.get('ybreak_marker_style_user_set', False))
@@ -3395,6 +3853,11 @@ class ExPlotApp:
             preferences['start_maximized'] = self.start_maximized_var.get()
         if hasattr(self, 'ui_scale_var'):
             preferences['ui_scale'] = self.ui_scale_var.get()
+        if hasattr(self, 'plot_bg_var'):
+            preferences['plot_bg'] = self.plot_bg_var.get()
+        if hasattr(self, 'check_updates_var'):
+            preferences['check_updates'] = bool(self.check_updates_var.get())
+        preferences['dismissed_update_version'] = getattr(self, 'dismissed_update_version', '')
 
         if hasattr(self, 'ybreak_marker_style_var'):
             preferences['ybreak_marker_style'] = self.ybreak_marker_style_var.get()
@@ -7486,6 +7949,9 @@ class ExPlotApp:
             self.ax_lower = None
             self.ybreak_gap = None
 
+        # Tint the figure canvas to blend with the app theme (exports stay white)
+        self.update_colors()
+
         show_frame = self.show_frame_var.get()
         show_hgrid = self.show_hgrid_var.get()
         show_vgrid = self.show_vgrid_var.get()
@@ -9795,7 +10261,12 @@ class ExPlotApp:
                 print(f"Error hiding stats details button: {e}")
         
         if not hasattr(self, 'fig') or self.fig is None:
-            # No figure available - show placeholder
+            # No figure available - show placeholder on the app background so
+            # the empty area matches the theme (dark themes especially)
+            try:
+                self.preview_scroll_canvas.configure(bg=self._app_bg())
+            except Exception:
+                pass
             tip = ("\n\nTip: drop an Excel, CSV or TSV file\n(or an .explt project) onto the window to load it"
                    if getattr(self, 'show_drop_hint', False) else "")
             placeholder = ttk.Label(self.canvas_frame, justify='center',
@@ -9960,7 +10431,8 @@ class ExPlotApp:
             padded_width = canvas_width
             padded_height = canvas_height
 
-            padding_frame = tk.Frame(self.canvas_frame, bg='white', width=padded_width, height=padded_height)
+            padding_frame = tk.Frame(self.canvas_frame, bg=self._plot_facecolor(), width=padded_width, height=padded_height)
+            self._preview_padding_frame = padding_frame
             padding_frame.pack(fill='none', expand=False, anchor='nw')
             padding_frame.pack_propagate(False)
             
@@ -10090,7 +10562,7 @@ class ExPlotApp:
                 if hasattr(self, 'fig') and self.fig is not None:
                     # Save directly from the current figure state (preserves dragged legend positions)
                     # PDF is vector format so DPI doesn't affect output quality
-                    self.fig.savefig(file_path, format='pdf', bbox_inches='tight')
+                    self._save_fig_white(file_path, format='pdf', bbox_inches='tight')
                     if hasattr(self, 'original_fig_width') and hasattr(self, 'original_fig_height'):
                         print(f"PDF saved to: {file_path} (size: {self.original_fig_width}\" x {self.original_fig_height}\")")
                     else:
